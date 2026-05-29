@@ -1,26 +1,18 @@
 export default async function handler(req, res) {
-  // CORS 허용
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end()
-  }
-
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' })
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end()
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
   const apiKey = process.env.VITE_FASHN_API_KEY
-  if (!apiKey) {
-    return res.status(500).json({ error: 'FASHN API Key가 설정되지 않았습니다.' })
-  }
+  if (!apiKey) return res.status(500).json({ error: 'FASHN API Key가 없습니다.' })
 
   try {
     const { model_image, garment_image, category } = req.body
 
-    // FASHN API 호출
+    // 상세 오류 확인을 위해 FASHN API 응답을 그대로 전달
     const runResponse = await fetch('https://api.fashn.ai/v1/run', {
       method: 'POST',
       headers: {
@@ -35,7 +27,6 @@ export default async function handler(req, res) {
           category: category || 'tops',
           garment_photo_type: 'auto',
           nsfw_filter: true,
-          cover_feet: false,
           adjust_hands: true,
           restore_background: true,
           restore_clothes: true,
@@ -44,44 +35,47 @@ export default async function handler(req, res) {
     })
 
     const runData = await runResponse.json()
+    console.log('FASHN 응답 상태:', runResponse.status)
+    console.log('FASHN 응답 내용:', JSON.stringify(runData))
 
     if (!runResponse.ok) {
+      // 상세 오류 메시지 전달
       return res.status(runResponse.status).json({
-        error: runData?.error || runData?.detail || `FASHN 오류 (${runResponse.status})`
+        error: runData?.error || runData?.detail || runData?.message || JSON.stringify(runData)
       })
     }
 
     const { id } = runData
-    if (!id) {
-      return res.status(500).json({ error: '작업 ID를 받지 못했습니다.' })
-    }
+    if (!id) return res.status(500).json({ error: '작업 ID 없음: ' + JSON.stringify(runData) })
 
-    // 결과 폴링 (최대 60초)
+    // 폴링
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000))
-
       const statusRes = await fetch(`https://api.fashn.ai/v1/status/${id}`, {
         headers: { 'Authorization': `Bearer ${apiKey}` },
       })
-
       if (statusRes.ok) {
         const data = await statusRes.json()
-
+        console.log('상태:', data.status)
         if (data.status === 'completed' && data.output?.length > 0) {
           return res.status(200).json({ url: data.output[0] })
         }
-
         if (data.status === 'failed') {
-          return res.status(500).json({
-            error: '착용샷 생성 실패: ' + (data.error?.message || data.error || '알 수 없는 오류')
-          })
+          return res.status(500).json({ error: JSON.stringify(data.error) })
         }
       }
     }
-
-    return res.status(408).json({ error: '처리 시간 초과. 다시 시도해주세요.' })
-
+    return res.status(408).json({ error: '시간 초과' })
   } catch (err) {
+    console.error('서버 오류:', err)
     return res.status(500).json({ error: err.message })
   }
+}
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
 }
