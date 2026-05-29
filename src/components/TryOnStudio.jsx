@@ -12,7 +12,7 @@ async function uploadImageForFashn(dataUrl) {
   formData.append('image', blob, 'image.jpg')
 
   // imgbb API로 임시 URL 생성 (무료)
-  const imgbbResponse = await fetch('https://api.imgbb.com/1/upload?key=7ddba2ef0d6c5e7a0b5c8a3f2e9d1b4c', {
+  const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${import.meta.env.VITE_IMGBB_API_KEY}`, {
     method: 'POST',
     body: formData,
   })
