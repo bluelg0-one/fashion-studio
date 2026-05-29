@@ -12,7 +12,6 @@ export default async function handler(req, res) {
   try {
     const { model_image, garment_image, category } = req.body
 
-    // 상세 오류 확인을 위해 FASHN API 응답을 그대로 전달
     const runResponse = await fetch('https://api.fashn.ai/v1/run', {
       method: 'POST',
       headers: {
@@ -26,27 +25,21 @@ export default async function handler(req, res) {
           garment_image,
           category: category || 'tops',
           garment_photo_type: 'auto',
-          nsfw_filter: true,
-          adjust_hands: true,
-          restore_background: true,
-          restore_clothes: true,
         },
       }),
     })
 
     const runData = await runResponse.json()
-    console.log('FASHN 응답 상태:', runResponse.status)
-    console.log('FASHN 응답 내용:', JSON.stringify(runData))
+    console.log('FASHN 상태:', runResponse.status, JSON.stringify(runData))
 
     if (!runResponse.ok) {
-      // 상세 오류 메시지 전달
       return res.status(runResponse.status).json({
-        error: runData?.error || runData?.detail || runData?.message || JSON.stringify(runData)
+        error: runData?.message || runData?.error || JSON.stringify(runData)
       })
     }
 
     const { id } = runData
-    if (!id) return res.status(500).json({ error: '작업 ID 없음: ' + JSON.stringify(runData) })
+    if (!id) return res.status(500).json({ error: '작업 ID 없음' })
 
     // 폴링
     for (let i = 0; i < 30; i++) {
@@ -56,7 +49,6 @@ export default async function handler(req, res) {
       })
       if (statusRes.ok) {
         const data = await statusRes.json()
-        console.log('상태:', data.status)
         if (data.status === 'completed' && data.output?.length > 0) {
           return res.status(200).json({ url: data.output[0] })
         }
@@ -65,17 +57,13 @@ export default async function handler(req, res) {
         }
       }
     }
-    return res.status(408).json({ error: '시간 초과' })
+    return res.status(408).json({ error: '시간 초과. 다시 시도해주세요.' })
+
   } catch (err) {
-    console.error('서버 오류:', err)
     return res.status(500).json({ error: err.message })
   }
 }
 
 export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-  },
+  api: { bodyParser: { sizeLimit: '10mb' } },
 }
