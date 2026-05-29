@@ -1,53 +1,23 @@
 import { useState, useRef } from 'react'
-import { fileToDataUrl, downloadImage } from '../utils/api.js'
+import { fileToDataUrl, fileToBase64, downloadImage } from '../utils/api.js'
 
-// base64를 blob URL로 변환하여 FASHN API에 전송
-async function uploadImageForFashn(dataUrl) {
-  // base64를 blob으로 변환
-  const response = await fetch(dataUrl)
-  const blob = await response.blob()
-
-  // FormData로 imgbb 무료 이미지 호스팅에 업로드
-  const formData = new FormData()
-  formData.append('image', blob, 'image.jpg')
-
-  // imgbb API로 임시 URL 생성 (무료)
-  const imgbbResponse = await fetch(`https://api.imgbb.com/1/upload?key=${import.meta.env.VITE_IMGBB_API_KEY}`, {
-    method: 'POST',
-    body: formData,
-  })
-
-  if (!imgbbResponse.ok) {
-    throw new Error('이미지 업로드 실패')
-  }
-
-  const imgbbData = await imgbbResponse.json()
-  return imgbbData.data.url
-}
-
-// FASHN API 가상 착용샷 생성
-async function generateTryOn(modelImageDataUrl, garmentImageDataUrl, category = 'tops') {
+// FASHN API - base64 직접 전송 방식
+async function generateTryOn(modelInput, garmentInput, category = 'tops') {
   const apiKey = import.meta.env.VITE_FASHN_API_KEY
   if (!apiKey) throw new Error('FASHN API Key가 설정되지 않았습니다.')
 
-  // 이미지를 URL로 변환
-  let modelUrl, garmentUrl
+  // 모델과 의류 이미지를 base64로 변환
+  let modelImage = modelInput
+  let garmentImage = garmentInput
 
-  // 모델 이미지가 외부 URL이면 그대로 사용, 로컬이면 업로드
-  if (modelImageDataUrl.startsWith('http')) {
-    modelUrl = modelImageDataUrl
-  } else {
-    modelUrl = await uploadImageForFashn(modelImageDataUrl)
+  // dataUrl이면 base64 부분만 추출
+  if (modelInput.startsWith('data:')) {
+    modelImage = modelInput // data URI 그대로 전송
+  }
+  if (garmentInput.startsWith('data:')) {
+    garmentImage = garmentInput // data URI 그대로 전송
   }
 
-  // 의류 이미지 업로드
-  if (garmentImageDataUrl.startsWith('http')) {
-    garmentUrl = garmentImageDataUrl
-  } else {
-    garmentUrl = await uploadImageForFashn(garmentImageDataUrl)
-  }
-
-  // FASHN API 호출
   const runResponse = await fetch('https://api.fashn.ai/v1/run', {
     method: 'POST',
     headers: {
@@ -57,8 +27,8 @@ async function generateTryOn(modelImageDataUrl, garmentImageDataUrl, category = 
     body: JSON.stringify({
       model_name: 'tryon-v1.6',
       inputs: {
-        model_image: modelUrl,
-        garment_image: garmentUrl,
+        model_image: modelImage,
+        garment_image: garmentImage,
         category: category,
         garment_photo_type: 'auto',
         nsfw_filter: true,
@@ -70,33 +40,32 @@ async function generateTryOn(modelImageDataUrl, garmentImageDataUrl, category = 
     }),
   })
 
+  const runData = await runResponse.json()
+
   if (!runResponse.ok) {
-    const err = await runResponse.json()
-    throw new Error(err?.error || `API 오류 (${runResponse.status})`)
+    throw new Error(runData?.error || runData?.detail || `오류 (${runResponse.status})`)
   }
 
-  const { id } = await runResponse.json()
+  const { id } = runData
   if (!id) throw new Error('작업 ID를 받지 못했습니다.')
 
   // 결과 폴링
-  let attempts = 0
-  while (attempts < 30) {
-    await new Promise(resolve => setTimeout(resolve, 2000))
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000))
 
-    const statusResponse = await fetch(`https://api.fashn.ai/v1/status/${id}`, {
+    const statusRes = await fetch(`https://api.fashn.ai/v1/status/${id}`, {
       headers: { 'Authorization': `Bearer ${apiKey}` },
     })
 
-    if (statusResponse.ok) {
-      const statusData = await statusResponse.json()
-      if (statusData.status === 'completed' && statusData.output?.length > 0) {
-        return statusData.output[0]
+    if (statusRes.ok) {
+      const data = await statusRes.json()
+      if (data.status === 'completed' && data.output?.length > 0) {
+        return data.output[0]
       }
-      if (statusData.status === 'failed') {
-        throw new Error('착용샷 생성 실패: ' + (statusData.error || '알 수 없는 오류'))
+      if (data.status === 'failed') {
+        throw new Error('착용샷 생성 실패: ' + (data.error || '알 수 없는 오류'))
       }
     }
-    attempts++
   }
   throw new Error('처리 시간 초과. 다시 시도해주세요.')
 }
@@ -106,12 +75,6 @@ const DEFAULT_MODELS = [
   { id: 'model2', name: '주아', emoji: '💫', url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=600&fit=crop&crop=face', style: '20대 힙스터' },
   { id: 'model3', name: '에마', emoji: '✨', url: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=400&h=600&fit=crop&crop=face', style: '유럽풍 시크' },
   { id: 'model4', name: '윤지', emoji: '🌸', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=600&fit=crop&crop=face', style: '30대 페미닌' },
-]
-
-const CATEGORIES = [
-  { id: 'tops', label: '상의' },
-  { id: 'bottoms', label: '하의' },
-  { id: 'one-pieces', label: '원피스' },
 ]
 
 export default function TryOnStudio({ refinedImages = [] }) {
@@ -148,7 +111,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
 
     setGenerating(true)
     try {
-      setProgress('이미지 준비 중...')
       setProgress('AI가 착용샷 생성 중... (5~15초)')
       const resultUrl = await generateTryOn(modelUrl, garmentUrl, category)
       setResults(prev => [{
@@ -170,7 +132,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-        {/* 의류 선택 */}
         <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e8e8e8', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1a1a2e' }}>👗 착용할 의류 선택</div>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>1차 보정 완료된 사진 또는 직접 업로드</div>
@@ -178,7 +139,7 @@ export default function TryOnStudio({ refinedImages = [] }) {
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6 }}>의류 종류</div>
             <div style={{ display: 'flex', gap: 6 }}>
-              {CATEGORIES.map(cat => (
+              {[{ id: 'tops', label: '상의' }, { id: 'bottoms', label: '하의' }, { id: 'one-pieces', label: '원피스' }].map(cat => (
                 <button key={cat.id} onClick={() => setCategory(cat.id)}
                   style={{ flex: 1, padding: '7px 4px', borderRadius: 7, border: `1.5px solid ${category === cat.id ? '#1a1a2e' : '#e0e0e0'}`, background: category === cat.id ? '#1a1a2e' : '#fff', color: category === cat.id ? '#fff' : '#555', fontSize: 11, fontWeight: category === cat.id ? 700 : 400, cursor: 'pointer' }}>
                   {cat.label}
@@ -221,7 +182,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
           </div>
         </div>
 
-        {/* 모델 선택 */}
         <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e8e8e8', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1a1a2e' }}>👤 AI 모델 선택</div>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>기본 모델 또는 직접 업로드</div>
@@ -277,7 +237,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
         </div>
       </div>
 
-      {/* 결과 영역 */}
       <div>
         {results.length > 0 ? (
           <div>
