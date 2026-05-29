@@ -1,73 +1,25 @@
 import { useState, useRef } from 'react'
-import { fileToDataUrl, fileToBase64, downloadImage } from '../utils/api.js'
+import { fileToDataUrl, downloadImage } from '../utils/api.js'
 
-// FASHN API - base64 직접 전송 방식
+// Vercel 서버리스 함수를 통해 FASHN API 호출
 async function generateTryOn(modelInput, garmentInput, category = 'tops') {
-  const apiKey = import.meta.env.VITE_FASHN_API_KEY
-  if (!apiKey) throw new Error('FASHN API Key가 설정되지 않았습니다.')
-
-  // 모델과 의류 이미지를 base64로 변환
-  let modelImage = modelInput
-  let garmentImage = garmentInput
-
-  // dataUrl이면 base64 부분만 추출
-  if (modelInput.startsWith('data:')) {
-    modelImage = modelInput // data URI 그대로 전송
-  }
-  if (garmentInput.startsWith('data:')) {
-    garmentImage = garmentInput // data URI 그대로 전송
-  }
-
-  const runResponse = await fetch('https://api.fashn.ai/v1/run', {
+  const response = await fetch('/api/tryon', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model_name: 'tryon-v1.6',
-      inputs: {
-        model_image: modelImage,
-        garment_image: garmentImage,
-        category: category,
-        garment_photo_type: 'auto',
-        nsfw_filter: true,
-        cover_feet: false,
-        adjust_hands: true,
-        restore_background: true,
-        restore_clothes: true,
-      },
+      model_image: modelInput,
+      garment_image: garmentInput,
+      category,
     }),
   })
 
-  const runData = await runResponse.json()
+  const data = await response.json()
 
-  if (!runResponse.ok) {
-    throw new Error(runData?.error || runData?.detail || `오류 (${runResponse.status})`)
+  if (!response.ok) {
+    throw new Error(data.error || `오류 (${response.status})`)
   }
 
-  const { id } = runData
-  if (!id) throw new Error('작업 ID를 받지 못했습니다.')
-
-  // 결과 폴링
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 2000))
-
-    const statusRes = await fetch(`https://api.fashn.ai/v1/status/${id}`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    })
-
-    if (statusRes.ok) {
-      const data = await statusRes.json()
-      if (data.status === 'completed' && data.output?.length > 0) {
-        return data.output[0]
-      }
-      if (data.status === 'failed') {
-        throw new Error('착용샷 생성 실패: ' + (data.error || '알 수 없는 오류'))
-      }
-    }
-  }
-  throw new Error('처리 시간 초과. 다시 시도해주세요.')
+  return data.url
 }
 
 const DEFAULT_MODELS = [
@@ -110,8 +62,8 @@ export default function TryOnStudio({ refinedImages = [] }) {
     if (!garmentUrl) { alert('의류 이미지를 선택해주세요!'); return }
 
     setGenerating(true)
+    setProgress('AI가 착용샷 생성 중... (5~15초)')
     try {
-      setProgress('AI가 착용샷 생성 중... (5~15초)')
       const resultUrl = await generateTryOn(modelUrl, garmentUrl, category)
       setResults(prev => [{
         id: Date.now(),
