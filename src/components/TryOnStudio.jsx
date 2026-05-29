@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react'
 import { fileToDataUrl, downloadImage } from '../utils/api.js'
 
-// Vercel 서버리스 함수를 통해 FASHN API 호출
 async function generateTryOn(modelInput, garmentInput, category = 'tops') {
   const response = await fetch('/api/tryon', {
     method: 'POST',
@@ -12,21 +11,41 @@ async function generateTryOn(modelInput, garmentInput, category = 'tops') {
       category,
     }),
   })
-
   const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.error || `오류 (${response.status})`)
-  }
-
+  if (!response.ok) throw new Error(data.error || `오류 (${response.status})`)
   return data.url
 }
 
+// 전신이 나온 패션 모델 사진으로 교체
 const DEFAULT_MODELS = [
-  { id: 'model1', name: '서아', emoji: '👩', url: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=400&h=600&fit=crop&crop=face', style: '20대 한국 여성' },
-  { id: 'model2', name: '주아', emoji: '💫', url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=600&fit=crop&crop=face', style: '20대 힙스터' },
-  { id: 'model3', name: '에마', emoji: '✨', url: 'https://images.unsplash.com/photo-1488426862026-3ee34a7d66df?w=400&h=600&fit=crop&crop=face', style: '유럽풍 시크' },
-  { id: 'model4', name: '윤지', emoji: '🌸', url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=600&fit=crop&crop=face', style: '30대 페미닌' },
+  {
+    id: 'model1',
+    name: '서아',
+    emoji: '👩',
+    url: 'https://images.unsplash.com/photo-1469334031218-e382a71b716b?w=400&h=700&fit=crop&crop=top',
+    style: '20대 한국 여성',
+  },
+  {
+    id: 'model2',
+    name: '주아',
+    emoji: '💫',
+    url: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=400&h=700&fit=crop&crop=top',
+    style: '20대 트렌디',
+  },
+  {
+    id: 'model3',
+    name: '에마',
+    emoji: '✨',
+    url: 'https://images.unsplash.com/photo-1509631179647-0177331693ae?w=400&h=700&fit=crop&crop=top',
+    style: '유럽풍 시크',
+  },
+  {
+    id: 'model4',
+    name: '윤지',
+    emoji: '🌸',
+    url: 'https://images.unsplash.com/photo-1539109136881-3be0616acf4b?w=400&h=700&fit=crop&crop=top',
+    style: '30대 페미닌',
+  },
 ]
 
 export default function TryOnStudio({ refinedImages = [] }) {
@@ -36,7 +55,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
   const [category, setCategory] = useState('tops')
   const [generating, setGenerating] = useState(false)
   const [results, setResults] = useState([])
-  const [progress, setProgress] = useState('')
   const modelFileRef = useRef()
   const garmentFileRef = useRef()
 
@@ -62,7 +80,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
     if (!garmentUrl) { alert('의류 이미지를 선택해주세요!'); return }
 
     setGenerating(true)
-    setProgress('AI가 착용샷 생성 중... (5~15초)')
     try {
       const resultUrl = await generateTryOn(modelUrl, garmentUrl, category)
       setResults(prev => [{
@@ -76,7 +93,6 @@ export default function TryOnStudio({ refinedImages = [] }) {
       alert('착용샷 생성 오류: ' + err.message)
     } finally {
       setGenerating(false)
-      setProgress('')
     }
   }
 
@@ -84,6 +100,7 @@ export default function TryOnStudio({ refinedImages = [] }) {
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 20, alignItems: 'start' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
+        {/* 의류 선택 */}
         <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e8e8e8', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1a1a2e' }}>👗 착용할 의류 선택</div>
           <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>1차 보정 완료된 사진 또는 직접 업로드</div>
@@ -127,22 +144,23 @@ export default function TryOnStudio({ refinedImages = [] }) {
             ) : (
               <div>
                 <div style={{ fontSize: 20, marginBottom: 4 }}>📤</div>
-                <div style={{ fontSize: 11, color: '#888' }}>직접 업로드<br />(누끼 딴 사진 권장)</div>
+                <div style={{ fontSize: 11, color: '#888' }}>직접 업로드</div>
               </div>
             )}
             <input ref={garmentFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleGarmentUpload(e.target.files[0])} />
           </div>
         </div>
 
+        {/* 모델 선택 */}
         <div style={{ background: '#fff', borderRadius: 12, border: '1px solid #e8e8e8', padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: '#1a1a2e' }}>👤 AI 모델 선택</div>
-          <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>기본 모델 또는 직접 업로드</div>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>전신 사진 모델 선택 또는 직접 업로드</div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
             {DEFAULT_MODELS.map(m => (
               <div key={m.id} onClick={() => { setSelectedModel(m); setCustomModelUrl(null) }}
                 style={{ borderRadius: 8, overflow: 'hidden', border: `2px solid ${selectedModel?.id === m.id && !customModelUrl ? '#1a1a2e' : '#e8e8e8'}`, cursor: 'pointer' }}>
-                <img src={m.url} alt={m.name} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block' }} />
+                <img src={m.url} alt={m.name} style={{ width: '100%', height: 100, objectFit: 'cover', objectPosition: 'top', display: 'block' }} />
                 <div style={{ padding: '4px 6px', background: selectedModel?.id === m.id && !customModelUrl ? '#1a1a2e' : '#fff' }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: selectedModel?.id === m.id && !customModelUrl ? '#fff' : '#1a1a2e' }}>{m.emoji} {m.name}</div>
                   <div style={{ fontSize: 9, color: selectedModel?.id === m.id && !customModelUrl ? 'rgba(255,255,255,0.6)' : '#888' }}>{m.style}</div>
@@ -156,12 +174,12 @@ export default function TryOnStudio({ refinedImages = [] }) {
             {customModelUrl ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <img src={customModelUrl} alt="" style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6 }} />
-                <div style={{ fontSize: 11, color: '#1a1a2e', fontWeight: 600 }}>✓ 내 모델 이미지 사용 중</div>
+                <div style={{ fontSize: 11, color: '#1a1a2e', fontWeight: 600 }}>✓ 내 모델 사용 중</div>
               </div>
             ) : (
               <div>
                 <div style={{ fontSize: 11, color: '#888' }}>📤 내 모델 사진 직접 업로드</div>
-                <div style={{ fontSize: 10, color: '#aaa', marginTop: 2 }}>전신 또는 상반신 사진 권장</div>
+                <div style={{ fontSize: 10, color: '#aaa', marginTop: 2 }}>⚠️ 반드시 전신 사진으로 올려주세요!</div>
               </div>
             )}
             <input ref={modelFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleModelUpload(e.target.files[0])} />
@@ -170,7 +188,7 @@ export default function TryOnStudio({ refinedImages = [] }) {
 
         <button onClick={handleGenerate} disabled={generating}
           style={{ padding: '14px 0', borderRadius: 10, border: 'none', background: generating ? '#ccc' : '#1a1a2e', color: '#fff', fontSize: 14, fontWeight: 700, cursor: generating ? 'not-allowed' : 'pointer' }}>
-          {generating ? `⚙️ ${progress}` : '🎭 AI 착용샷 생성하기'}
+          {generating ? '⚙️ AI 착용샷 생성 중... (5~15초)' : '🎭 AI 착용샷 생성하기'}
         </button>
 
         {generating && (
@@ -182,9 +200,9 @@ export default function TryOnStudio({ refinedImages = [] }) {
         )}
 
         <div style={{ background: '#fffbeb', borderRadius: 8, padding: 12, fontSize: 11, color: '#92400e', lineHeight: 1.7, border: '1px solid #fde68a' }}>
-          <strong>💡 더 좋은 결과를 위한 팁!</strong><br />
+          <strong>💡 팁!</strong><br />
           • 누끼 딴 의류 사진이 훨씬 자연스러워요<br />
-          • 모델은 전신이 나온 사진이 좋아요<br />
+          • 모델은 반드시 <strong>전신 사진</strong>이어야 해요<br />
           • 1장 생성 비용: 약 <strong>$0.075 (100원)</strong>
         </div>
       </div>
