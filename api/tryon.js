@@ -2,7 +2,6 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
 
@@ -10,7 +9,28 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'FASHN API Key가 없습니다.' })
 
   try {
-    const { model_image, garment_image, category } = req.body
+    const { mode, model_image, garment_image, product_image, category, prompt } = req.body
+
+    let inputs = {}
+    let model_name = ''
+
+    if (mode === 'product-to-model') {
+      // Product to Model: 상품 사진 1장으로 모델 착용샷 생성
+      model_name = 'product-to-model'
+      inputs = {
+        product_image,
+        prompt: prompt || 'Korean woman, 20s, slim figure, natural standing pose, white background, fashion model photography',
+      }
+    } else {
+      // Try-On: 모델 사진 + 의류 사진 합성
+      model_name = 'tryon-v1.6'
+      inputs = {
+        model_image,
+        garment_image,
+        category: category || 'tops',
+        garment_photo_type: 'auto',
+      }
+    }
 
     const runResponse = await fetch('https://api.fashn.ai/v1/run', {
       method: 'POST',
@@ -18,15 +38,7 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model_name: 'tryon-v1.6',
-        inputs: {
-          model_image,
-          garment_image,
-          category: category || 'tops',
-          garment_photo_type: 'auto',
-        },
-      }),
+      body: JSON.stringify({ model_name, inputs }),
     })
 
     const runData = await runResponse.json()
@@ -41,7 +53,7 @@ export default async function handler(req, res) {
     const { id } = runData
     if (!id) return res.status(500).json({ error: '작업 ID 없음' })
 
-    // 폴링
+    // 폴링 (최대 60초)
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 2000))
       const statusRes = await fetch(`https://api.fashn.ai/v1/status/${id}`, {
