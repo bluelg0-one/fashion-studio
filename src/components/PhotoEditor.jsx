@@ -1,46 +1,153 @@
 import { useState, useRef, useCallback } from "react";
-import { callClaude, applyImageFilters, downloadImage } from "../utils/api";
+import { applyImageFilters, downloadImage } from "../utils/api";
 import { pngToWhiteBg, fixWrinkles, sharpOutlineAndCenter } from "../utils/imageProcessing";
 
+// ────────────────────────────────────────────────────────────
+// 상수
+// ────────────────────────────────────────────────────────────
 const CORRECTION_OPTIONS = [
-  { id: "bg_remove",        label: "① 배경 삭제",              desc: "배경 제거 → 흰색 배경으로 변환",                default: true  },
-  { id: "mannequin_remove", label: "② 마네킹 + 배경 삭제",     desc: "Remove.bg product 모드 (마네킹 제거 시도)",      default: false },
-  { id: "wrinkle_fix",      label: "③ 주름 펴기 / 선명도",     desc: "언샤프 마스크로 옷 선명도 강화 + 주름 완화",     default: false },
-  { id: "sharp_outline",    label: "④ 테두리 정렬 + 중앙 배치",desc: "엣지 강화 + 콘텐츠 자동 중앙 정렬 (정사각형)",   default: false },
+  {
+    id: "bg_remove",
+    label: "① 배경 삭제",
+    desc: "FASHN AI로 배경 제거 → 흰색 배경",
+    tag: "FASHN",
+  },
+  {
+    id: "mannequin_remove",
+    label: "② 마네킹 + 배경 삭제",
+    desc: "FASHN AI로 마네킹·배경 모두 제거",
+    tag: "FASHN",
+  },
+  {
+    id: "wrinkle_fix",
+    label: "③ 주름 펴기 / 선명도",
+    desc: "FASHN Edit AI로 주름 완화 + 선명도 강화",
+    tag: "FASHN",
+  },
+  {
+    id: "sharp_outline",
+    label: "④ 테두리 정렬 + 중앙 배치",
+    desc: "Canvas 엣지 강화 + 자동 중앙 정렬",
+    tag: "Canvas",
+  },
 ];
 
 const DEFAULT_FILTERS = { brightness: 100, contrast: 100, saturation: 100 };
+const FASHN_API = "https://api.fashn.ai/v1";
+const POLL_INTERVAL = 2000; // 2초마다 폴링
+const POLL_TIMEOUT  = 120000; // 최대 2분 대기
 
-// Remove.bg → 흰색 배경 JPEG
-async function removeBackground(file, mannequinMode = false) {
-  const apiKey = import.meta.env.VITE_REMOVEBG_API_KEY;
-  if (!apiKey) throw new Error("VITE_REMOVEBG_API_KEY 미설정");
-  const formData = new FormData();
-  formData.append("image_file", file);
-  formData.append("size", "auto");
-  if (mannequinMode) formData.append("type", "product");
-  const res = await fetch("https://api.remove.bg/v1.0/removebg", {
-    method: "POST", headers: { "X-Api-Key": apiKey }, body: formData,
+// ────────────────────────────────────────────────────────────
+// FASHN API 공통 유틸
+// ────────────────────────────────────────────────────────────
+async function fashnRun(modelName, inputs) {
+  const apiKey = import.meta.env.VITE_FASHN_API_KEY;
+  if (!apiKey) throw new Error("VITE_FASHN_API_KEY 미설정");
+
+  // 1. 작업 제출
+  const res = await fetch(`${FASHN_API}/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model_name: modelName, inputs }),
   });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.errors?.[0]?.title || `Remove.bg 오류 (${res.status})`);
+    throw new Error(err?.detail || err?.error || `FASHN API 오류 (${res.status})`);
   }
-  const blob = await res.blob();
-  const pngDataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = (e) => resolve(e.target.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-  return pngToWhiteBg(pngDataUrl); // 투명 → 흰색 배경
+
+  const { id, error } = await res.json();
+  if (error) throw new Error(error);
+
+  // 2. 결과 폴링
+  const start = Date.now();
+  while (Date.now() - start < POLL_TIMEOUT) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+
+    const statusRes = await fetch(`${FASHN_API}/status/${id}`, {
+      headers: { "Authorization": `Bearer ${apiKey}` },
+    });
+    const status = await statusRes.json();
+
+    if (status.status === "completed") {
+      const outputUrl = status.output?.[0];
+      if (!outputUrl) throw new Error("결과 이미지 없음");
+
+      // URL → base64 변환
+      const imgRes = await fetch(outputUrl);
+      const blob   = await imgRes.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    if (status.status === "failed") {
+      throw new Error(status.error || "FASHN 처리 실패");
+    }
+    // processing / starting → 계속 폴링
+  }
+  throw new Error("FASHN API 타임아웃 (2분 초과)");
 }
 
-// ── 미세 수정 모달 ──
+// ────────────────────────────────────────────────────────────
+// FASHN 기능별 함수
+// ────────────────────────────────────────────────────────────
+
+// ① 배경 제거 → 흰색 배경
+async function fashnBgRemove(dataUrl) {
+  const pngResult = await fashnRun("background-remove", {
+    image: dataUrl,
+    return_base64: true,
+  });
+  return pngToWhiteBg(pngResult);
+}
+
+// ② 마네킹 + 배경 제거 → Edit로 마네킹까지 지우기
+async function fashnMannequinRemove(dataUrl) {
+  // Step1: 배경 먼저 제거
+  const bgRemoved = await fashnRun("background-remove", {
+    image: dataUrl,
+    return_base64: true,
+  });
+  const whiteBg = await pngToWhiteBg(bgRemoved);
+
+  // Step2: Edit로 마네킹 제거 지시
+  const edited = await fashnRun("edit", {
+    image: whiteBg,
+    prompt: "Remove the mannequin completely. Keep only the clothing item floating naturally on a clean white background. Preserve all garment details, textures, stitching, and colors exactly. The clothing should appear as a flat-lay or ghost mannequin product shot.",
+    resolution: "2k",
+    generation_mode: "quality",
+    return_base64: true,
+  });
+  return edited;
+}
+
+// ③ 주름 펴기 (FASHN Edit)
+async function fashnWrinkleFix(dataUrl) {
+  const result = await fashnRun("edit", {
+    image: dataUrl,
+    prompt: "Smooth out all wrinkles and creases in the clothing. Make the fabric look clean, pressed, and professional. Straighten any drooping or uneven parts like sleeves or hemlines. Keep the original garment shape, color, and design intact. Background should remain clean white.",
+    resolution: "2k",
+    generation_mode: "quality",
+    return_base64: true,
+  });
+  return result;
+}
+
+// ────────────────────────────────────────────────────────────
+// 미세 수정 모달
+// ────────────────────────────────────────────────────────────
 function FinetunePanel({ file, onSave, onClose }) {
-  const [filters, setFilters] = useState({ ...file.filters });
-  const [preview, setPreview] = useState(file.corrected);
+  const [filters,    setFilters]    = useState({ ...file.filters });
+  const [preview,    setPreview]    = useState(file.corrected);
   const [processing, setProcessing] = useState(false);
+  const [procLabel,  setProcLabel]  = useState("");
 
   const handleFilter = async (key, val) => {
     const next = { ...filters, [key]: val };
@@ -48,15 +155,29 @@ function FinetunePanel({ file, onSave, onClose }) {
     setPreview(await applyImageFilters(file.corrected, next.brightness, next.contrast, next.saturation));
   };
 
-  const applyCanvas = async (type) => {
+  const applyFashn = async (type) => {
     setProcessing(true);
     try {
       let result = preview;
-      if (type === "wrinkle")  result = await fixWrinkles(preview);
-      if (type === "outline")  result = await sharpOutlineAndCenter(preview);
+      if (type === "bg") {
+        setProcLabel("FASHN 배경 제거 중... (1~3초)");
+        result = await fashnBgRemove(preview);
+      } else if (type === "mannequin") {
+        setProcLabel("FASHN 마네킹 제거 중... (30~60초)");
+        result = await fashnMannequinRemove(preview);
+      } else if (type === "wrinkle") {
+        setProcLabel("FASHN 주름 펴기 중... (20~60초)");
+        result = await fashnWrinkleFix(preview);
+      } else if (type === "outline") {
+        setProcLabel("Canvas 테두리 정렬 중...");
+        result = await sharpOutlineAndCenter(preview);
+      }
       setPreview(result);
-    } catch(e) { alert("오류: " + e.message); }
+    } catch (e) {
+      alert("오류: " + e.message);
+    }
     setProcessing(false);
+    setProcLabel("");
   };
 
   return (
@@ -77,23 +198,34 @@ function FinetunePanel({ file, onSave, onClose }) {
             ))}
           </div>
 
-          {/* Canvas 빠른 적용 버튼 */}
+          {/* FASHN 빠른 적용 */}
           <div>
-            <div style={S.sectionTitle}>⚡ Canvas 빠른 보정</div>
+            <div style={S.sectionTitle}>⚡ 추가 보정</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button style={{ ...S.btn, ...S.btnBlue, opacity: processing ? 0.6 : 1 }}
-                onClick={() => applyCanvas("wrinkle")} disabled={processing}>
-                ③ 주름 펴기 / 선명도
-              </button>
-              <button style={{ ...S.btn, ...S.btnBlue, opacity: processing ? 0.6 : 1 }}
-                onClick={() => applyCanvas("outline")} disabled={processing}>
-                ④ 테두리 각지게 + 중앙 정렬
-              </button>
-              {processing && <span style={{ fontSize: 11, color: "#facc15", alignSelf: "center" }}>처리 중...</span>}
+              {[
+                { type: "bg",        label: "① 배경 재제거",        tag: "FASHN" },
+                { type: "mannequin", label: "② 마네킹 재제거",       tag: "FASHN" },
+                { type: "wrinkle",   label: "③ 주름 다시 펴기",      tag: "FASHN" },
+                { type: "outline",   label: "④ 테두리/중앙 재정렬",  tag: "Canvas" },
+              ].map(({ type, label, tag }) => (
+                <button key={type}
+                  style={{ ...S.btn, ...S.btnBlue, opacity: processing ? 0.5 : 1, fontSize: 11 }}
+                  onClick={() => applyFashn(type)} disabled={processing}>
+                  {label}
+                  <span style={{ marginLeft: 4, fontSize: 9, color: tag === "FASHN" ? "#f9a8d4" : "#86efac" }}>
+                    [{tag}]
+                  </span>
+                </button>
+              ))}
             </div>
+            {processing && (
+              <div style={{ marginTop: 8, fontSize: 11, color: "#facc15" }}>
+                ⏳ {procLabel}
+              </div>
+            )}
           </div>
 
-          {/* 슬라이더 */}
+          {/* 필터 슬라이더 */}
           <div>
             <div style={S.sectionTitle}>🎚 수동 필터 조정</div>
             {["brightness", "contrast", "saturation"].map((key) => (
@@ -106,10 +238,9 @@ function FinetunePanel({ file, onSave, onClose }) {
             ))}
           </div>
 
-          {/* 미리보기 리셋 */}
-          <button style={{ ...S.btn, fontSize: 11, color: "#888" }}
+          <button style={{ ...S.btn, fontSize: 11, color: "#666" }}
             onClick={() => { setPreview(file.corrected); setFilters({ ...file.filters }); }}>
-            ↩ 원본 보정본으로 되돌리기
+            ↩ 원본으로 되돌리기
           </button>
         </div>
         <div style={S.modalFooter}>
@@ -124,17 +255,19 @@ function FinetunePanel({ file, onSave, onClose }) {
   );
 }
 
-// ── 메인 컴포넌트 ──
+// ────────────────────────────────────────────────────────────
+// 메인 컴포넌트
+// ────────────────────────────────────────────────────────────
 export default function PhotoEditor({ onFilesReady }) {
   const fileInputRef = useRef(null);
   const [files,          setFiles]          = useState([]);
   const [activeFileId,   setActiveFileId]   = useState(null);
   const [finetuneTarget, setFinetuneTarget] = useState(null);
   const [corrOptions,    setCorrOptions]    = useState(
-    () => Object.fromEntries(CORRECTION_OPTIONS.map((o) => [o.id, o.default]))
+    () => Object.fromEntries(CORRECTION_OPTIONS.map((o) => [o.id, false]).concat([["bg_remove", true]]))
   );
   const [processing, setProcessing] = useState(false);
-  const [progress,   setProgress]   = useState({ done: 0, total: 0 });
+  const [progress,   setProgress]   = useState({ done: 0, total: 0, label: "" });
   const [errorLog,   setErrorLog]   = useState([]);
 
   const addFiles = useCallback((fileList) => {
@@ -158,45 +291,58 @@ export default function PhotoEditor({ onFilesReady }) {
   const toggleSelect = (id) => setFiles((prev) => prev.map((f) => f.id === id ? { ...f, selected: !f.selected } : f));
   const selectAll = (val) => setFiles((prev) => prev.map((f) => ({ ...f, selected: val })));
 
+  // ── 일괄 처리 ──
   const runBatch = async () => {
     const targets = files.filter((f) => f.selected && f.original);
     if (!targets.length) return alert("선택된 파일이 없습니다.");
+
     setProcessing(true);
     setErrorLog([]);
-    setProgress({ done: 0, total: targets.length });
+    setProgress({ done: 0, total: targets.length, label: "" });
 
     for (let i = 0; i < targets.length; i++) {
       const item = targets[i];
       setFiles((prev) => prev.map((f) => f.id === item.id ? { ...f, status: "processing" } : f));
+
       try {
         let result = item.original;
 
-        // STEP 1: Remove.bg 누끼
-        if (corrOptions.bg_remove || corrOptions.mannequin_remove) {
-          result = await removeBackground(item.file, corrOptions.mannequin_remove);
+        // STEP 1: 배경 제거 (① 또는 ②)
+        if (corrOptions.mannequin_remove) {
+          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 마네킹 제거 중...` });
+          result = await fashnMannequinRemove(result);
+        } else if (corrOptions.bg_remove) {
+          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 배경 제거 중...` });
+          result = await fashnBgRemove(result);
         }
 
-        // STEP 2: Canvas - 주름 펴기
+        // STEP 2: 주름 펴기 (FASHN Edit)
         if (corrOptions.wrinkle_fix) {
-          result = await fixWrinkles(result);
+          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 주름 펴기 중...` });
+          result = await fashnWrinkleFix(result);
         }
 
-        // STEP 3: Canvas - 테두리 + 중앙 정렬
+        // STEP 3: 테두리 + 중앙 정렬 (Canvas)
         if (corrOptions.sharp_outline) {
+          setProgress({ done: i, total: targets.length, label: `${item.name} — 테두리 정렬 중...` });
           result = await sharpOutlineAndCenter(result);
         }
 
-        // STEP 4: 밝기/대비/채도 필터
+        // STEP 4: 밝기/대비/채도
         const { brightness, contrast, saturation } = item.filters;
         result = await applyImageFilters(result, brightness, contrast, saturation);
 
-        setFiles((prev) => prev.map((f) => f.id === item.id ? { ...f, corrected: result, status: "done" } : f));
+        setFiles((prev) => prev.map((f) =>
+          f.id === item.id ? { ...f, corrected: result, status: "done" } : f
+        ));
       } catch (e) {
         setErrorLog((prev) => [...prev, `❌ ${item.name}: ${e.message}`]);
         setFiles((prev) => prev.map((f) => f.id === item.id ? { ...f, status: "error" } : f));
       }
-      setProgress({ done: i + 1, total: targets.length });
+
+      setProgress({ done: i + 1, total: targets.length, label: "" });
     }
+
     setProcessing(false);
     setActiveFileId(targets[0]?.id);
   };
@@ -212,7 +358,7 @@ export default function PhotoEditor({ onFilesReady }) {
   const downloadAll = () => files.filter((f) => f.finalized && f.corrected).forEach(handleDownload);
   const sendToNext = () => {
     const finals = files.filter((f) => f.finalized && f.corrected);
-    if (!finals.length) return alert("최종 확정된 파일이 없습니다.\n보정 후 '최종 확정'을 눌러주세요.");
+    if (!finals.length) return alert("최종 확정된 파일이 없습니다.");
     onFilesReady?.(finals);
     alert(`✅ ${finals.length}장을 다음 단계로 전달했습니다.`);
   };
@@ -302,38 +448,53 @@ export default function PhotoEditor({ onFilesReady }) {
 
         {/* 보정 옵션 */}
         <div style={S.card}>
-          <div style={S.cardTitle}>✂️ 누끼 따기 / AI 보정 옵션</div>
-
+          <div style={S.cardTitle}>✂️ AI 보정 옵션 선택</div>
           <div style={S.optionGrid}>
             {CORRECTION_OPTIONS.map((opt) => (
               <label key={opt.id} style={{
                 ...S.optionLabel,
                 ...(corrOptions[opt.id] ? { border: "1px solid #22c55e", background: "#0f1f12" } : {})
               }}>
-                <input type="checkbox" checked={corrOptions[opt.id]}
+                <input type="checkbox" checked={corrOptions[opt.id] || false}
                   onChange={(e) => setCorrOptions((prev) => ({ ...prev, [opt.id]: e.target.checked }))}
                   style={{ accentColor: "#22c55e", marginTop: 2, flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#ddd" }}>{opt.label}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "#ddd" }}>{opt.label}</span>
+                    <span style={{
+                      fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                      background: opt.tag === "FASHN" ? "#4c1d95" : "#14532d",
+                      color: opt.tag === "FASHN" ? "#f9a8d4" : "#86efac",
+                    }}>{opt.tag}</span>
+                  </div>
                   <div style={{ fontSize: 10, color: "#777", marginTop: 2 }}>{opt.desc}</div>
                 </div>
               </label>
             ))}
           </div>
 
-          {/* 각 옵션 설명 */}
-          <div style={{ ...S.infoBox, marginTop: 10 }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>💡 옵션별 처리 방식</div>
-            <div>① ② → Remove.bg API (서버에서 AI 처리)</div>
-            <div>③ → Canvas 언샤프 마스크 (브라우저에서 무료 처리)</div>
-            <div>④ → Canvas 엣지 강화 + 자동 중앙 정렬 (브라우저에서 무료 처리)</div>
+          {/* 크레딧 예상 안내 */}
+          <div style={S.infoBox}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>💳 FASHN 크레딧 예상 소모 (1장 기준)</div>
+            <div>① 배경 삭제: 1 크레딧</div>
+            <div>② 마네킹 삭제: 1 + 3 크레딧 (배경제거 + Edit quality)</div>
+            <div>③ 주름 펴기: 3 크레딧 (Edit quality 2k)</div>
+            <div>④ 테두리 정렬: 0 크레딧 (Canvas 무료)</div>
           </div>
 
+          {/* 진행 상태 */}
           {processing && (
-            <div style={S.progressBar}>
-              <div style={{ ...S.progressFill, width: `${(progress.done / progress.total) * 100}%` }} />
-              <span style={S.progressText}>{progress.done} / {progress.total} 처리 중...</span>
-            </div>
+            <>
+              <div style={S.progressBar}>
+                <div style={{ ...S.progressFill, width: `${(progress.done / progress.total) * 100}%` }} />
+                <span style={S.progressText}>{progress.done} / {progress.total}</span>
+              </div>
+              {progress.label && (
+                <div style={{ fontSize: 11, color: "#facc15", marginTop: 6, textAlign: "center" }}>
+                  ⏳ {progress.label}
+                </div>
+              )}
+            </>
           )}
 
           {errorLog.length > 0 && (
@@ -347,7 +508,7 @@ export default function PhotoEditor({ onFilesReady }) {
             onClick={runBatch} disabled={processing}>
             {processing
               ? `⏳ 처리 중 (${progress.done}/${progress.total})`
-              : `✨ 선택 파일 ${selectedCount}장 일괄 보정 + 누끼 실행`}
+              : `✨ 선택 파일 ${selectedCount}장 일괄 보정 실행`}
           </button>
         </div>
 
@@ -413,6 +574,9 @@ export default function PhotoEditor({ onFilesReady }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────
+// 스타일
+// ────────────────────────────────────────────────────────────
 const S = {
   root:        { display: "flex", minHeight: "calc(100vh - 60px)", background: "#0f0f0f", color: "#e5e5e5", fontFamily: "'Pretendard','Noto Sans KR',sans-serif" },
   sidebar:     { width: 230, minWidth: 230, background: "#1a1a1a", borderRight: "1px solid #2a2a2a", padding: "12px 10px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
@@ -441,7 +605,7 @@ const S = {
   cardTitle:   { fontSize: 13, fontWeight: 700, color: "#e5e5e5", marginBottom: 10 },
   optionGrid:  { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
   optionLabel: { display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer", padding: "8px 10px", borderRadius: 7, border: "1px solid #2a2a2a", background: "#111", transition: "all .15s" },
-  infoBox:     { background: "#1a1f2e", border: "1px solid #2d3a5a", borderRadius: 6, padding: "8px 10px", fontSize: 10, color: "#93c5fd", lineHeight: 1.7 },
+  infoBox:     { background: "#1a1f2e", border: "1px solid #2d3a5a", borderRadius: 6, padding: "8px 10px", fontSize: 10, color: "#93c5fd", lineHeight: 1.8, marginTop: 10 },
   sliderRow:   { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 },
   sliderLabel: { fontSize: 12, color: "#aaa", width: 28, flexShrink: 0 },
   slider:      { flex: 1, accentColor: "#22c55e" },
