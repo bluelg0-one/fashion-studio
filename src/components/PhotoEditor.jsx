@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback } from "react";
 import { applyImageFilters, downloadImage } from "../utils/api";
-import { pngToWhiteBg, fixWrinkles, sharpOutlineAndCenter } from "../utils/imageProcessing";
 
 // ────────────────────────────────────────────────────────────
 // 상수
@@ -9,42 +8,35 @@ const CORRECTION_OPTIONS = [
   {
     id: "bg_remove",
     label: "① 배경 삭제",
-    desc: "FASHN AI로 배경 제거 → 흰색 배경",
-    tag: "FASHN",
+    desc: "FASHN AI로 배경 제거 → 깨끗한 흰색 배경",
+    credits: "1 크레딧",
   },
   {
     id: "mannequin_remove",
     label: "② 마네킹 + 배경 삭제",
-    desc: "FASHN AI로 마네킹·배경 모두 제거",
-    tag: "FASHN",
+    desc: "배경·마네킹·봉 모두 제거, 옷만 남김",
+    credits: "4 크레딧",
   },
   {
     id: "wrinkle_fix",
-    label: "③ 주름 펴기 / 선명도",
-    desc: "FASHN Edit AI로 주름 완화 + 선명도 강화",
-    tag: "FASHN",
-  },
-  {
-    id: "sharp_outline",
-    label: "④ 테두리 정렬 + 중앙 배치",
-    desc: "Canvas 엣지 강화 + 자동 중앙 정렬",
-    tag: "Canvas",
+    label: "③ 주름 펴기 / 정리",
+    desc: "FASHN Edit AI로 주름·구김 제거 (처리 30~60초)",
+    credits: "3 크레딧",
   },
 ];
 
 const DEFAULT_FILTERS = { brightness: 100, contrast: 100, saturation: 100 };
-const FASHN_API = "https://api.fashn.ai/v1";
-const POLL_INTERVAL = 2000; // 2초마다 폴링
-const POLL_TIMEOUT  = 120000; // 최대 2분 대기
+const FASHN_API      = "https://api.fashn.ai/v1";
+const POLL_INTERVAL  = 2500;
+const POLL_TIMEOUT   = 150000;
 
 // ────────────────────────────────────────────────────────────
-// FASHN API 공통 유틸
+// FASHN 공통 폴링
 // ────────────────────────────────────────────────────────────
 async function fashnRun(modelName, inputs) {
   const apiKey = import.meta.env.VITE_FASHN_API_KEY;
   if (!apiKey) throw new Error("VITE_FASHN_API_KEY 미설정");
 
-  // 1. 작업 제출
   const res = await fetch(`${FASHN_API}/run`, {
     method: "POST",
     headers: {
@@ -53,30 +45,25 @@ async function fashnRun(modelName, inputs) {
     },
     body: JSON.stringify({ model_name: modelName, inputs }),
   });
-
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || err?.error || `FASHN API 오류 (${res.status})`);
+    throw new Error(err?.detail || err?.error || `FASHN 오류 (${res.status})`);
   }
-
   const { id, error } = await res.json();
   if (error) throw new Error(error);
 
-  // 2. 결과 폴링
+  // 폴링
   const start = Date.now();
   while (Date.now() - start < POLL_TIMEOUT) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-
     const statusRes = await fetch(`${FASHN_API}/status/${id}`, {
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
     const status = await statusRes.json();
-
     if (status.status === "completed") {
       const outputUrl = status.output?.[0];
       if (!outputUrl) throw new Error("결과 이미지 없음");
-
-      // URL → base64 변환
+      // URL → base64
       const imgRes = await fetch(outputUrl);
       const blob   = await imgRes.blob();
       return new Promise((resolve, reject) => {
@@ -86,41 +73,56 @@ async function fashnRun(modelName, inputs) {
         reader.readAsDataURL(blob);
       });
     }
-
-    if (status.status === "failed") {
-      throw new Error(status.error || "FASHN 처리 실패");
-    }
-    // processing / starting → 계속 폴링
+    if (status.status === "failed") throw new Error(status.error || "FASHN 처리 실패");
   }
-  throw new Error("FASHN API 타임아웃 (2분 초과)");
+  throw new Error("FASHN 타임아웃 (2분 30초 초과)");
 }
 
-// ────────────────────────────────────────────────────────────
-// FASHN 기능별 함수
-// ────────────────────────────────────────────────────────────
+// PNG 투명 → 흰색 배경 JPEG 변환
+function pngToWhiteBg(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width  = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", 0.95));
+    };
+    img.src = dataUrl;
+  });
+}
 
-// ① 배경 제거 → 흰색 배경
+// ① 배경 삭제
 async function fashnBgRemove(dataUrl) {
-  const pngResult = await fashnRun("background-remove", {
+  const result = await fashnRun("background-remove", {
     image: dataUrl,
     return_base64: true,
   });
-  return pngToWhiteBg(pngResult);
+  return pngToWhiteBg(result);
 }
 
-// ② 마네킹 + 배경 제거 → Edit로 마네킹까지 지우기
+// ② 마네킹 + 배경 + 봉 삭제
 async function fashnMannequinRemove(dataUrl) {
-  // Step1: 배경 먼저 제거
+  // Step1: 배경 제거
   const bgRemoved = await fashnRun("background-remove", {
     image: dataUrl,
     return_base64: true,
   });
   const whiteBg = await pngToWhiteBg(bgRemoved);
 
-  // Step2: Edit로 마네킹 제거 지시
+  // Step2: Edit로 마네킹·봉 완전 제거
   const edited = await fashnRun("edit", {
     image: whiteBg,
-    prompt: "Remove the mannequin completely. Keep only the clothing item floating naturally on a clean white background. Preserve all garment details, textures, stitching, and colors exactly. The clothing should appear as a flat-lay or ghost mannequin product shot.",
+    prompt: `Remove the mannequin body and mannequin stand/pole completely from this fashion product image.
+Keep ONLY the clothing item itself.
+The clothing should appear as a professional flat-lay or ghost mannequin shot on a pure white background.
+Preserve every detail of the garment: fabric texture, stitching, seams, color, pattern, and shape exactly as they are.
+Do NOT alter, deform, or recolor the clothing in any way.
+The final background must be completely clean white (#ffffff) with no shadows, no stand, no pole, no mannequin parts.`,
     resolution: "2k",
     generation_mode: "quality",
     return_base64: true,
@@ -128,11 +130,16 @@ async function fashnMannequinRemove(dataUrl) {
   return edited;
 }
 
-// ③ 주름 펴기 (FASHN Edit)
+// ③ 주름 펴기 (강화된 프롬프트)
 async function fashnWrinkleFix(dataUrl) {
   const result = await fashnRun("edit", {
     image: dataUrl,
-    prompt: "Smooth out all wrinkles and creases in the clothing. Make the fabric look clean, pressed, and professional. Straighten any drooping or uneven parts like sleeves or hemlines. Keep the original garment shape, color, and design intact. Background should remain clean white.",
+    prompt: `This is a fashion product photo. Please do the following:
+1. REMOVE ALL WRINKLES: Smooth out every wrinkle, crease, and fold in the fabric. Make the clothing look perfectly pressed and unwrinkled as if freshly ironed.
+2. STRAIGHTEN DROOPING PARTS: Fix any drooping, uneven, or sagging areas such as sleeves, hemlines, necklines, or straps. Make them symmetrical and neat.
+3. CLEAN UP EDGES: Make the outline of the clothing sharp, clean, and well-defined.
+4. PRESERVE ORIGINAL: Keep the original garment color, fabric texture, design details, and overall shape exactly the same. Do NOT change the style or design.
+5. BACKGROUND: Keep the background clean white.`,
     resolution: "2k",
     generation_mode: "quality",
     return_base64: true,
@@ -155,22 +162,19 @@ function FinetunePanel({ file, onSave, onClose }) {
     setPreview(await applyImageFilters(file.corrected, next.brightness, next.contrast, next.saturation));
   };
 
-  const applyFashn = async (type) => {
+  const applyExtra = async (type) => {
     setProcessing(true);
     try {
       let result = preview;
       if (type === "bg") {
-        setProcLabel("FASHN 배경 제거 중... (1~3초)");
+        setProcLabel("배경 제거 중... (1~3초)");
         result = await fashnBgRemove(preview);
       } else if (type === "mannequin") {
-        setProcLabel("FASHN 마네킹 제거 중... (30~60초)");
+        setProcLabel("마네킹·봉 제거 중... (30~90초)");
         result = await fashnMannequinRemove(preview);
       } else if (type === "wrinkle") {
-        setProcLabel("FASHN 주름 펴기 중... (20~60초)");
+        setProcLabel("주름 펴기 중... (30~60초)");
         result = await fashnWrinkleFix(preview);
-      } else if (type === "outline") {
-        setProcLabel("Canvas 테두리 정렬 중...");
-        result = await sharpOutlineAndCenter(preview);
       }
       setPreview(result);
     } catch (e) {
@@ -198,30 +202,24 @@ function FinetunePanel({ file, onSave, onClose }) {
             ))}
           </div>
 
-          {/* FASHN 빠른 적용 */}
+          {/* 추가 보정 버튼 */}
           <div>
-            <div style={S.sectionTitle}>⚡ 추가 보정</div>
+            <div style={S.sectionTitle}>⚡ FASHN 추가 보정</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {[
-                { type: "bg",        label: "① 배경 재제거",        tag: "FASHN" },
-                { type: "mannequin", label: "② 마네킹 재제거",       tag: "FASHN" },
-                { type: "wrinkle",   label: "③ 주름 다시 펴기",      tag: "FASHN" },
-                { type: "outline",   label: "④ 테두리/중앙 재정렬",  tag: "Canvas" },
-              ].map(({ type, label, tag }) => (
+                { type: "bg",        label: "① 배경 재제거" },
+                { type: "mannequin", label: "② 마네킹·봉 재제거" },
+                { type: "wrinkle",   label: "③ 주름 다시 펴기" },
+              ].map(({ type, label }) => (
                 <button key={type}
                   style={{ ...S.btn, ...S.btnBlue, opacity: processing ? 0.5 : 1, fontSize: 11 }}
-                  onClick={() => applyFashn(type)} disabled={processing}>
+                  onClick={() => applyExtra(type)} disabled={processing}>
                   {label}
-                  <span style={{ marginLeft: 4, fontSize: 9, color: tag === "FASHN" ? "#f9a8d4" : "#86efac" }}>
-                    [{tag}]
-                  </span>
                 </button>
               ))}
             </div>
             {processing && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#facc15" }}>
-                ⏳ {procLabel}
-              </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: "#facc15" }}>⏳ {procLabel}</div>
             )}
           </div>
 
@@ -263,12 +261,10 @@ export default function PhotoEditor({ onFilesReady }) {
   const [files,          setFiles]          = useState([]);
   const [activeFileId,   setActiveFileId]   = useState(null);
   const [finetuneTarget, setFinetuneTarget] = useState(null);
-  const [corrOptions,    setCorrOptions]    = useState(
-    () => Object.fromEntries(CORRECTION_OPTIONS.map((o) => [o.id, false]).concat([["bg_remove", true]]))
-  );
-  const [processing, setProcessing] = useState(false);
-  const [progress,   setProgress]   = useState({ done: 0, total: 0, label: "" });
-  const [errorLog,   setErrorLog]   = useState([]);
+  const [corrOptions,    setCorrOptions]    = useState({ bg_remove: true, mannequin_remove: false, wrinkle_fix: false });
+  const [processing,     setProcessing]     = useState(false);
+  const [progress,       setProgress]       = useState({ done: 0, total: 0, label: "" });
+  const [errorLog,       setErrorLog]       = useState([]);
 
   const addFiles = useCallback((fileList) => {
     const newFiles = Array.from(fileList).map((f) => ({
@@ -289,13 +285,11 @@ export default function PhotoEditor({ onFilesReady }) {
 
   const handleDrop = useCallback((e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }, [addFiles]);
   const toggleSelect = (id) => setFiles((prev) => prev.map((f) => f.id === id ? { ...f, selected: !f.selected } : f));
-  const selectAll = (val) => setFiles((prev) => prev.map((f) => ({ ...f, selected: val })));
+  const selectAll    = (val) => setFiles((prev) => prev.map((f) => ({ ...f, selected: val })));
 
-  // ── 일괄 처리 ──
   const runBatch = async () => {
     const targets = files.filter((f) => f.selected && f.original);
     if (!targets.length) return alert("선택된 파일이 없습니다.");
-
     setProcessing(true);
     setErrorLog([]);
     setProgress({ done: 0, total: targets.length, label: "" });
@@ -307,28 +301,22 @@ export default function PhotoEditor({ onFilesReady }) {
       try {
         let result = item.original;
 
-        // STEP 1: 배경 제거 (① 또는 ②)
+        // STEP 1: 배경/마네킹 제거
         if (corrOptions.mannequin_remove) {
-          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 마네킹 제거 중...` });
+          setProgress({ done: i, total: targets.length, label: `[${i+1}/${targets.length}] ${item.name} — 마네킹·봉 제거 중...` });
           result = await fashnMannequinRemove(result);
         } else if (corrOptions.bg_remove) {
-          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 배경 제거 중...` });
+          setProgress({ done: i, total: targets.length, label: `[${i+1}/${targets.length}] ${item.name} — 배경 제거 중...` });
           result = await fashnBgRemove(result);
         }
 
-        // STEP 2: 주름 펴기 (FASHN Edit)
+        // STEP 2: 주름 펴기
         if (corrOptions.wrinkle_fix) {
-          setProgress({ done: i, total: targets.length, label: `${item.name} — FASHN 주름 펴기 중...` });
+          setProgress({ done: i, total: targets.length, label: `[${i+1}/${targets.length}] ${item.name} — 주름 펴기 중...` });
           result = await fashnWrinkleFix(result);
         }
 
-        // STEP 3: 테두리 + 중앙 정렬 (Canvas)
-        if (corrOptions.sharp_outline) {
-          setProgress({ done: i, total: targets.length, label: `${item.name} — 테두리 정렬 중...` });
-          result = await sharpOutlineAndCenter(result);
-        }
-
-        // STEP 4: 밝기/대비/채도
+        // STEP 3: 밝기/대비/채도
         const { brightness, contrast, saturation } = item.filters;
         result = await applyImageFilters(result, brightness, contrast, saturation);
 
@@ -347,16 +335,10 @@ export default function PhotoEditor({ onFilesReady }) {
     setActiveFileId(targets[0]?.id);
   };
 
-  const saveFinetuned = (updated) => {
-    setFiles((prev) => prev.map((f) => f.id === updated.id ? updated : f));
-    setFinetuneTarget(null);
-  };
-  const handleDownload = (file) => {
-    const src = file.corrected || file.original;
-    if (src) downloadImage(src, `edited_${file.name}`);
-  };
-  const downloadAll = () => files.filter((f) => f.finalized && f.corrected).forEach(handleDownload);
-  const sendToNext = () => {
+  const saveFinetuned = (u) => { setFiles((prev) => prev.map((f) => f.id === u.id ? u : f)); setFinetuneTarget(null); };
+  const handleDownload = (file) => { const src = file.corrected || file.original; if (src) downloadImage(src, `edited_${file.name}`); };
+  const downloadAll    = () => files.filter((f) => f.finalized && f.corrected).forEach(handleDownload);
+  const sendToNext     = () => {
     const finals = files.filter((f) => f.finalized && f.corrected);
     if (!finals.length) return alert("최종 확정된 파일이 없습니다.");
     onFilesReady?.(finals);
@@ -367,6 +349,11 @@ export default function PhotoEditor({ onFilesReady }) {
   const doneCount     = files.filter((f) => f.status === "done").length;
   const finalCount    = files.filter((f) => f.finalized).length;
   const selectedCount = files.filter((f) => f.selected).length;
+
+  // 크레딧 예상 계산
+  const creditsPerImage =
+    (corrOptions.mannequin_remove ? 4 : corrOptions.bg_remove ? 1 : 0) +
+    (corrOptions.wrinkle_fix ? 3 : 0);
 
   return (
     <div style={S.root}>
@@ -448,24 +435,22 @@ export default function PhotoEditor({ onFilesReady }) {
 
         {/* 보정 옵션 */}
         <div style={S.card}>
-          <div style={S.cardTitle}>✂️ AI 보정 옵션 선택</div>
-          <div style={S.optionGrid}>
+          <div style={S.cardTitle}>✂️ AI 보정 옵션 (모두 FASHN API)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {CORRECTION_OPTIONS.map((opt) => (
               <label key={opt.id} style={{
-                ...S.optionLabel,
+                ...S.optionLabelFull,
                 ...(corrOptions[opt.id] ? { border: "1px solid #22c55e", background: "#0f1f12" } : {})
               }}>
                 <input type="checkbox" checked={corrOptions[opt.id] || false}
                   onChange={(e) => setCorrOptions((prev) => ({ ...prev, [opt.id]: e.target.checked }))}
-                  style={{ accentColor: "#22c55e", marginTop: 2, flexShrink: 0 }} />
+                  style={{ accentColor: "#22c55e", flexShrink: 0 }} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: "#ddd" }}>{opt.label}</span>
-                    <span style={{
-                      fontSize: 9, padding: "1px 5px", borderRadius: 3,
-                      background: opt.tag === "FASHN" ? "#4c1d95" : "#14532d",
-                      color: opt.tag === "FASHN" ? "#f9a8d4" : "#86efac",
-                    }}>{opt.tag}</span>
+                    <span style={{ fontSize: 10, color: "#f9a8d4", background: "#4c1d95", padding: "1px 6px", borderRadius: 3 }}>
+                      {opt.credits}
+                    </span>
                   </div>
                   <div style={{ fontSize: 10, color: "#777", marginTop: 2 }}>{opt.desc}</div>
                 </div>
@@ -473,13 +458,14 @@ export default function PhotoEditor({ onFilesReady }) {
             ))}
           </div>
 
-          {/* 크레딧 예상 안내 */}
-          <div style={S.infoBox}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>💳 FASHN 크레딧 예상 소모 (1장 기준)</div>
-            <div>① 배경 삭제: 1 크레딧</div>
-            <div>② 마네킹 삭제: 1 + 3 크레딧 (배경제거 + Edit quality)</div>
-            <div>③ 주름 펴기: 3 크레딧 (Edit quality 2k)</div>
-            <div>④ 테두리 정렬: 0 크레딧 (Canvas 무료)</div>
+          {/* 크레딧 합계 */}
+          <div style={S.creditBox}>
+            <span>💳 선택 옵션 크레딧: 장당 <strong style={{ color: "#fbbf24" }}>{creditsPerImage} 크레딧</strong></span>
+            {selectedCount > 0 && (
+              <span style={{ marginLeft: 12 }}>
+                → {selectedCount}장 선택 시 총 <strong style={{ color: "#fbbf24" }}>{creditsPerImage * selectedCount} 크레딧</strong>
+              </span>
+            )}
           </div>
 
           {/* 진행 상태 */}
@@ -578,53 +564,52 @@ export default function PhotoEditor({ onFilesReady }) {
 // 스타일
 // ────────────────────────────────────────────────────────────
 const S = {
-  root:        { display: "flex", minHeight: "calc(100vh - 60px)", background: "#0f0f0f", color: "#e5e5e5", fontFamily: "'Pretendard','Noto Sans KR',sans-serif" },
-  sidebar:     { width: 230, minWidth: 230, background: "#1a1a1a", borderRight: "1px solid #2a2a2a", padding: "12px 10px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
-  uploadZone:  { border: "1.5px dashed #3a3a3a", borderRadius: 8, padding: "12px 8px", textAlign: "center", cursor: "pointer", background: "#111" },
-  uploadText:  { fontSize: 11, fontWeight: 600, marginTop: 4, color: "#ccc" },
-  uploadSub:   { fontSize: 9, color: "#666", marginTop: 2 },
-  driveBtn:    { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px 0", borderRadius: 7, border: "1px solid #3a3a3a", background: "#1e293b", color: "#93c5fd", fontSize: 11, fontWeight: 600, cursor: "pointer", width: "100%" },
-  listHeader:  { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  listCount:   { fontSize: 10, color: "#888" },
-  microBtn:    { fontSize: 9, padding: "2px 5px", borderRadius: 4, border: "1px solid #333", background: "#222", color: "#aaa", cursor: "pointer" },
-  fileList:    { display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", flex: 1 },
-  fileItem:    { display: "flex", alignItems: "center", gap: 6, padding: "5px 6px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent", background: "#111" },
+  root:           { display: "flex", minHeight: "calc(100vh - 60px)", background: "#0f0f0f", color: "#e5e5e5", fontFamily: "'Pretendard','Noto Sans KR',sans-serif" },
+  sidebar:        { width: 230, minWidth: 230, background: "#1a1a1a", borderRight: "1px solid #2a2a2a", padding: "12px 10px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
+  uploadZone:     { border: "1.5px dashed #3a3a3a", borderRadius: 8, padding: "12px 8px", textAlign: "center", cursor: "pointer", background: "#111" },
+  uploadText:     { fontSize: 11, fontWeight: 600, marginTop: 4, color: "#ccc" },
+  uploadSub:      { fontSize: 9, color: "#666", marginTop: 2 },
+  driveBtn:       { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "9px 0", borderRadius: 7, border: "1px solid #3a3a3a", background: "#1e293b", color: "#93c5fd", fontSize: 11, fontWeight: 600, cursor: "pointer", width: "100%" },
+  listHeader:     { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  listCount:      { fontSize: 10, color: "#888" },
+  microBtn:       { fontSize: 9, padding: "2px 5px", borderRadius: 4, border: "1px solid #333", background: "#222", color: "#aaa", cursor: "pointer" },
+  fileList:       { display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", flex: 1 },
+  fileItem:       { display: "flex", alignItems: "center", gap: 6, padding: "5px 6px", borderRadius: 6, cursor: "pointer", border: "1px solid transparent", background: "#111" },
   fileItemActive: { border: "1px solid #22c55e", background: "#0f1f12" },
-  thumb:       { width: 34, height: 34, objectFit: "cover", borderRadius: 4, flexShrink: 0 },
-  fileName:    { fontSize: 10, color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  iconBtn:     { background: "none", border: "none", color: "#555", fontSize: 12, cursor: "pointer", flexShrink: 0, padding: "0 2px" },
-  main:        { flex: 1, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" },
-  twoCol:      { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 },
-  previewCard: { background: "#1a1a1a", borderRadius: 10, padding: "12px 14px", border: "1px solid #2a2a2a" },
+  thumb:          { width: 34, height: 34, objectFit: "cover", borderRadius: 4, flexShrink: 0 },
+  fileName:       { fontSize: 10, color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  iconBtn:        { background: "none", border: "none", color: "#555", fontSize: 12, cursor: "pointer", flexShrink: 0, padding: "0 2px" },
+  main:           { flex: 1, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14, overflowY: "auto" },
+  twoCol:         { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 },
+  previewCard:    { background: "#1a1a1a", borderRadius: 10, padding: "12px 14px", border: "1px solid #2a2a2a" },
   previewCardLabel: { fontSize: 12, fontWeight: 600, color: "#aaa", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" },
-  badge:       { fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#333", color: "#bbb", fontWeight: 700 },
-  mainImg:     { width: "100%", borderRadius: 6, objectFit: "contain", maxHeight: 280 },
-  emptyImg:    { height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "#444", fontSize: 13, border: "1px dashed #2a2a2a", borderRadius: 6 },
-  previewImg:  { width: "100%", borderRadius: 6, objectFit: "contain", maxHeight: 200 },
-  card:        { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px" },
-  cardTitle:   { fontSize: 13, fontWeight: 700, color: "#e5e5e5", marginBottom: 10 },
-  optionGrid:  { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
-  optionLabel: { display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer", padding: "8px 10px", borderRadius: 7, border: "1px solid #2a2a2a", background: "#111", transition: "all .15s" },
-  infoBox:     { background: "#1a1f2e", border: "1px solid #2d3a5a", borderRadius: 6, padding: "8px 10px", fontSize: 10, color: "#93c5fd", lineHeight: 1.8, marginTop: 10 },
-  sliderRow:   { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 },
-  sliderLabel: { fontSize: 12, color: "#aaa", width: 28, flexShrink: 0 },
-  slider:      { flex: 1, accentColor: "#22c55e" },
-  sliderVal:   { fontSize: 11, color: "#888", width: 36, textAlign: "right" },
-  progressBar: { position: "relative", background: "#222", borderRadius: 6, height: 24, overflow: "hidden", marginTop: 10 },
-  progressFill:{ position: "absolute", left: 0, top: 0, height: "100%", background: "#22c55e", transition: "width .3s" },
-  progressText:{ position: "absolute", width: "100%", textAlign: "center", fontSize: 11, color: "#fff", lineHeight: "24px", fontWeight: 600 },
-  errorBox:    { background: "#2d1515", border: "1px solid #7f1d1d", borderRadius: 6, padding: "8px 10px", marginTop: 8, fontSize: 11, color: "#fca5a5" },
-  btn:         { padding: "8px 14px", borderRadius: 7, border: "1px solid #3a3a3a", background: "#222", color: "#ddd", fontSize: 12, fontWeight: 600, cursor: "pointer" },
-  btnGreen:    { background: "#22c55e", border: "none", color: "#fff" },
-  btnBlue:     { background: "#1e293b", border: "1px solid #334155", color: "#93c5fd" },
-  btnFinalOn:  { background: "#14532d", border: "1px solid #22c55e", color: "#4ade80" },
-  overlay:     { position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
-  modal:       { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 12, width: 720, maxWidth: "95vw", maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column" },
-  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #2a2a2a" },
-  modalTitle:  { fontSize: 14, fontWeight: 700, color: "#e5e5e5" },
-  closeBtn:    { background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer" },
-  modalBody:   { flex: 1, overflowY: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 },
-  modalFooter: { display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 18px", borderTop: "1px solid #2a2a2a" },
-  miniLabel:   { fontSize: 11, color: "#888", fontWeight: 600, marginBottom: 4 },
-  sectionTitle:{ fontSize: 12, fontWeight: 700, color: "#ccc", marginBottom: 6 },
+  badge:          { fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "#333", color: "#bbb", fontWeight: 700 },
+  mainImg:        { width: "100%", borderRadius: 6, objectFit: "contain", maxHeight: 280 },
+  emptyImg:       { height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "#444", fontSize: 13, border: "1px dashed #2a2a2a", borderRadius: 6 },
+  previewImg:     { width: "100%", borderRadius: 6, objectFit: "contain", maxHeight: 200 },
+  card:           { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 10, padding: "14px 16px" },
+  cardTitle:      { fontSize: 13, fontWeight: 700, color: "#e5e5e5", marginBottom: 10 },
+  optionLabelFull:{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", padding: "10px 12px", borderRadius: 7, border: "1px solid #2a2a2a", background: "#111", transition: "all .15s" },
+  creditBox:      { marginTop: 10, padding: "8px 12px", background: "#1a1f2e", border: "1px solid #2d3a5a", borderRadius: 6, fontSize: 11, color: "#93c5fd" },
+  sliderRow:      { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 },
+  sliderLabel:    { fontSize: 12, color: "#aaa", width: 28, flexShrink: 0 },
+  slider:         { flex: 1, accentColor: "#22c55e" },
+  sliderVal:      { fontSize: 11, color: "#888", width: 36, textAlign: "right" },
+  progressBar:    { position: "relative", background: "#222", borderRadius: 6, height: 24, overflow: "hidden", marginTop: 10 },
+  progressFill:   { position: "absolute", left: 0, top: 0, height: "100%", background: "#22c55e", transition: "width .3s" },
+  progressText:   { position: "absolute", width: "100%", textAlign: "center", fontSize: 11, color: "#fff", lineHeight: "24px", fontWeight: 600 },
+  errorBox:       { background: "#2d1515", border: "1px solid #7f1d1d", borderRadius: 6, padding: "8px 10px", marginTop: 8, fontSize: 11, color: "#fca5a5" },
+  btn:            { padding: "8px 14px", borderRadius: 7, border: "1px solid #3a3a3a", background: "#222", color: "#ddd", fontSize: 12, fontWeight: 600, cursor: "pointer" },
+  btnGreen:       { background: "#22c55e", border: "none", color: "#fff" },
+  btnBlue:        { background: "#1e293b", border: "1px solid #334155", color: "#93c5fd" },
+  btnFinalOn:     { background: "#14532d", border: "1px solid #22c55e", color: "#4ade80" },
+  overlay:        { position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  modal:          { background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 12, width: 720, maxWidth: "95vw", maxHeight: "90vh", overflow: "hidden", display: "flex", flexDirection: "column" },
+  modalHeader:    { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid #2a2a2a" },
+  modalTitle:     { fontSize: 14, fontWeight: 700, color: "#e5e5e5" },
+  closeBtn:       { background: "none", border: "none", color: "#888", fontSize: 18, cursor: "pointer" },
+  modalBody:      { flex: 1, overflowY: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 16 },
+  modalFooter:    { display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 18px", borderTop: "1px solid #2a2a2a" },
+  miniLabel:      { fontSize: 11, color: "#888", fontWeight: 600, marginBottom: 4 },
+  sectionTitle:   { fontSize: 12, fontWeight: 700, color: "#ccc", marginBottom: 6 },
 };
