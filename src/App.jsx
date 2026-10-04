@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import AutoStudio from './components/AutoStudio.jsx'
 import PhotoEditor from './components/PhotoEditor.jsx'
 import DetailPageBuilder from './components/DetailPageBuilder.jsx'
 import TryOnStudio from './components/TryOnStudio.jsx'
 
 const TABS = [
+  { label: '자동 제작', desc: 'OpenAI 사진부터 상세페이지까지' },
   { label: '📸 1차 사진 보정', desc: '원본 사진 AI 보정 및 누끼' },
   { label: '🎭 AI 착용샷', desc: 'AI 모델 착용샷 자동 생성' },
   { label: '🛍️ 2차 상세페이지', desc: '상품 상세페이지 자동 제작' },
@@ -40,9 +42,10 @@ export default function App() {
       </header>
 
       <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-        {activeTab === 0 && <PhotoEditor images={refinedImages} setImages={setRefinedImages} />}
-        {activeTab === 1 && <TryOnStudio refinedImages={refinedImages} />}
-        {activeTab === 2 && <DetailPageBuilder refinedImages={refinedImages} />}
+        {activeTab === 0 && <AutoStudio />}
+        {activeTab === 1 && <PhotoEditor onFilesReady={files => setRefinedImages(files.map(f => ({...f, editedUrl:f.corrected, approved:true})))} />}
+        {activeTab === 2 && <TryOnStudio refinedImages={refinedImages} />}
+        {activeTab === 3 && <DetailPageBuilder refinedImages={refinedImages} />}
       </main>
     </div>
   )
