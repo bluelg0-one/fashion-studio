@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/start.js",
-    "test": "node --test server/studio.test.js"
+    "test": "node --test server/*.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
