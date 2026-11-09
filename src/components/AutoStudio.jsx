@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds, clampCrop, cropCanvas} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
+import {RETOUCH_PRESETS, DEFAULT_RETOUCH} from '../utils/retouchPresets.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument} from '../utils/studioImages.js';
 
 async function api(action,body) {
@@ -24,6 +25,29 @@ function defaultRegions(bounds,type) {
     fabric:{x:.34,y:pants ? .27 : .39,w:.32,h:.25},
   };
   return Object.fromEntries(Object.entries(regions).map(([id,d])=>[id,clampCrop({x:bounds.x+d.x*bounds.w,y:bounds.y+d.y*bounds.h,w:d.w*bounds.w,h:d.h*bounds.h})]));
+}
+
+function RetouchSettings({value,onChange,status}) {
+  const set=patch=>onChange({...value,...patch});
+  const togglePreset=id=>set({presets:value.presets.includes(id)?value.presets.filter(p=>p!==id):[...value.presets,id]});
+  const prompted=value.presets.length>0||value.custom.trim().length>0;
+  return <div className="retouch-settings">
+    <h3>누끼·보정 설정 <small>Photoroom</small></h3>
+    <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
+    <label className="check"><input type="checkbox" checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
+    <label className="check"><input type="checkbox" checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (Photoroom AI 조명)</label>
+    <p className="slot-note">여기까지는 원본 옷을 그대로 두고 배경만 정리합니다.</p>
+    <h4>기본 프롬프트 (선택)</h4>
+    {RETOUCH_PRESETS.map(p=><label key={p.id} className="check"><input type="checkbox" aria-label={p.label} checked={value.presets.includes(p.id)} onChange={()=>togglePreset(p.id)}/>{p.label}</label>)}
+    <label>직접 입력 프롬프트<textarea aria-label="직접 입력 프롬프트" maxLength={1000} value={value.custom} placeholder="예: 목 부분 라벨이 보이지 않게 정리해 주세요." onChange={e=>set({custom:e.target.value})}/></label>
+    {prompted&&<>
+      <label>프롬프트 보정 엔진<select aria-label="프롬프트 보정 엔진" value={value.engine} onChange={e=>set({engine:e.target.value})}>
+        <option value="photoroom">Photoroom AI 편집</option>
+        <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집{status&&!status.openai?' (키 없음)':''}</option>
+      </select></label>
+      <p className="review-note">프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
+    </>}
+  </div>;
 }
 
 function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove}) {
@@ -55,14 +79,14 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove}) {
 }
 
 export default function AutoStudio() {
-  const [ready,setReady]=useState(null),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
+  const [ready,setReady]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
   const [brightness,setBrightness]=useState(3),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const cache=useRef(new Map()),lock=useRef(false),heroCanvas=useRef(null),previewUrl=useRef(null);
   const rows=sizeRows[garment]||[newSizeRow()];
-  useEffect(()=>{api('status').then(r=>setReady(r.configured)).catch(()=>setReady(false));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
+  useEffect(()=>{api('status').then(r=>setReady(r)).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
   const patch=(id,values)=>{setSlots(current=>({...current,[id]:{...current[id],...values}}));setPreview(null);};
   const setText=(key,value)=>{setTexts(current=>({...current,[key]:value}));setPreview(null);};
   async function task(work) {
@@ -82,12 +106,15 @@ export default function AutoStudio() {
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
-  async function edited(source) {
-    if(cache.current.has(source))return cache.current.get(source);
-    const response=await api('edit',{image:source});
+  async function edited(source,warnings) {
+    // 같은 사진이라도 보정 설정이 바뀌면 새로 처리합니다.
+    const key=JSON.stringify(retouch)+source;
+    if(cache.current.has(key))return cache.current.get(key);
+    const response=await api('retouch',{image:source,options:retouch});
     const canvas=await imageCanvas(response.image);
     cutoutBounds(canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height));
-    cache.current.set(source,response.image);
+    if(response.warning)warnings.push(response.warning);
+    else cache.current.set(key,response.image);
     return response.image;
   }
   async function refreshImages(current,makeDefaults=false,type=garment) {
@@ -109,23 +136,24 @@ export default function AutoStudio() {
   }
   async function processPhotos(onlyId) {
     await task(async()=>{
-      const status=await api('status');setReady(status.configured);
-      if(!status.configured)throw new Error('서버에 API 키가 연결되지 않았습니다. API 키가 설정된 Preview에서 실행하세요.');
-      let current={...slots};
+      const status=await api('status');setReady(status);
+      if(!status.photoroom)throw new Error('서버에 Photoroom API 키(PHOTOROOM_API_KEY)가 연결되지 않았습니다. Vercel 환경변수에 등록한 뒤 다시 배포하세요.');
+      let current={...slots};const warnings=[];
       const pending=Object.values(current).filter(slot=>slot.source&&(onlyId?slot.id===onlyId:slot.enabled&&(slot.id!=='fit'||fitEnabled)&&slot.status!=='done'));
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거·약한 주름 보정`);
-        const cutout=await edited(slot.source);
+        const cutout=await edited(slot.source,warnings);
         current={...current,[slot.id]:{...slot,cutout,status:'done'}};
         current=await refreshImages(current,slot.id==='hero');
         setSlots(current);
       }
-      if(!onlyId&&!texts.headline&&current.hero.source){
+      if(!onlyId&&!texts.headline&&current.hero.source&&status.openai){
         setStep('확인된 상품 정보로 문구 작성 중');
         const copy=await api('analyze',{image:current.hero.source,product:texts.product});
         setTexts(value=>({...value,headline:copy.headline,description:[copy.description,...copy.points].join('\n')}));
       }
-      setStep('완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.');
+      if(warnings.length)setError(warnings.join('\n'));
+      setStep(`완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.${!onlyId&&!status.openai?' (OpenAI 키가 없어 문구 자동 작성은 건너뛰었습니다.)':''}`);
     });
   }
   function adjustCrop(id,key,value) {
@@ -176,7 +204,7 @@ export default function AutoStudio() {
   const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onCrop:adjustCrop,onRemove:removePhoto};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
-    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':ready?'API 키 설정됨 · AI 보정 시 사용료 발생':'AI 연결 필요 · 사진 배치와 편집은 가능합니다'}</span></div>
+    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?'연결됨':'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
     <p className="session-note">작업은 현재 브라우저 메모리에만 보관됩니다. 새로고침하거나 다른 탭으로 이동하기 전에 저장하세요.</p>
     <p role="status" aria-live="polite">{step}</p>{error&&<p role="alert" className="studio-error">{error}</p>}
@@ -186,7 +214,7 @@ export default function AutoStudio() {
         <label>상품 정보<textarea value={texts.product} maxLength={3000} placeholder="확인된 소재·색상·상품 정보만 입력하세요." onChange={e=>setText('product',e.target.value)}/></label>
         <label>상품 제목<input value={texts.headline} maxLength={200} onChange={e=>setText('headline',e.target.value)}/></label>
         <label>상품 설명<textarea value={texts.description} maxLength={4000} onChange={e=>setText('description',e.target.value)}/></label>
-        <p>배경을 제거해 흰색으로 저장하고, 주름과 조명을 약하게 정리합니다. 무늬·봉제선·실제 색상은 원본과 비교해 주세요.</p>
+        <RetouchSettings value={retouch} onChange={setRetouch} status={ready}/>
         <label>공통 밝기 · {brightness}%<input aria-label="공통 밝기" type="range" min="0" max="8" value={brightness} onChange={e=>setBrightness(Number(e.target.value))}/></label>
         <button onClick={()=>task(async()=>{setSlots(await refreshImages(slots));setStep('보정된 사진 전체에 공통 밝기를 적용했습니다.');})}>보정된 사진에 공통 밝기 적용</button>
         <button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button>

@@ -10,9 +10,9 @@ try{
  let edits=0,analyses=0;
  await page.route('**/api/studio?*',async route=>{
   const action=new URL(route.request().url()).searchParams.get('action');
-  if(action==='edit'){edits++;return route.fulfill({json:{image:fixture}});}
+  if(action==='edit'||action==='retouch'){edits++;return route.fulfill({json:{image:fixture}});}
   if(action==='analyze'){analyses++;return route.fulfill({json:{headline:'스트라이프 티셔츠',description:'확인된 상품 설명',points:['원본 무늬']}});}
-  return route.fulfill({json:{configured:true}});
+  return route.fulfill({json:{configured:true,openai:true,photoroom:true}});
  });
  await page.reload();
  const slot=id=>page.locator(`[data-slot="${id}"]`);

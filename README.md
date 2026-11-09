@@ -17,6 +17,16 @@ npm run dev
 
 서버 환경에 기존 `OPENAI_API_KEY`를 연결합니다. **VITE_ 접두사를 사용하지 않습니다.** 개발 서버는 `.env.local`도 지원하며 프로덕션 서버는 실행 환경 변수를 사용합니다. 모델 선택 변수는 `OPENAI_IMAGE_MODEL`(기본 `gpt-image-1`), `OPENAI_TEXT_MODEL`(기본 `gpt-4.1-mini`)입니다.
 
+## Photoroom 누끼·보정
+
+사진 누끼·중앙 정렬은 Photoroom Image Editing API(`image-api.photoroom.com/v2/edit`)로 처리합니다. 서버 환경변수 `PHOTOROOM_API_KEY`가 필요합니다(**VITE_ 접두사 금지**). Photoroom 웹 편집기(app.photoroom.com)의 화면 작업과는 별개이며, API 키와 API 요금제가 필요합니다.
+
+- 1단계(항상): 배경 누끼 + 중앙 정렬(선택) + AI 조명(선택). 원본 옷은 그대로 둡니다.
+- 2단계(선택): 기본 프롬프트(마네킹 오염 정리·구김 펴기·좌우 대칭·기울기 바로잡기)와 직접 입력 프롬프트. 엔진은 Photoroom AI 편집(`describeAnyChange`) 또는 OpenAI 이미지 편집 중 선택합니다. 생성형 보정이라 질감이 달라질 수 있어 기본값은 꺼져 있습니다. 2단계가 실패하면 1단계 누끼 결과와 경고를 돌려줍니다.
+- 기본 프롬프트 문장은 `src/utils/retouchPresets.js`에서 수정합니다.
+- 상품 문구 자동 작성은 계속 `OPENAI_API_KEY`를 사용합니다. 없으면 문구 작성만 건너뜁니다.
+- 실제 Photoroom 호출은 아직 검증하지 않았습니다(개발 환경에서 Photoroom 접속 불가). 서버 테스트는 모의 응답으로 요청 형식만 검사합니다.
+
 ## 편집 흐름
 
 1. 옷 종류와 확인된 상품 정보를 입력하고 대표 정면 사진을 선택합니다.
