@@ -71,6 +71,14 @@ async function retouch(body,env,request) {
 export async function studio(action, body, env = process.env, request = fetch) {
   if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY) };
   if (action === 'retouch') return retouch(body,env,request);
+  if (action === 'credits') {
+    // 남은 Photoroom 이미지 수 조회 (과금 없음).
+    if(!env.PHOTOROOM_API_KEY)throw fail('현재 실행 환경에 PHOTOROOM_API_KEY가 연결되지 않았습니다.',503);
+    const response=await request('https://image-api.photoroom.com/v2/account',{headers:{'x-api-key':env.PHOTOROOM_API_KEY},signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw await photoroomError(response);
+    const data=await response.json();
+    return {available:Number(data?.images?.available??NaN),subscription:Number(data?.images?.subscription??NaN)};
+  }
   if (!['edit','analyze'].includes(action)) throw Object.assign(new Error('지원하지 않는 작업입니다.'), {status:400});
   if (!env.OPENAI_API_KEY) throw Object.assign(new Error('현재 실행 환경에 OPENAI_API_KEY가 연결되지 않았습니다.'), {status:503});
   const match = typeof body.image === 'string' && body.image.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
@@ -109,7 +117,7 @@ export async function middleware(req,res,next) {
   res.setHeader('Content-Type','application/json'); res.setHeader('Cache-Control','no-store');
   try {
     const action=url.pathname.split('/').pop();
-    if(req.method !== (action==='status'?'GET':'POST')) {res.statusCode=405; return res.end(JSON.stringify({error:'Method not allowed'}));}
+    if(req.method !== (['status','credits'].includes(action)?'GET':'POST')) {res.statusCode=405; return res.end(JSON.stringify({error:'Method not allowed'}));}
     if(req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) {res.statusCode=403; return res.end(JSON.stringify({error:'허용되지 않은 요청입니다.'}));}
     let text=''; for await (const chunk of req) {text+=chunk; if(text.length>MAX+10000) throw Object.assign(new Error('파일이 너무 큽니다.'),{status:413});}
     const result=await studio(action,text?JSON.parse(text):{});

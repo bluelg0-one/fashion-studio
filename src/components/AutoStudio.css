@@ -3,3 +3,4 @@
 .auto-studio button.primary:hover{background:#1b315f;color:#fff}
 .retouch-settings{border:1px solid #dce2e9;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fafbfc}.retouch-settings h3{font-size:16px;margin:0 0 8px}.retouch-settings h3 small{font-weight:400;color:#637083;font-size:12px;margin-left:6px}.retouch-settings h4{font-size:14px;margin:14px 0 6px}.studio-error{white-space:pre-line}
 .retouch-settings .check{margin:6px 0}
+.version-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0;padding:8px 10px;background:#f5f7fa;border-radius:8px;font-size:13px}.version-bar span{font-weight:600}.version-bar button{padding:6px 10px!important;margin:0!important;font-size:13px!important}.version-note{color:#637083;flex-basis:100%}.slot-retouch{margin:12px 0;font-size:13px}.slot-retouch summary{cursor:pointer;font-weight:600}.slot-retouch .retouch-settings{background:#fff}

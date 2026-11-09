@@ -63,3 +63,8 @@ test('missing Photoroom key and Photoroom errors are explained',async()=>{
  await assert.rejects(studio('retouch',{image},{OPENAI_API_KEY:'x'},()=>{throw Error('unexpected')}),{status:503});
  await assert.rejects(studio('retouch',{image},env,async()=>({ok:false,status:402,json:async()=>({detail:'no credits'})})),e=>e.status===402&&/크레딧/.test(e.message)&&!e.message.includes('pr-test'));
 });
+test('credits reads the Photoroom balance without editing',async()=>{
+ let call;
+ const r=await studio('credits',{},env,async(url,o)=>{call={url,o};return {ok:true,json:async()=>({images:{available:7,subscription:10},plan:'x'})};});
+ assert.equal(call.url,'https://image-api.photoroom.com/v2/account');assert.equal(call.o.method,undefined);assert.deepEqual(r,{available:7,subscription:10});
+});
