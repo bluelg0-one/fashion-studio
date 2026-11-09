@@ -35,7 +35,7 @@ function RetouchSettings({value,onChange,status}) {
     <h3>누끼·보정 설정 <small>Photoroom</small></h3>
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
-    <label className="check"><input type="checkbox" checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (Photoroom AI 조명)</label>
+    <label className="check"><input type="checkbox" checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
     <p className="slot-note">여기까지는 원본 옷을 그대로 두고 배경만 정리합니다.</p>
     <h4>기본 프롬프트 (선택)</h4>
     {RETOUCH_PRESETS.map(p=><label key={p.id} className="check"><input type="checkbox" aria-label={p.label} checked={value.presets.includes(p.id)} onChange={()=>togglePreset(p.id)}/>{p.label}</label>)}
@@ -45,7 +45,7 @@ function RetouchSettings({value,onChange,status}) {
         <option value="photoroom">Photoroom AI 편집</option>
         <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집{status&&!status.openai?' (키 없음)':''}</option>
       </select></label>
-      <p className="review-note">프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
+      <p className="review-note">Photoroom은 사진 1장당 한 번만 요청합니다(선택 항목 수와 관계없이 같은 요금). 프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
     </>}
   </div>;
 }

@@ -34,11 +34,19 @@ test('retouch without prompts makes one Photoroom cutout call with centering',as
  const f=calls[0].o.body;assert.equal(f.get('removeBackground'),'true');assert.equal(f.get('horizontalAlignment'),'center');assert.equal(f.get('lighting.mode'),null);assert.ok(f.get('imageFile'));
  assert.equal(result.image,'data:image/webp;base64,d2VicA==');assert.equal(result.warning,undefined);
 });
-test('selected presets and custom prompt go to the AI step with preservation text',async()=>{
- const forms=[];
- await studio('retouch',{image,options:{presets:['iron','clean','bogus'],custom:'라벨 숨기기',engine:'photoroom'}},env,async(url,o)=>{forms.push(o.body);return imageResponse();});
- assert.equal(forms.length,2);const p=forms[1].get('describeAnyChange.prompt');
- assert.match(p,/do not change its color, pattern/);assert.match(p,/ironed/);assert.match(p,/dust/);assert.match(p,/라벨 숨기기/);assert.doesNotMatch(p,/symmetrical/);
+test('presets use one Photoroom call: AI ironing feature plus editWithAI prompt',async()=>{
+ const calls=[];
+ await studio('retouch',{image,options:{presets:['iron','clean','bogus'],custom:'라벨 숨기기',lighting:true}},env,async(url,o)=>{calls.push(o);return imageResponse();});
+ assert.equal(calls.length,1);const f=calls[0].body;
+ assert.equal(f.get('ironing.mode'),'ai.auto');assert.equal(calls[0].headers['pr-ironing-model-version'],'v2');
+ assert.equal(f.get('lighting.mode'),'ai.preserve-hue-and-saturation');assert.equal(f.get('editWithAI.mode'),'ai.auto');assert.equal(f.get('removeBackground'),'true');
+ const p=f.get('editWithAI.prompt');
+ assert.match(p,/do not change its color, pattern/);assert.match(p,/dust/);assert.match(p,/라벨 숨기기/);assert.doesNotMatch(p,/ironed/);assert.doesNotMatch(p,/symmetrical/);
+});
+test('ironing alone needs no prompt',async()=>{
+ const calls=[];
+ await studio('retouch',{image,options:{presets:['iron']}},env,async(url,o)=>{calls.push(o);return imageResponse();});
+ assert.equal(calls.length,1);assert.equal(calls[0].body.get('ironing.mode'),'ai.auto');assert.equal(calls[0].body.get('editWithAI.mode'),null);
 });
 test('openai engine edits the Photoroom cutout',async()=>{
  const urls=[];
@@ -46,8 +54,9 @@ test('openai engine edits the Photoroom cutout',async()=>{
  assert.deepEqual(urls,['https://image-api.photoroom.com/v2/edit','https://api.openai.com/v1/images/edits']);assert.equal(r.image,'data:image/png;base64,cG5n');
 });
 test('failed prompt step keeps the cutout and reports a warning',async()=>{
- let n=0;
- const r=await studio('retouch',{image,options:{presets:['iron']}},env,async()=>++n===1?imageResponse():{ok:false,status:400,json:async()=>({detail:'unknown argument'})});
+ const forms=[];
+ const r=await studio('retouch',{image,options:{presets:['clean']}},env,async(url,o)=>{forms.push(o.body);return forms.length===1?{ok:false,status:400,json:async()=>({detail:'unknown argument'})}:imageResponse();});
+ assert.equal(forms.length,2);assert.equal(forms[1].get('editWithAI.mode'),null);
  assert.equal(r.image,'data:image/webp;base64,d2VicA==');assert.match(r.warning,/unknown argument/);
 });
 test('missing Photoroom key and Photoroom errors are explained',async()=>{

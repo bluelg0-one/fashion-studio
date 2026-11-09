@@ -21,11 +21,14 @@ npm run dev
 
 사진 누끼·중앙 정렬은 Photoroom Image Editing API(`image-api.photoroom.com/v2/edit`)로 처리합니다. 서버 환경변수 `PHOTOROOM_API_KEY`가 필요합니다(**VITE_ 접두사 금지**). Photoroom 웹 편집기(app.photoroom.com)의 화면 작업과는 별개이며, API 키와 API 요금제가 필요합니다.
 
-- 1단계(항상): 배경 누끼 + 중앙 정렬(선택) + AI 조명(선택). 원본 옷은 그대로 둡니다.
-- 2단계(선택): 기본 프롬프트(마네킹 오염 정리·구김 펴기·좌우 대칭·기울기 바로잡기)와 직접 입력 프롬프트. 엔진은 Photoroom AI 편집(`describeAnyChange`) 또는 OpenAI 이미지 편집 중 선택합니다. 생성형 보정이라 질감이 달라질 수 있어 기본값은 꺼져 있습니다. 2단계가 실패하면 1단계 누끼 결과와 경고를 돌려줍니다.
+- 기본: 배경 누끼 + 중앙 정렬(선택) + 조명 보정(선택, `lighting.mode=ai.preserve-hue-and-saturation`로 색상 유지). 원본 옷은 그대로 둡니다.
+- 선택: 기본 프롬프트(마네킹 오염 정리·구김 펴기·좌우 대칭·기울기 바로잡기)와 직접 입력 프롬프트. 구김 펴기는 Photoroom AI Ironing(`ironing.mode`), 나머지는 Edit With AI(`editWithAI.prompt`)를 사용합니다.
+- Photoroom은 호출 1번당 $0.10이며 옵션 수와 관계없이 같으므로, 사진 1장당 한 번에 모두 요청합니다. AI 보정이 거절되면 누끼만 다시 요청(추가 1회)해 결과와 경고를 돌려줍니다.
+- OpenAI 엔진을 고르면 Photoroom 누끼 후 OpenAI 이미지 편집으로 프롬프트를 적용합니다.
+- 생성형 보정(Edit With AI 출력은 1K)이라 질감이 달라질 수 있어 기본값은 꺼져 있습니다.
 - 기본 프롬프트 문장은 `src/utils/retouchPresets.js`에서 수정합니다.
 - 상품 문구 자동 작성은 계속 `OPENAI_API_KEY`를 사용합니다. 없으면 문구 작성만 건너뜁니다.
-- 실제 Photoroom 호출은 아직 검증하지 않았습니다(개발 환경에서 Photoroom 접속 불가). 서버 테스트는 모의 응답으로 요청 형식만 검사합니다.
+- 실제 Photoroom API로 누끼 단독 호출과 누끼+AI 다림질+Edit With AI+조명 결합 호출이 HTTP 200·투명 WebP를 반환하는 것을 테스트 이미지로 확인했습니다. 서버 테스트는 모의 응답으로 요청 형식을 검사합니다.
 
 ## 편집 흐름
 

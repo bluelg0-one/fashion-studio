@@ -10,11 +10,11 @@ async function photoroomError(response) {
   const messages={401:'Photoroom API 키 인증에 실패했습니다. Vercel의 PHOTOROOM_API_KEY 값을 확인하세요.',402:'Photoroom 크레딧이 부족하거나 요금제에서 지원하지 않는 기능입니다.',403:'Photoroom 요금제에서 이 기능을 사용할 수 없습니다.',429:'Photoroom 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요.'};
   return fail(`${messages[response.status]||`Photoroom 요청 실패 (${response.status})`}${detail?` · Photoroom 응답: ${detail}`:''}`,response.status>=500?502:response.status);
 }
-async function photoroom(env,request,blob,fields) {
+async function photoroom(env,request,blob,fields,extraHeaders={}) {
   const form=new FormData();
   form.set('imageFile',blob,'product.'+(blob.type.split('/')[1]||'png'));
   for(const [key,value] of Object.entries(fields))form.set(key,String(value));
-  const response=await request(PHOTOROOM_URL,{method:'POST',headers:{'x-api-key':env.PHOTOROOM_API_KEY,Accept:'image/*, application/json'},body:form,signal:AbortSignal.timeout(120000)});
+  const response=await request(PHOTOROOM_URL,{method:'POST',headers:{'x-api-key':env.PHOTOROOM_API_KEY,Accept:'image/*, application/json',...extraHeaders},body:form,signal:AbortSignal.timeout(120000)});
   if(!response.ok)throw await photoroomError(response);
   const type=(response.headers?.get?.('content-type')||'image/png').split(';')[0];
   if(!type.startsWith('image/'))throw fail('Photoroom 결과가 이미지가 아닙니다.',502);
@@ -32,30 +32,40 @@ async function openaiEdit(env,request,blob,prompt) {
   if(!data.data?.[0]?.b64_json)throw fail('OpenAI 보정 결과가 비어 있습니다.',502);
   return `data:image/png;base64,${data.data[0].b64_json}`;
 }
-// 1단계: Photoroom 누끼·중앙 정렬(원본 유지). 2단계(선택): 프롬프트 보정.
+// Photoroom은 호출 1번당 요금이 같으므로(옵션 수와 무관) 누끼·정렬·다림질·AI 편집을 한 번에 요청합니다.
+// 문서: docs.photoroom.com/image-editing-api-plus-plan (edit-with-ai, ai-ironing, positioning, ai-relight)
 async function retouch(body,env,request) {
   if(!env.PHOTOROOM_API_KEY)throw fail('현재 실행 환경에 PHOTOROOM_API_KEY가 연결되지 않았습니다.',503);
   const match=typeof body.image==='string'&&body.image.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
   if(!match||body.image.length>MAX)throw fail('8MB 이하의 PNG, JPEG, WebP 이미지를 사용하세요.',400);
   const o=body.options||{},source=new Blob([Buffer.from(match[2],'base64')],{type:`image/${match[1]}`});
+  const presets=Array.isArray(o.presets)?o.presets:[];
   // webp: 투명 배경 유지 + Vercel 응답 크기 한도(4.5MB) 안쪽으로.
-  const fields={'export.format':'webp'};
-  fields.removeBackground=o.removeBackground===false?'false':'true';
-  if(o.center!==false){fields.horizontalAlignment='center';fields.verticalAlignment='center';fields.padding='0.06';}
-  if(o.lighting)fields['lighting.mode']='ai.auto';
-  const base=await photoroom(env,request,source,fields);
-  const prompt=retouchPrompt(o);
-  if(!prompt)return {image:await toDataUrl(base)};
-  try {
-    if(o.engine==='openai'){
-      if(!env.OPENAI_API_KEY)throw fail('OPENAI_API_KEY가 없어 OpenAI 프롬프트 보정을 할 수 없습니다.',503);
-      return {image:await openaiEdit(env,request,base,prompt)};
+  const base={'export.format':'webp',removeBackground:o.removeBackground===false?'false':'true'};
+  if(o.center!==false)Object.assign(base,{horizontalAlignment:'center',verticalAlignment:'center',padding:'0.06'});
+  // 색상·채도를 원본에 가깝게 유지하는 조명 보정.
+  if(o.lighting)base['lighting.mode']='ai.preserve-hue-and-saturation';
+  const usePhotoroomAI=o.engine!=='openai';
+  const ai={},headers={};
+  if(usePhotoroomAI&&presets.includes('iron')){ai['ironing.mode']='ai.auto';headers['pr-ironing-model-version']='v2';}
+  const prompt=retouchPrompt(o,usePhotoroomAI);
+  if(usePhotoroomAI&&prompt){ai['editWithAI.mode']='ai.auto';ai['editWithAI.prompt']=prompt;}
+  if(!Object.keys(ai).length&&!(o.engine==='openai'&&prompt))return {image:await toDataUrl(await photoroom(env,request,source,base))};
+  if(usePhotoroomAI){
+    try {return {image:await toDataUrl(await photoroom(env,request,source,{...base,...ai},headers))};}
+    catch(e) {
+      if(e.status===401)throw e;
+      // AI 보정이 거절되면 누끼만 다시 시도해 결과를 살립니다.
+      const cutout=await photoroom(env,request,source,base);
+      return {image:await toDataUrl(cutout),warning:`누끼는 완료했지만 AI 보정은 실패했습니다: ${e.status?e.message:'처리 오류'}`};
     }
-    const edited=await photoroom(env,request,base,{...fields,'describeAnyChange.mode':'ai.auto','describeAnyChange.prompt':prompt});
-    return {image:await toDataUrl(edited)};
+  }
+  const cutout=await photoroom(env,request,source,base);
+  try {
+    if(!env.OPENAI_API_KEY)throw fail('OPENAI_API_KEY가 없어 OpenAI 프롬프트 보정을 할 수 없습니다.',503);
+    return {image:await openaiEdit(env,request,cutout,prompt)};
   } catch(e) {
-    // 프롬프트 보정이 실패해도 누끼 결과는 살려서 돌려줍니다.
-    return {image:await toDataUrl(base),warning:`누끼는 완료했지만 프롬프트 보정은 실패했습니다: ${e.status?e.message:'처리 오류'}`};
+    return {image:await toDataUrl(cutout),warning:`누끼는 완료했지만 프롬프트 보정은 실패했습니다: ${e.status?e.message:'처리 오류'}`};
   }
 }
 export async function studio(action, body, env = process.env, request = fetch) {
