@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
-import {cutoutBounds, clampCrop, cropCanvas} from '../utils/detailCrops.js';
+import {cutoutBounds} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH} from '../utils/retouchPresets.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
@@ -19,17 +19,6 @@ async function api(action,body) {
   try {result=await response.json();} catch {throw new Error(`서버 응답을 읽을 수 없습니다 (${response.status}). 잠시 후 다시 시도하세요.`);}
   if(!response.ok)throw new Error(result.error||'서버 요청에 실패했습니다.');
   return result;
-}
-
-function defaultRegions(bounds,type) {
-  const pants=type.endsWith('pants');
-  const regions={
-    frontZoom:{x:.05,y:pants ? .03 : .15,w:.9,h:pants ? .9 : .78},
-    frontTop:{x:.04,y:pants ? .02 : .12,w:.92,h:.38},
-    frontBottom:{x:.04,y:.57,w:.92,h:.4},
-    fabric:{x:.34,y:pants ? .27 : .39,w:.32,h:.25},
-  };
-  return Object.fromEntries(Object.entries(regions).map(([id,d])=>[id,clampCrop({x:bounds.x+d.x*bounds.w,y:bounds.y+d.y*bounds.h,w:d.w*bounds.w,h:d.h*bounds.h})]));
 }
 
 function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 설정'}) {
@@ -67,7 +56,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersion,onSave,retouchDefault,status}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -94,9 +83,6 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersi
     </div>
     {slot.status==='raw'&&<p className="slot-note">업로드한 사진입니다. 배경 제거·주름 보정은 ‘이 사진 누끼·보정’을 눌러 적용하세요.</p>}
     {slot.status==='done'&&<p className="slot-note">흰 배경 적용 · 색상과 무늬를 원본과 비교해 주세요.</p>}
-    {slot.derived&&slot.crop&&<details className="crop-controls"><summary>확대 위치·범위 조정</summary><p>대표 사진에서 자릅니다. 추가 생성 비용이 없습니다.</p>
-      {[['x','가로 위치'],['y','세로 위치'],['w','가로 범위'],['h','세로 범위']].map(([key,label])=><label key={key}>{label} · {Math.round(slot.crop[key]*100)}%<input type="range" aria-label={`${slot.id} ${label}`} min={['w','h'].includes(key)?5:0} max="100" value={Math.round(slot.crop[key]*100)} onChange={e=>onCrop(slot.id,key,Number(e.target.value)/100)}/></label>)}
-    </details>}
   </section>;
 }
 
@@ -108,7 +94,7 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(3),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const cache=useRef(new Map()),lock=useRef(false),heroCanvas=useRef(null),previewUrl=useRef(null);
+  const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null);
   const rows=sizeRows[garment]||[newSizeRow()];
   useEffect(()=>{api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
   const patch=(id,values)=>{setSlots(current=>({...current,[id]:{...current[id],...values}}));setPreview(null);};
@@ -123,11 +109,11 @@ export default function AutoStudio() {
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;
-    const nextSlots=d.slots||initialSlots();
+    // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
+    const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:v]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
-    heroCanvas.current=nextSlots.hero?.cutout?await imageCanvas(nextSlots.hero.cutout):null;
   }
   async function saveNow(id=productId,name=productName,data=snapshot()) {
     if(!id)return;
@@ -180,10 +166,6 @@ export default function AutoStudio() {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
       patch(id,{source,image:whitePhoto(canvas,null,0),cutout:null,crop:null,derived:false,status:'raw',enabled:true,versions:[null],vIndex:0});
-      if(id==='hero'){
-        heroCanvas.current=null;
-        setSlots(current=>Object.fromEntries(Object.entries(current).map(([key,slot])=>[key,slot.derived?{...slot,image:null,cutout:null,crop:null,status:'empty'}:slot])));
-      }
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
@@ -198,22 +180,11 @@ export default function AutoStudio() {
     else cache.current.set(key,response.image);
     return response.image;
   }
-  async function refreshImages(current,makeDefaults=false,type=garment) {
-    let target=null,hero=null;
-    if(current.hero.cutout){hero=await imageCanvas(current.hero.cutout);heroCanvas.current=hero;target=medianLight(hero);}
+  // 보정된 사진마다 공통 밝기를 적용합니다. 디테일컷은 각 자리에 넣은 사진으로만 만듭니다(자동 생성 없음).
+  async function refreshImages(current) {
+    const target=current.hero.cutout?medianLight(await imageCanvas(current.hero.cutout)):null;
     const next={...current};
-    if(makeDefaults&&hero){
-      const bounds=cutoutBounds(hero.getContext('2d').getImageData(0,0,hero.width,hero.height));
-      for(const [id,rect] of Object.entries(defaultRegions(bounds,type))){
-        // Uploaded close-ups always win over automatically generated crops.
-        if(!next[id].source&&(next[id].status==='empty'||next[id].derived))next[id]={...next[id],derived:true,crop:rect,status:'done'};
-      }
-    }
-    for(const [id,slot] of Object.entries(next)){
-      if(slot.derived&&slot.crop&&hero){const crop=cropCanvas(hero,slot.crop);next[id]={...slot,image:whitePhoto(await imageCanvas(crop.image),target,brightness),status:'done'};}
-      else if(slot.derived&&!hero)next[id]={...slot,image:null,status:'empty'};
-      else if(slot.cutout)next[id]={...slot,image:whitePhoto(await imageCanvas(slot.cutout),target,brightness),status:'done'};
-    }
+    for(const [id,slot] of Object.entries(next))if(slot.cutout)next[id]={...slot,image:whitePhoto(await imageCanvas(slot.cutout),target,brightness),status:'done'};
     return next;
   }
   async function processPhotos(onlyId) {
@@ -229,7 +200,7 @@ export default function AutoStudio() {
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
         const versions=(kept[kept.length-1]===cutout?kept:[...kept,cutout]).slice(-MAX_VERSIONS);
         current={...current,[slot.id]:{...slot,cutout,status:'done',versions,vIndex:versions.length-1}};
-        current=await refreshImages(current,slot.id==='hero');
+        current=await refreshImages(current);
         setSlots(current);
       }
       if(!onlyId&&!texts.headline&&current.hero.source&&status.openai){
@@ -249,7 +220,6 @@ export default function AutoStudio() {
       const cutout=versions[index];
       let next={...slots,[id]:{...slot,vIndex:index,cutout,status:cutout?'done':'raw'}};
       if(!cutout)next[id].image=whitePhoto(await imageCanvas(slot.source),null,0);
-      if(id==='hero'&&!cutout)heroCanvas.current=null;
       next=await refreshImages(next);
       setSlots(next);
       setStep(`${slot.label||'사진'} · ${index===0?'원본으로 되돌렸습니다':`보정 ${index} 버전을 적용했습니다`} (API 사용 없음)`);
@@ -266,29 +236,15 @@ export default function AutoStudio() {
     });
   }
   function refreshCredits() {api('credits').then(setCredits).catch(()=>setCredits(null));}
-  function adjustCrop(id,key,value) {
-    if(!heroCanvas.current)return;
-    const crop=clampCrop({...slots[id].crop,[key]:value});
-    // Synchronous canvas crop avoids older slider updates replacing newer edits.
-    const source=heroCanvas.current,c=document.createElement('canvas');
-    const x=Math.round(crop.x*source.width),y=Math.round(crop.y*source.height);
-    c.width=Math.max(1,Math.min(source.width-x,Math.round(crop.w*source.width)));c.height=Math.max(1,Math.min(source.height-y,Math.round(crop.h*source.height)));
-    c.getContext('2d').drawImage(source,x,y,c.width,c.height,0,0,c.width,c.height);
-    patch(id,{crop,image:whitePhoto(c,medianLight(source),brightness)});
-  }
   function removePhoto(id) {
     setPreview(null);
     setSlots(current=>{
       const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
-      if(id==='hero'){
-        heroCanvas.current=null;
-        for(const [key,slot] of Object.entries(next))if(slot.derived)next[key]={...slot,image:null,cutout:null,crop:null,status:'empty'};
-      }
       return next;
     });
   }
   async function changeGarment(value) {
-    await task(async()=>{setGarment(value);setSlots(await refreshImages(slots,true,value));});
+    setGarment(value);setPreview(null);
   }
   function editSize(index,key,value) {
     setSizeRows(current=>({...current,[garment]:rows.map((row,i)=>i===index?{...row,[key]:value}:row)}));setPreview(null);
@@ -311,7 +267,7 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onCrop:adjustCrop,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
@@ -343,8 +299,7 @@ export default function AutoStudio() {
       <section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
         {fitEnabled&&<><label>Fit guide 제목<input maxLength={100} value={texts.fitTitle} onChange={e=>setText('fitTitle',e.target.value)}/></label><label>모델 설명<textarea maxLength={1500} value={texts.fitDescription} onChange={e=>setText('fitDescription',e.target.value)} placeholder="확인된 모델 키·착용 사이즈 등을 입력하세요."/></label><PhotoSlot slot={slots.fit} {...photoProps}/></>}
       </section>
-      <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>정면 확대·상단·하단·원단컷은 대표 사진 보정 후 자동 배치합니다. 직접 찍은 클로즈업 사진으로 교체하면 더 선명한 디테일을 보여줄 수 있습니다.</p>
-        <button disabled={!slots.hero.cutout} onClick={()=>task(async()=>{setSlots(await refreshImages(slots,true));setStep('선택한 옷 종류에 맞춰 자동 확대 영역을 다시 배치했습니다.');})}>옷 종류 기준으로 자동 확대 위치 초기화</button>
+      <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>정면 확대·상단·하단·원단컷 등은 각 자리에 사진을 직접 넣고 ‘이 사진 누끼·보정’으로 따로 보정합니다. 사진을 넣지 않은 자리는 상세페이지에서 빠집니다.</p>
         {Object.values(slots).filter(s=>!['hero','fit'].includes(s.id)).map(slot=><PhotoSlot key={slot.id} slot={slot} {...photoProps}/>)}
         <button disabled={Object.keys(slots).length>=14} onClick={()=>{const id='extra-'+crypto.randomUUID();patch(id,{id,label:'추가 디테일컷',enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'});}}>특정 디테일컷 추가</button>
       </section>

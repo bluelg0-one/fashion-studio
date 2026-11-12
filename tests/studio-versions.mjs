@@ -35,13 +35,11 @@ try{
  await page.getByLabel('hero 이전으로 되돌리기').click();await idle();assert.equal(await img(),v1);
  await page.getByLabel('hero 이전으로 되돌리기').click();await idle();assert.equal(await img(),original);
  assert.ok(await page.getByLabel('hero 이전으로 되돌리기').isDisabled());
- assert.equal(await page.locator('[data-slot="frontZoom"] .paste-zone img').count(),0,'원본 상태에서는 자동 크롭을 비웁니다');
  await page.getByLabel('hero 다시 적용').click();await idle();assert.equal(await img(),v1);
- assert.equal(await page.locator('[data-slot="frontZoom"] .paste-zone img').count(),1,'보정본으로 돌아오면 자동 크롭 복원');
  await page.getByLabel('hero 다시 적용').click();await idle();assert.equal(await img(),v2);
  assert.equal(bodies.length,2,'되돌리기·다시 적용은 API를 호출하지 않습니다');
  // 같은 설정으로 다시 누르면 저장된 결과 재사용 (과금 없음, 버전 증가 없음)
  await hero.getByRole('button',{name:'이 사진 누끼·보정'}).click();await idle();
  assert.equal(bodies.length,2);assert.match(await hero.locator('.version-bar span').innerText(),/\(3\/3\)/);
- console.log('PASS: per-photo settings, free undo/redo across 3 versions, dependent crops follow hero version, cache reuse without new versions, credits shown.');
+ console.log('PASS: per-photo settings, free undo/redo across 3 versions, cache reuse without new versions, credits shown.');
 }finally{await browser.close();}

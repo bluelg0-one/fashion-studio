@@ -23,7 +23,8 @@ try{
  await page.getByLabel('상품 정보',{exact:true}).fill('확인된 정보 <면 추정 금지>');
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();
  await idle();assert.equal(edits,1);assert.equal(analyses,1);
- for(const id of ['frontZoom','frontTop','frontBottom','fabric'])assert.equal(await slot(id).locator('.paste-zone img').count(),1);
+ // 대표 사진만 보정해도 디테일컷은 자동으로 만들어지지 않습니다.
+ for(const id of ['frontZoom','frontTop','frontBottom','fabric'])assert.equal(await slot(id).locator('.paste-zone img').count(),0);
  assert.equal(await slot('side').locator('.paste-zone img').count(),0);
  await page.getByLabel('1행 사이즈',{exact:true}).fill('M');await page.getByLabel('1행 가슴단면',{exact:true}).fill('48');await page.getByLabel('1행 총장',{exact:true}).fill('62');
  let html=(await download('HTML 다운로드')).toString();
@@ -38,19 +39,15 @@ try{
  await page.getByLabel('모델 설명',{exact:true}).fill('모델 165cm / M 착용');
  html=(await download('HTML 다운로드')).toString();assert.ok(html.includes('Fit guide'));assert.ok(html.includes('모델 165cm'));
  await page.getByLabel('모델컷 적용',{exact:true}).uncheck();html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('Fit guide'));
- // Crop changes affect the saved white-background image.
- await slot('frontTop').locator('.crop-controls summary').click();
- const before=await slot('frontTop').locator('.paste-zone img').getAttribute('src');
- await page.getByRole('slider',{name:'frontTop 가로 위치',exact:true}).fill('0');
- const after=await slot('frontTop').locator('.paste-zone img').getAttribute('src');assert.notEqual(before,after);
+ // 디테일컷은 각 자리에 직접 넣고 개별 보정합니다.
+ for(const id of ['frontTop','frontBottom']){await page.getByLabel(`${id} 사진 선택`,{exact:true}).setInputFiles(file);await idle();}
+ await slot('frontTop').getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
+ assert.equal(await slot('frontZoom').locator('.paste-zone img').count(),0,'빈 자리는 계속 비어 있음');
+ const after=await slot('frontTop').locator('.paste-zone img').getAttribute('src');
  const pixel=await slot('frontTop').locator('.paste-zone img').evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const ctx=c.getContext('2d');ctx.drawImage(im,0,0);return [...ctx.getImageData(0,0,1,1).data];});assert.deepEqual(pixel,[255,255,255,255]);
  await slot('frontBottom').getByLabel('상세페이지에 포함',{exact:true}).uncheck();
- html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('alt="정면 하단컷"'));assert.ok(html.includes(after));
- // Imported close-up must survive the automatic crop reset.
- await page.getByLabel('fabric 사진 선택',{exact:true}).setInputFiles(file);await idle();
- const imported=await slot('fabric').locator('.paste-zone img').getAttribute('src');
- await page.getByRole('button',{name:'옷 종류 기준으로 자동 확대 위치 초기화',exact:true}).click();await idle();
- assert.equal(await slot('fabric').locator('.paste-zone img').getAttribute('src'),imported);
+ html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('alt="정면 하단컷"'));assert.ok(html.includes(after));assert.ok(!html.includes('alt="정면 확대컷"'));
+ assert.equal(await page.getByRole('button',{name:'옷 종류 기준으로 자동 확대 위치 초기화'}).count(),0);
  // All six silhouettes and garment-specific measurements; switching restores entries.
  const guides=[];
  for(const type of ['long-top','short-top','vest','dress','long-pants','short-pants']){
@@ -77,6 +74,6 @@ try{
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/fashion-editor-mobile.png',fullPage:false});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'mobile must not overflow');
  assert.deepEqual(errors,[]);
- console.log('PASS: white backgrounds, 4 crops, crop controls, uploaded detail preservation, clipboard/model toggles, six guides, garment-specific sizes, optional images, caching, HTML and whole/individual PNG, mobile layout.');
+ console.log('PASS: white backgrounds, no automatic detail crops, per-slot detail upload/retouch, clipboard/model toggles, six guides, garment-specific sizes, optional images, caching, HTML and whole/individual PNG, mobile layout.');
  console.log('Whole PNG dimensions: '+png.readUInt32BE(16)+'x'+png.readUInt32BE(20));
 }finally{await browser.close();}
