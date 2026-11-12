@@ -6,6 +6,8 @@ import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouc
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
+import InstagramPanel from './InstagramPanel.jsx';
+import {defaultInstagram} from '../utils/instagramExport.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -100,7 +102,7 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSa
 export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
-  const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
+  const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram);
   const [colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
@@ -117,14 +119,14 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,color:{ref:colorRef,strength:matchStrength,auto:autoMatch}});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,color:{ref:colorRef,strength:matchStrength,auto:autoMatch}});
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
     const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:v]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
-    setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
+    setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});
     setColorRef(d.color?.ref||null);setMatchStrength(d.color?.strength??80);setAutoMatch(Boolean(d.color?.auto));
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
@@ -152,7 +154,7 @@ export default function AutoStudio() {
     setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName,colorRef,matchStrength,autoMatch]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,productName,colorRef,matchStrength,autoMatch]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -369,6 +371,7 @@ export default function AutoStudio() {
         <label>치수 안내 문구<textarea maxLength={1500} value={texts.sizeNote} onChange={e=>setText('sizeNote',e.target.value)}/></label>
       </section>
       <ShopeePanel shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
+      <InstagramPanel instagram={instagram} setInstagram={setInstagram} slots={slots} fitEnabled={fitEnabled} rows={rows} texts={texts} task={task} setStep={setStep} productName={productName}/>
     </fieldset><aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside></div>
   </div>;
 }

@@ -6,6 +6,9 @@
   "functions": {
     "api/studio.js": {
       "maxDuration": 300
+    },
+    "api/instagram.js": {
+      "maxDuration": 120
     }
   }
 }
