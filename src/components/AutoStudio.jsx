@@ -5,6 +5,7 @@ import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt} from '../utils/retouchPresets.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
+import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -63,7 +64,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -86,6 +87,9 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSa
     <div className="slot-actions">
       <label className="file-button">사진 {slot.image?'교체':'선택'}<input aria-label={`${slot.id} 사진 선택`} type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)onUpload(slot.id,file);e.target.value='';}}/></label>
       {slot.source&&<button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button>}
+      {slot.cutout&&colorRef?.slotId!==slot.id&&<button type="button" onClick={()=>onColorRef(slot.id)}>🎨 이 컷 색감을 기준으로</button>}
+      {slot.cutout&&colorRef&&colorRef.slotId!==slot.id&&<button type="button" onClick={()=>onColorMatch([slot.id])}>기준 색감으로 맞추기</button>}
+      {colorRef?.slotId===slot.id&&<span className="color-badge"><i style={{background:labCss(colorRef.lab)}}/>색감 기준 컷</span>}
       {slot.image&&<><button type="button" onClick={()=>onSave(slot.id)}>개별 PNG 저장</button><button type="button" className="subtle" onClick={()=>onRemove(slot.id)}>사진 삭제</button></>}
     </div>
     {slot.status==='raw'&&<p className="slot-note">업로드한 사진입니다. 배경 제거·주름 보정은 ‘이 사진 누끼·보정’을 눌러 적용하세요.</p>}
@@ -97,6 +101,7 @@ export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
+  const [colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
@@ -112,7 +117,7 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,color:{ref:colorRef,strength:matchStrength,auto:autoMatch}});
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;
@@ -120,6 +125,7 @@ export default function AutoStudio() {
     const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:v]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
+    setColorRef(d.color?.ref||null);setMatchStrength(d.color?.strength??80);setAutoMatch(Boolean(d.color?.auto));
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   async function saveNow(id=productId,name=productName,data=snapshot()) {
@@ -146,7 +152,7 @@ export default function AutoStudio() {
     setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName,colorRef,matchStrength,autoMatch]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -189,7 +195,8 @@ export default function AutoStudio() {
   }
   // 보정된 사진마다 공통 밝기를 적용합니다. 디테일컷은 각 자리에 넣은 사진으로만 만듭니다(자동 생성 없음).
   async function refreshImages(current) {
-    const target=current.hero.cutout?medianLight(await imageCanvas(current.hero.cutout)):null;
+    // 색감 기준이 있으면 대표 사진 밝기 맞춤은 하지 않습니다(색감 통일 결과를 다시 바꾸지 않도록).
+    const target=!colorRef&&current.hero.cutout?medianLight(await imageCanvas(current.hero.cutout)):null;
     const next={...current};
     for(const [id,slot] of Object.entries(next))if(slot.cutout)next[id]={...slot,image:whitePhoto(await imageCanvas(slot.cutout),target,brightness),status:'done'};
     return next;
@@ -205,8 +212,11 @@ export default function AutoStudio() {
         const cutout=await edited(slot.source,warnings,slot.retouch||retouch);
         const kept=(slot.versions||[null]).slice(0,(slot.vIndex??0)+1);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
-        const versions=(kept[kept.length-1]===cutout?kept:[...kept,cutout]).slice(-MAX_VERSIONS);
-        current={...current,[slot.id]:{...slot,cutout,status:'done',versions,vIndex:versions.length-1}};
+        let versions=(kept[kept.length-1]===cutout?kept:[...kept,cutout]);
+        let finalCut=cutout;
+        if(colorRef&&autoMatch&&colorRef.slotId!==slot.id){finalCut=(await matchedCutout(cutout,colorRef.lab)).image;versions=[...versions,finalCut];}
+        versions=versions.slice(-MAX_VERSIONS);
+        current={...current,[slot.id]:{...slot,cutout:finalCut,status:'done',versions,vIndex:versions.length-1}};
         current=await refreshImages(current);
         setSlots(current);
       }
@@ -218,6 +228,38 @@ export default function AutoStudio() {
       if(warnings.length)setError(warnings.join('\n'));
       refreshCredits();
       setStep(`완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.${!onlyId&&!status.openai?' (OpenAI 키가 없어 문구 자동 작성은 건너뛰었습니다.)':''}`);
+    });
+  }
+  // ---- 색감 통일 (브라우저 계산, API 비용 없음) ----
+  async function matchedCutout(src,lab) {
+    const c=await imageCanvas(src),ctx=c.getContext('2d'),pixels=ctx.getImageData(0,0,c.width,c.height);
+    const shift=colorShift(dominantLab(pixels),lab,matchStrength/100);
+    applyShift(pixels,shift);ctx.putImageData(pixels,0,0);
+    return {image:c.toDataURL('image/png'),shift};
+  }
+  async function chooseColorRef(id) {
+    await task(async()=>{
+      const slot=slots[id],c=await imageCanvas(slot.cutout);
+      const lab=dominantLab(c.getContext('2d').getImageData(0,0,c.width,c.height));
+      setColorRef({slotId:id,label:slot.label,lab:{L:lab.L,a:lab.a,b:lab.b}});
+      setStep(`‘${slot.label}’의 옷 색감을 기준으로 정했습니다. ‘기준 색감으로 맞추기’를 누르면 다른 컷이 이 색감에 맞춰집니다.`);
+    });
+  }
+  async function matchColors(ids) {
+    if(!colorRef)return;
+    await task(async()=>{
+      let next={...slots};const done=[],skipped=[];
+      for(const id of ids){
+        const slot=next[id];
+        if(!slot||id===colorRef.slotId)continue;
+        if(!slot.cutout){if(slot.source)skipped.push(slot.label);continue;}
+        setStep(`${done.length+1} · ${slot.label} 색감 맞추는 중`);
+        const {image}=await matchedCutout(slot.cutout,colorRef.lab);
+        const versions=[...(slot.versions||[null]).slice(0,(slot.vIndex??0)+1),image].slice(-MAX_VERSIONS);
+        next[id]={...slot,cutout:image,status:'done',versions,vIndex:versions.length-1};done.push(slot.label);
+      }
+      setSlots(await refreshImages(next));
+      setStep(`색감 통일 완료 · ${done.length}컷 (API 사용 없음, ‘이전으로’로 되돌릴 수 있습니다)${skipped.length?` · 보정 전이라 제외: ${skipped.join(', ')}`:''}`);
     });
   }
   async function changeVersion(id,index) {
@@ -274,7 +316,7 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
@@ -299,6 +341,15 @@ export default function AutoStudio() {
         {credits&&Number.isFinite(credits.available)&&credits.available<=3&&<p className="review-note">Photoroom 남은 이미지가 {credits.available}장입니다. 사진 1장 보정에 1장이 사용됩니다.</p>}
         <label>공통 밝기 · {brightness}%<input aria-label="공통 밝기" type="range" min="0" max="8" value={brightness} onChange={e=>setBrightness(Number(e.target.value))}/></label>
         <button onClick={()=>task(async()=>{setSlots(await refreshImages(slots));setStep('보정된 사진 전체에 공통 밝기를 적용했습니다.');})}>보정된 사진에 공통 밝기 적용</button>
+        <div className="color-unify" aria-label="색감 통일">
+          <h3>색감 통일 <small>API 비용 없음</small></h3>
+          {colorRef?<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>기준: <b>{colorRef.label}</b>의 옷 대표 색 <button type="button" className="subtle" onClick={()=>setColorRef(null)}>기준 해제</button></p>
+            :<p className="slot-note">마음에 드는 보정 컷에서 ‘🎨 이 컷 색감을 기준으로’를 누르세요. 그 컷 옷의 대표 색에 맞춰 다른 컷의 밝기·색조를 조정합니다.</p>}
+          <label>맞추는 강도 · {matchStrength}%<input aria-label="색감 맞추는 강도" type="range" min="10" max="100" step="10" value={matchStrength} onChange={e=>setMatchStrength(Number(e.target.value))}/></label>
+          <button type="button" disabled={!colorRef} onClick={()=>matchColors(Object.keys(slots))}>보정된 모든 컷을 기준 색감으로 맞추기</button>
+          <label className="check"><input type="checkbox" aria-label="새 보정 컷 자동 색감 맞춤" disabled={!colorRef} checked={autoMatch} onChange={e=>setAutoMatch(e.target.checked)}/>앞으로 보정하는 컷도 자동으로 기준 색감에 맞추기</label>
+          <p className="slot-note">누끼·보정된 컷에만 적용됩니다. 한 번에 바꾸는 양에 한계를 둬서 색이 크게 틀어지지 않으며, 각 컷의 ‘이전으로’로 되돌릴 수 있습니다. 같은 컷에 여러 번 누르면 조금씩 더 맞춰집니다.</p>
+        </div>
         <button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button>
         <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
       </section>

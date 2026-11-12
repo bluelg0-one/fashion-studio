@@ -34,6 +34,7 @@ npm run dev
 - 의류 전용 옵션: AI 그림자(`shadow.mode=ai.auto-with-overrides`, `pr-ai-shadows-model-version: 2026-04-15`, 기본 꺼짐), 마네킹 처리(그대로 / 고스트 마네킹 `ghostMannequin.mode` / 플랫레이 `flatLay.mode`). 고스트·플랫레이는 단독 요청이며 1K 출력입니다.
 - Edit With AI·고스트 마네킹·플랫레이는 결과가 1K로 작아지며 화면에 경고를 표시합니다. AI 다림질은 2K까지 유지합니다.
 - 실제 사진 테스트(1500×2000 마네킹 사진): HD 누끼·AI 다림질은 원본 해상도 유지, 고스트 마네킹은 896×1200이며 없던 목 라벨이 생김, AI 그림자는 서 있는 마네킹 사진에서 왼쪽 아래에 어색한 그림자.
+- 색감 통일(API 비용 없음, `src/utils/colorMatch.js`): 보정 컷에서 ‘🎨 이 컷 색감을 기준으로’를 누르면 그 컷 옷의 대표 색(Lab에서 가장 넓은 색 영역, 밝은 무채색 마네킹은 제외)을 기준으로 저장합니다. ‘기준 색감으로 맞추기’는 다른 컷의 대표 색이 기준과 같아지도록 컷 전체의 L·a·b를 같은 양만큼 옮깁니다(강도 슬라이더, 한 번에 L ±14·a/b ±12 제한, 하이라이트·그림자 보호). 결과는 새 버전으로 저장되어 ‘이전으로’로 되돌릴 수 있고, ‘앞으로 보정하는 컷도 자동으로 맞추기’를 켜면 새 보정 결과에 바로 적용합니다. 색감 기준이 있으면 대표 사진 밝기 자동 맞춤은 끕니다.
 - 기본 프롬프트 문장은 `src/utils/retouchPresets.js`에서 수정합니다.
 - 상품 문구 자동 작성은 계속 `OPENAI_API_KEY`를 사용합니다. 없으면 문구 작성만 건너뜁니다.
 - 실제 Photoroom API로 누끼 단독 호출과 누끼+AI 다림질+Edit With AI+조명 결합 호출이 HTTP 200·투명 WebP를 반환하는 것을 테스트 이미지로 확인했습니다. 서버 테스트는 모의 응답으로 요청 형식을 검사합니다.
@@ -84,6 +85,8 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 ```
 
 필요하면 `CHROMIUM_PATH`와 `STUDIO_TEST_URL`을 지정합니다. 테스트 화면 캡처는 `/tmp/fashion-editor-desktop.png`, `/tmp/fashion-editor-mobile.png`에 생성됩니다.
+
+`tests/studio-color.mjs`는 색감 기준 지정·맞추기·되돌리기·API 미호출·새로고침 후 유지를 검사합니다.
 
 `tests/studio-products.mjs`는 여러 상품 자동 저장·복원과 쇼피 ZIP(정사각형 JPG·2MB 이하·사이즈표·listing.txt)을 검사합니다.
 
