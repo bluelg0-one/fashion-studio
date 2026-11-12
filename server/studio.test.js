@@ -73,3 +73,27 @@ test('shopee copy keeps seller data as data and returns title/description',async
  const text=sent.input[0].content[0].text;assert.match(text,/Never invent material/);assert.match(text,/면 100%/);assert.equal(sent.input[0].content[1].type,'input_image');
  await assert.rejects(studio('shopee',{},{PHOTOROOM_API_KEY:'x'}),{status:503});
 });
+test('plain cutout asks for HD background removal and keeps resolution flag off',async()=>{
+ let call;
+ const r=await studio('retouch',{image,options:{center:true}},env,async(url,o)=>{call=o;return imageResponse();});
+ assert.equal(call.headers['pr-hd-background-removal'],'auto');assert.equal(call.body.get('shadow.mode'),null);assert.equal(r.lowResolution,undefined);
+});
+test('shadow uses the 2026-04-15 model with upright pose',async()=>{
+ let call;
+ await studio('retouch',{image,options:{shadow:true}},env,async(url,o)=>{call=o;return imageResponse();});
+ assert.equal(call.headers['pr-ai-shadows-model-version'],'2026-04-15');assert.equal(call.body.get('shadow.mode'),'ai.auto-with-overrides');assert.equal(call.body.get('shadow.subjectPoseOverride'),'upright');
+});
+test('ghost mannequin is sent alone and flagged as 1K',async()=>{
+ const calls=[];
+ const r=await studio('retouch',{image,options:{mannequin:'ghost',presets:['iron'],shadow:true}},env,async(url,o)=>{calls.push(o);return imageResponse();});
+ assert.equal(calls.length,1);const f=calls[0].body;
+ assert.equal(f.get('ghostMannequin.mode'),'ai.auto');assert.equal(f.get('ghostMannequin.size'),'PORTRAIT_HD_4_3');
+ assert.equal(f.get('ironing.mode'),null);assert.equal(f.get('shadow.mode'),null);assert.equal(f.get('removeBackground'),null);assert.equal(r.lowResolution,true);
+});
+test('flat lay uses square output; editWithAI prompts are flagged as 1K, ironing alone is not',async()=>{
+ let call;
+ await studio('retouch',{image,options:{mannequin:'flatlay'}},env,async(url,o)=>{call=o;return imageResponse();});
+ assert.equal(call.body.get('flatLay.mode'),'ai.auto');assert.equal(call.body.get('flatLay.size'),'SQUARE_HD');
+ const iron=await studio('retouch',{image,options:{presets:['iron']}},env,async()=>imageResponse());assert.equal(iron.lowResolution,undefined);
+ const clean=await studio('retouch',{image,options:{presets:['clean']}},env,async()=>imageResponse());assert.equal(clean.lowResolution,true);
+});

@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
-import {RETOUCH_PRESETS, DEFAULT_RETOUCH} from '../utils/retouchPresets.js';
+import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt} from '../utils/retouchPresets.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
@@ -25,12 +25,18 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
   const set=patch=>onChange({...value,...patch});
   const togglePreset=id=>set({presets:value.presets.includes(id)?value.presets.filter(p=>p!==id):[...value.presets,id]});
   const prompted=value.presets.length>0||value.custom.trim().length>0;
+  const special=value.mannequin==='ghost'||value.mannequin==='flatlay';
+  const small=lowResolution(value,retouchPrompt(value,value.engine!=='openai'));
   return <div className="retouch-settings">
     <h3>{title} <small>Photoroom</small></h3>
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}중앙 정렬`} checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
-    <p className="slot-note">여기까지는 원본 옷을 그대로 두고 배경만 정리합니다.</p>
+    <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
+    <p className="slot-note">여기까지는 원본 옷을 그대로 두고 배경만 정리합니다. 원본 해상도(최대 2400px)를 유지하고 옷 테두리는 HD로 땁니다. 그림자는 마네킹 사진에서는 어색할 수 있어 기본으로 꺼 두었습니다.</p>
+    <h4>마네킹 처리</h4>
+    <select aria-label={`${prefix}마네킹 처리`} value={value.mannequin||'keep'} onChange={e=>set({mannequin:e.target.value})}>{MANNEQUIN_MODES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select>
+    {special&&<p className="review-note">AI가 옷을 새로 그리는 방식입니다. 깔끔해지지만 없던 디테일(예: 목 안쪽 라벨)이 생기거나 원단 질감이 달라질 수 있으니 원본과 꼭 비교하세요. 이 모드에서는 아래 기본 프롬프트·다림질·그림자는 적용되지 않습니다.</p>}
     <h4>기본 프롬프트 (선택)</h4>
     {RETOUCH_PRESETS.map(p=><label key={p.id} className="check"><input type="checkbox" aria-label={prefix+p.label} checked={value.presets.includes(p.id)} onChange={()=>togglePreset(p.id)}/>{p.label}</label>)}
     <label>직접 입력 프롬프트<textarea aria-label={`${prefix}직접 입력 프롬프트`} maxLength={1000} value={value.custom} placeholder="예: 목 부분 라벨이 보이지 않게 정리해 주세요." onChange={e=>set({custom:e.target.value})}/></label>
@@ -39,8 +45,9 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
         <option value="photoroom">Photoroom AI 편집</option>
         <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집{status&&!status.openai?' (키 없음)':''}</option>
       </select></label>
-      <p className="review-note">Photoroom은 사진 1장당 한 번만 요청합니다(선택 항목 수와 관계없이 같은 요금). 프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
+      <p className="review-note">{value.presets.includes('iron')&&'구김 펴기는 원본 해상도(최대 2K)를 유지합니다. '}Photoroom은 사진 1장당 한 번만 요청합니다(선택 항목 수와 관계없이 같은 요금). 프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
     </>}
+    {small&&<p className="review-note low-res">⚠ 이 설정은 결과 사진이 약 1024px(1K)로 작아집니다. 선명도가 중요하면 마네킹 그대로 + 구김 펴기만 쓰세요.</p>}
   </div>;
 }
 
@@ -92,7 +99,7 @@ export default function AutoStudio() {
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
-  const [brightness,setBrightness]=useState(3),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
+  const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null);
   const rows=sizeRows[garment]||[newSizeRow()];

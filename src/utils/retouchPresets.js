@@ -9,7 +9,17 @@ export const RETOUCH_PRESETS = [
 
 export const PRESERVE_PROMPT = 'This is a real clothing product photo for an online store. Keep the exact same garment: do not change its color, pattern, stripe width or spacing, fabric texture, logos, buttons, seams or silhouette, and do not invent details. Keep the same camera view.';
 
-export const DEFAULT_RETOUCH = {removeBackground:true, center:true, lighting:false, presets:[], custom:'', engine:'photoroom'};
+export const DEFAULT_RETOUCH = {removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+// 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
+export const MANNEQUIN_MODES = [
+  {id:'keep', label:'마네킹 그대로 두기'},
+  {id:'ghost', label:'고스트 마네킹 (마네킹 지우고 옷만 입체로)'},
+  {id:'flatlay', label:'플랫레이 (바닥에 펼쳐 놓은 모습)'},
+];
+// 결과 해상도가 1K(약 1024px)로 줄어드는 설정인지 (Photoroom 문서 기준).
+export function lowResolution(o={},promptText='') {
+  return o.mannequin==='ghost'||o.mannequin==='flatlay'||(o.engine!=='openai'&&Boolean(promptText));
+}
 
 // skipFeatures: Photoroom 전용 기능(예: AI 다림질)으로 처리하는 항목은 프롬프트에서 뺍니다.
 export function retouchPrompt(options={},skipFeatures=false) {

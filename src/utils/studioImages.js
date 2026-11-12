@@ -2,17 +2,23 @@ export const loadImage=src=>new Promise((resolve,reject)=>{const im=new Image();
 export async function imageCanvas(src) {
   const im=await loadImage(src),c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;c.getContext('2d').drawImage(im,0,0);return c;
 }
+// 업로드 사진: 긴 변 최대 2400px. Photoroom HD 배경 제거는 2K 이상에서 효과가 크고,
+// 서버 요청 한도(약 4.5MB) 안에 들어가도록 JPG 화질→크기 순으로 맞춥니다.
+export const UPLOAD_MAX_SIDE=2400, UPLOAD_MAX_CHARS=4200000;
 export async function readPhoto(file) {
   if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw new Error('JPG, PNG, WebP 사진을 선택하세요.');
   if(file.size>20*1024*1024)throw new Error('사진 한 장당 20MB 이하로 선택하세요.');
   const url=URL.createObjectURL(file);
   try {
-    const im=await loadImage(url),c=document.createElement('canvas'),scale=Math.min(1,1600/Math.max(im.width,im.height));
-    c.width=Math.max(1,Math.round(im.width*scale));c.height=Math.max(1,Math.round(im.height*scale));
-    const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(im,0,0,c.width,c.height);
-    const image=c.toDataURL('image/jpeg',.92);
-    if(image.length>4000000)throw new Error('압축 후에도 사진이 큽니다. 더 작은 사진으로 선택하세요.');
-    return image;
+    const im=await loadImage(url);
+    const start=Math.min(UPLOAD_MAX_SIDE,Math.max(im.width,im.height));
+    for(let side=start;side===start||side>=1000;side=Math.round(side*.85)){
+      const c=document.createElement('canvas'),scale=Math.min(1,side/Math.max(im.width,im.height));
+      c.width=Math.max(1,Math.round(im.width*scale));c.height=Math.max(1,Math.round(im.height*scale));
+      const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingQuality='high';ctx.drawImage(im,0,0,c.width,c.height);
+      for(const quality of [.95,.92,.88]){const image=c.toDataURL('image/jpeg',quality);if(image.length<=UPLOAD_MAX_CHARS)return image;}
+    }
+    throw new Error('압축 후에도 사진이 큽니다. 더 작은 사진으로 선택하세요.');
   }finally{URL.revokeObjectURL(url);}
 }
 export function medianLight(canvas) {

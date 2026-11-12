@@ -1,4 +1,4 @@
-import {retouchPrompt} from '../src/utils/retouchPresets.js';
+import {retouchPrompt, lowResolution} from '../src/utils/retouchPresets.js';
 const MAX = 8 * 1024 * 1024;
 const fail=(message,status)=>Object.assign(new Error(message),{status});
 const PHOTOROOM_URL='https://image-api.photoroom.com/v2/edit';
@@ -41,26 +41,36 @@ async function retouch(body,env,request) {
   const o=body.options||{},source=new Blob([Buffer.from(match[2],'base64')],{type:`image/${match[1]}`});
   const presets=Array.isArray(o.presets)?o.presets:[];
   // webp: 투명 배경 유지 + Vercel 응답 크기 한도(4.5MB) 안쪽으로.
-  const base={'export.format':'webp',removeBackground:o.removeBackground===false?'false':'true'};
+  const base={'export.format':'webp'},headers={};
+  const finish=async(blob,extra={})=>({image:await toDataUrl(blob),...(lowResolution(o,retouchPrompt(o,o.engine!=='openai'))?{lowResolution:true}:{}),...extra});
+  // 고스트 마네킹·플랫레이는 그 기능만 단독으로 요청합니다(다른 옵션과 섞었을 때의 동작은 확인하지 않음).
+  if(o.mannequin==='ghost'||o.mannequin==='flatlay'){
+    const key=o.mannequin==='ghost'?'ghostMannequin':'flatLay';
+    return finish(await photoroom(env,request,source,{...base,[`${key}.mode`]:'ai.auto',[`${key}.size`]:o.mannequin==='ghost'?'PORTRAIT_HD_4_3':'SQUARE_HD'}));
+  }
+  base.removeBackground=o.removeBackground===false?'false':'true';
+  // 2K 이상 사진은 HD 배경 제거로 옷 테두리를 더 정밀하게 땁니다.
+  if(base.removeBackground==='true')headers['pr-hd-background-removal']='auto';
   if(o.center!==false)Object.assign(base,{horizontalAlignment:'center',verticalAlignment:'center',padding:'0.06'});
   // 색상·채도를 원본에 가깝게 유지하는 조명 보정.
   if(o.lighting)base['lighting.mode']='ai.preserve-hue-and-saturation';
+  if(o.shadow){base['shadow.mode']='ai.auto-with-overrides';base['shadow.subjectPoseOverride']='upright';headers['pr-ai-shadows-model-version']='2026-04-15';}
   const usePhotoroomAI=o.engine!=='openai';
-  const ai={},headers={};
-  if(usePhotoroomAI&&presets.includes('iron')){ai['ironing.mode']='ai.auto';headers['pr-ironing-model-version']='v2';}
+  const ai={},aiHeaders={};
+  if(usePhotoroomAI&&presets.includes('iron')){ai['ironing.mode']='ai.auto';aiHeaders['pr-ironing-model-version']='v2';}
   const prompt=retouchPrompt(o,usePhotoroomAI);
   if(usePhotoroomAI&&prompt){ai['editWithAI.mode']='ai.auto';ai['editWithAI.prompt']=prompt;}
-  if(!Object.keys(ai).length&&!(o.engine==='openai'&&prompt))return {image:await toDataUrl(await photoroom(env,request,source,base))};
+  if(!Object.keys(ai).length&&!(o.engine==='openai'&&prompt))return finish(await photoroom(env,request,source,base,headers));
   if(usePhotoroomAI){
-    try {return {image:await toDataUrl(await photoroom(env,request,source,{...base,...ai},headers))};}
+    try {return await finish(await photoroom(env,request,source,{...base,...ai},{...headers,...aiHeaders}));}
     catch(e) {
       if(e.status===401)throw e;
       // AI 보정이 거절되면 누끼만 다시 시도해 결과를 살립니다.
-      const cutout=await photoroom(env,request,source,base);
+      const cutout=await photoroom(env,request,source,base,headers);
       return {image:await toDataUrl(cutout),warning:`누끼는 완료했지만 AI 보정은 실패했습니다: ${e.status?e.message:'처리 오류'}`};
     }
   }
-  const cutout=await photoroom(env,request,source,base);
+  const cutout=await photoroom(env,request,source,base,headers);
   try {
     if(!env.OPENAI_API_KEY)throw fail('OPENAI_API_KEY가 없어 OpenAI 프롬프트 보정을 할 수 없습니다.',503);
     return {image:await openaiEdit(env,request,cutout,prompt)};
