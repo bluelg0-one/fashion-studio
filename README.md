@@ -28,6 +28,7 @@ npm run dev
 - 생성형 보정(Edit With AI 출력은 1K)이라 질감이 달라질 수 있어 기본값은 꺼져 있습니다.
 - 각 사진의 ‘이 사진 보정 설정’에서 사진별로 다른 설정을 쓸 수 있습니다. 선택하지 않으면 위쪽 기본값을 따릅니다.
 - 사진마다 원본·보정본을 최대 8개 버전으로 보관하며 ‘이전으로 / 다시 적용’은 저장된 결과만 바꿔 API를 호출하지 않습니다. 같은 사진·같은 설정으로 다시 누르면 저장된 결과를 재사용합니다(새로고침하면 사라짐).
+- ‘개별 PNG 저장’은 2MB를 넘으면 픽셀 크기를 단계적으로 줄여 2MB 이하 PNG로 저장합니다. 작은 사진은 원래 크기 그대로 저장합니다.
 - 화면 상단에 Photoroom 남은 이미지 수를 표시합니다(`GET /v2/account`, 과금 없음).
 - 기본 프롬프트 문장은 `src/utils/retouchPresets.js`에서 수정합니다.
 - 상품 문구 자동 작성은 계속 `OPENAI_API_KEY`를 사용합니다. 없으면 문구 작성만 건너뜁니다.
@@ -70,6 +71,8 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 ```
 
 필요하면 `CHROMIUM_PATH`와 `STUDIO_TEST_URL`을 지정합니다. 테스트 화면 캡처는 `/tmp/fashion-editor-desktop.png`, `/tmp/fashion-editor-mobile.png`에 생성됩니다.
+
+`tests/studio-compress.mjs`는 개별 PNG 저장이 2MB 이하로 압축되는지 검사합니다.
 
 `tests/studio-versions.mjs`는 사진별 설정, 무료 되돌리기·다시 적용, 저장 결과 재사용을 검사합니다.
 

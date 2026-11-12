@@ -37,6 +37,24 @@ export function whitePhoto(source,targetLight=null,brightness=3) {
   ctx.putImageData(pixels,0,0);ctx.globalCompositeOperation='destination-over';ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
   return c.toDataURL('image/png');
 }
+// 개별 저장용: PNG가 maxBytes(기본 2MB)보다 크면 크기를 조금씩 줄여 그 안으로 맞춥니다.
+// PNG는 화질 손실 없는 형식이라 픽셀 크기를 줄이는 방식으로 용량을 낮춥니다.
+export async function compressPng(src,maxBytes=2*1024*1024) {
+  const im=await loadImage(src);let w=im.naturalWidth,h=im.naturalHeight;
+  const encode=async(width,height)=>{
+    const c=document.createElement('canvas');c.width=width;c.height=height;
+    const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,width,height);ctx.imageSmoothingQuality='high';ctx.drawImage(im,0,0,width,height);
+    const blob=await new Promise(resolve=>c.toBlob(resolve,'image/png'));
+    if(!blob)throw new Error('사진 저장에 실패했습니다. 다시 시도하세요.');
+    return blob;
+  };
+  let blob=await encode(w,h);
+  for(let i=0;i<10&&blob.size>maxBytes&&Math.min(w,h)>200;i++){
+    const scale=Math.min(.95,Math.sqrt(maxBytes/blob.size)*.97);
+    w=Math.max(1,Math.round(w*scale));h=Math.max(1,Math.round(h*scale));blob=await encode(w,h);
+  }
+  return {blob,width:w,height:h,original:{width:im.naturalWidth,height:im.naturalHeight}};
+}
 export function download(url,name) {const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();}
 export function downloadBlob(blob,name) {const url=URL.createObjectURL(blob);download(url,name);setTimeout(()=>URL.revokeObjectURL(url),10000);}
 const wrap=(ctx,value,width)=>{const lines=[];for(const part of String(value).split('\n')){let line='';for(const ch of part){if(line&&ctx.measureText(line+ch).width>width){lines.push(line);line='';}line+=ch;}lines.push(line);}return lines;};

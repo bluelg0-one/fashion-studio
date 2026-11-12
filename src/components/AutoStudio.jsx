@@ -3,7 +3,7 @@ import './AutoStudio.css';
 import {cutoutBounds, clampCrop, cropCanvas} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH} from '../utils/retouchPresets.js';
-import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument} from '../utils/studioImages.js';
+import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
 
 async function api(action,body) {
   const response=await fetch(`/api/studio?action=${action}`,{
@@ -62,7 +62,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersion,retouchDefault,status}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersion,onSave,retouchDefault,status}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -85,7 +85,7 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersi
     <div className="slot-actions">
       <label className="file-button">사진 {slot.image?'교체':'선택'}<input aria-label={`${slot.id} 사진 선택`} type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)onUpload(slot.id,file);e.target.value='';}}/></label>
       {slot.source&&<button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button>}
-      {slot.image&&<><button type="button" onClick={()=>download(slot.image,`${slot.id}.png`)}>개별 PNG 저장</button><button type="button" className="subtle" onClick={()=>onRemove(slot.id)}>사진 삭제</button></>}
+      {slot.image&&<><button type="button" onClick={()=>onSave(slot.id)}>개별 PNG 저장</button><button type="button" className="subtle" onClick={()=>onRemove(slot.id)}>사진 삭제</button></>}
     </div>
     {slot.status==='raw'&&<p className="slot-note">업로드한 사진입니다. 배경 제거·주름 보정은 ‘이 사진 누끼·보정’을 눌러 적용하세요.</p>}
     {slot.status==='done'&&<p className="slot-note">흰 배경 적용 · 색상과 무늬를 원본과 비교해 주세요.</p>}
@@ -191,6 +191,16 @@ export default function AutoStudio() {
       setStep(`${slot.label||'사진'} · ${index===0?'원본으로 되돌렸습니다':`보정 ${index} 버전을 적용했습니다`} (API 사용 없음)`);
     });
   }
+  async function savePhoto(id) {
+    await task(async()=>{
+      const slot=slots[id];if(!slot?.image)return;
+      setStep('개별 PNG를 2MB 이하로 압축하는 중');
+      const {blob,width,height,original}=await compressPng(slot.image);
+      downloadBlob(blob,`${(slot.label||slot.id).replace(/[\\/:*?"<>|]/g,'_')}.png`);
+      const mb=(blob.size/1024/1024).toFixed(2),resized=width!==original.width;
+      setStep(`개별 PNG 저장 완료 · ${mb}MB · ${width}×${height}px${resized?` (원래 ${original.width}×${original.height}px에서 줄임)`:' (원래 크기 유지)'}`);
+    });
+  }
   function refreshCredits() {api('credits').then(setCredits).catch(()=>setCredits(null));}
   function adjustCrop(id,key,value) {
     if(!heroCanvas.current)return;
@@ -237,7 +247,7 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onCrop:adjustCrop,onRemove:removePhoto,onVersion:changeVersion,retouchDefault:retouch,status:ready};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onCrop:adjustCrop,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
