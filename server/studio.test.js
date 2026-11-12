@@ -68,3 +68,10 @@ test('credits reads the Photoroom balance without editing',async()=>{
  const r=await studio('credits',{},env,async(url,o)=>{call={url,o};return {ok:true,json:async()=>({images:{available:7,subscription:10},plan:'x'})};});
  assert.equal(call.url,'https://image-api.photoroom.com/v2/account');assert.equal(call.o.method,undefined);assert.deepEqual(r,{available:7,subscription:10});
 });
+test('shopee copy keeps seller data as data and returns title/description',async()=>{
+ let sent;
+ const r=await studio('shopee',{garment:'긴팔티셔츠',headline:'스트라이프 티',product:'면 100%',image},env,async(url,o)=>{sent=JSON.parse(o.body);return {ok:true,json:async()=>({output:[{content:[{type:'output_text',text:'{"title":"Women\'s Striped Tee","description":"Soft stripes"}'}]}]})};});
+ assert.deepEqual(r,{title:"Women's Striped Tee",description:'Soft stripes'});
+ const text=sent.input[0].content[0].text;assert.match(text,/Never invent material/);assert.match(text,/면 100%/);assert.equal(sent.input[0].content[1].type,'input_image');
+ await assert.rejects(studio('shopee',{},{PHOTOROOM_API_KEY:'x'}),{status:503});
+});

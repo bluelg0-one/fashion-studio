@@ -15,7 +15,7 @@ export const initialSlots = () => Object.fromEntries([['hero','대표 정면샷'
 const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // The guide describes where to measure; numeric values only come from the user.
-export function guideSvg(type) {
+export function guideSvg(type,lang='ko') {
   const pants=type.endsWith('pants'),short=type==='short-pants';
   const shapes={
     'long-top':'M100 65 L65 85 L25 230 L65 245 L95 140 L95 300 L225 300 L225 140 L255 245 L295 230 L255 85 L220 65 Q160 105 100 65Z',
@@ -35,9 +35,10 @@ export function guideSvg(type) {
     line(265,short?72:52,265,short?240:330,'F',272,195) :
     line(100,160,220,160,'A',155,152)+line(310,type==='dress'?48:68,310,type==='dress'?330:300,'B',316,210);
   const legend=pants?'A 허리단면 · B 밑위 · C 엉덩이 단면 · D 허벅지 단면 · E 밑단단면 · F 총장':'A 가슴단면 · B 총장';
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"><rect width="640" height="420" fill="white"/><defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10" fill="none" stroke="#596982"/></marker></defs><g transform="translate(145,0)"><path d="${shapes[type]||shapes['long-top']}" fill="#f4f5f7" stroke="#334155" stroke-width="2.5"/>${marks}</g><text x="320" y="382" text-anchor="middle" fill="#334155" font-size="14" font-family="sans-serif">${legend}</text></svg>`;
+  const legendEn=pants?'A Waist · B Rise · C Hip · D Thigh · E Hem · F Length (flat, cm)':'A Chest · B Length (flat, cm)';
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"><rect width="640" height="420" fill="white"/><defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10" fill="none" stroke="#596982"/></marker></defs><g transform="translate(145,0)"><path d="${shapes[type]||shapes['long-top']}" fill="#f4f5f7" stroke="#334155" stroke-width="2.5"/>${marks}</g><text x="320" y="382" text-anchor="middle" fill="#334155" font-size="14" font-family="sans-serif">${lang==='en'?legendEn:legend}</text></svg>`;
 }
-export const guideUrl = type => 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(guideSvg(type));
+export const guideUrl = (type,lang) => 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(guideSvg(type,lang));
 export function documentBlocks({slots,fitEnabled,texts,garment,rows}) {
   const blocks=[];
   const text=(value,size=24)=>{if(value?.trim())blocks.push({kind:'text',value,size});};

@@ -3,7 +3,12 @@ import './AutoStudio.css';
 import {cutoutBounds, clampCrop, cropCanvas} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH} from '../utils/retouchPresets.js';
+import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
+import ShopeePanel from './ShopeePanel.jsx';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
+
+const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
+const defaultShopee=()=>({title:'',description:'',includeSizeChart:true});
 
 async function api(action,body) {
   const response=await fetch(`/api/studio?action=${action}`,{
@@ -98,7 +103,9 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onCrop,onRemove,onVersi
 export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
-  const [texts,setTexts]=useState({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
+  const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
+  const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
+  const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(3),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const cache=useRef(new Map()),lock=useRef(false),heroCanvas=useRef(null),previewUrl=useRef(null);
@@ -111,6 +118,63 @@ export default function AutoStudio() {
     lock.current=true;setBusy(true);setError('');setPreview(null);
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
+  }
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee});
+  async function applyProduct(product) {
+    const d=product?.data||{};
+    skipSave.current=true;
+    const nextSlots=d.slots||initialSlots();
+    setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
+    setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
+    setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
+    heroCanvas.current=nextSlots.hero?.cutout?await imageCanvas(nextSlots.hero.cutout):null;
+  }
+  async function saveNow(id=productId,name=productName,data=snapshot()) {
+    if(!id)return;
+    clearTimeout(saveTimer.current);
+    try {setSaveState('saving');await saveProduct({id,name,data});setSaveState('saved');setProducts(await listProducts());}
+    catch(e){setSaveState('error');setError(`자동 저장 실패: ${e.message} 작업은 화면에 남아 있으니 다운로드로 보관하세요.`);}
+  }
+  useEffect(()=>{(async()=>{
+    // 저장된 상품을 다 불러올 때까지 편집을 잠가 업로드가 덮어써지지 않게 합니다.
+    lock.current=true;setBusy(true);setStep('저장된 상품을 불러오는 중');
+    try {
+      const list=await listProducts();
+      if(list.length)await applyProduct(await getProduct(list[0].id));
+      else {const product={id:newProductId(),name:'상품 1',data:null};await saveProduct({...product,data:{}});await applyProduct(product);}
+      setProducts(await listProducts());
+      setStep('');
+    } catch(e){setSaveState('error');setStep('');setError(`상품 저장소를 쓸 수 없습니다 (${e.message}). 작업은 이 화면에서만 유지됩니다.`);}
+    finally {lock.current=false;setBusy(false);}
+  })();},[]);
+  useEffect(()=>{
+    if(!productId)return;
+    if(skipSave.current){skipSave.current=false;return;}
+    setSaveState('pending');clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>saveNow(),800);
+    return()=>clearTimeout(saveTimer.current);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName]);
+  async function switchProduct(id) {
+    if(id===productId)return;
+    await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
+  }
+  async function addProduct() {
+    await task(async()=>{
+      await saveNow();
+      const product={id:newProductId(),name:`상품 ${products.length+1}`,data:{}};
+      await saveProduct(product);await applyProduct(product);setProducts(await listProducts());
+      setStep('새 상품을 만들었습니다. 사진을 넣어 시작하세요.');
+    });
+  }
+  async function removeProduct() {
+    if(!productId||!window.confirm(`‘${productName||'이 상품'}’을(를) 삭제할까요? 이 브라우저에 저장된 사진과 문구가 지워지며 되돌릴 수 없습니다.`))return;
+    await task(async()=>{
+      clearTimeout(saveTimer.current);await deleteProduct(productId);
+      const list=await listProducts();
+      if(list.length)await applyProduct(await getProduct(list[0].id));
+      else {const product={id:newProductId(),name:'상품 1',data:{}};await saveProduct(product);await applyProduct(product);}
+      setProducts(await listProducts());setStep('상품을 삭제했습니다.');
+    });
   }
   async function upload(id,file) {
     await task(async()=>{
@@ -252,7 +316,14 @@ export default function AutoStudio() {
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
-    <p className="session-note">작업은 현재 브라우저 메모리에만 보관됩니다. 새로고침하거나 다른 탭으로 이동하기 전에 저장하세요.</p>
+    <section className="product-bar" aria-label="상품 목록">
+      <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
+      <label>상품 이름<input aria-label="상품 이름" disabled={busy} maxLength={80} value={productName} onChange={e=>setProductName(e.target.value)}/></label>
+      <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
+      <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
+      <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
+    </section>
+    <p className="session-note">상품은 이 브라우저에 자동 저장됩니다(총 {products.length}개). 다른 컴퓨터·다른 브라우저에서는 보이지 않으니, 완성본은 다운로드해서 보관하세요.</p>
     <p role="status" aria-live="polite">{step}</p>{error&&<p role="alert" className="studio-error">{error}</p>}
     <div className="studio-workspace"><fieldset disabled={busy} className="studio-editor">
       <section className="editor-section"><h2>상품 정보와 공통 보정</h2>
@@ -284,6 +355,7 @@ export default function AutoStudio() {
         <button disabled={rows.length>=12} onClick={()=>{setSizeRows(current=>({...current,[garment]:[...rows,newSizeRow()]}));setPreview(null);}}>사이즈 행 추가</button>
         <label>치수 안내 문구<textarea maxLength={1500} value={texts.sizeNote} onChange={e=>setText('sizeNote',e.target.value)}/></label>
       </section>
+      <ShopeePanel shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
     </fieldset><aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside></div>
   </div>;
 }

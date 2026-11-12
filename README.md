@@ -34,6 +34,17 @@ npm run dev
 - 상품 문구 자동 작성은 계속 `OPENAI_API_KEY`를 사용합니다. 없으면 문구 작성만 건너뜁니다.
 - 실제 Photoroom API로 누끼 단독 호출과 누끼+AI 다림질+Edit With AI+조명 결합 호출이 HTTP 200·투명 WebP를 반환하는 것을 테스트 이미지로 확인했습니다. 서버 테스트는 모의 응답으로 요청 형식을 검사합니다.
 
+## 여러 상품 저장
+
+상단 ‘상품 선택’에서 상품을 여러 개 만들고 전환합니다. 사진·문구·사이즈·보정 설정·쇼피 정보는 이 브라우저의 IndexedDB에 자동 저장됩니다(서버로 보내지 않음, 다른 컴퓨터·브라우저에서는 보이지 않음). 보정 결과 재사용 캐시는 저장하지 않습니다.
+
+## 쇼피 등록 준비 (05)
+
+- 영문 상품명·설명 자동 작성: `/api/studio?action=shopee` (OpenAI). 입력에 없는 소재·원산지·세탁법·치수는 쓰지 않도록 지시합니다.
+- ‘쇼피 등록 묶음 다운로드 (ZIP)’: 사진을 흰 배경 정사각형 JPG(800~1600px, 2MB 이하)로 바꾸고 대표 → 모델컷 → 디테일 → 영문 사이즈표 순서로 최대 9장 담습니다. `listing.txt`(상품명·설명·사이즈표·사진 순서)와 `listing.json`이 함께 들어갑니다. 파일 이름은 영문입니다.
+- 사진 기준(1:1, 800px 이상, 2MB 이하, 최대 9장)은 판매자 가이드 기준값이며 `src/utils/shopeeExport.js`의 `SHOPEE_IMAGE`에서 바꿉니다.
+- 쇼피 Open Platform 승인 후 ‘쇼피에 바로 등록’(KRSC Global Product API)을 추가할 예정입니다.
+
 ## 편집 흐름
 
 1. 옷 종류와 확인된 상품 정보를 입력하고 대표 정면 사진을 선택합니다.
@@ -71,6 +82,8 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 ```
 
 필요하면 `CHROMIUM_PATH`와 `STUDIO_TEST_URL`을 지정합니다. 테스트 화면 캡처는 `/tmp/fashion-editor-desktop.png`, `/tmp/fashion-editor-mobile.png`에 생성됩니다.
+
+`tests/studio-products.mjs`는 여러 상품 자동 저장·복원과 쇼피 ZIP(정사각형 JPG·2MB 이하·사이즈표·listing.txt)을 검사합니다.
 
 `tests/studio-compress.mjs`는 개별 PNG 저장이 2MB 이하로 압축되는지 검사합니다.
 
