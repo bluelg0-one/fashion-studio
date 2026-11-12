@@ -1,52 +1,9 @@
-import { useState } from 'react'
 import AutoStudio from './components/AutoStudio.jsx'
-import PhotoEditor from './components/PhotoEditor.jsx'
-import DetailPageBuilder from './components/DetailPageBuilder.jsx'
-import TryOnStudio from './components/TryOnStudio.jsx'
-
-const TABS = [
-  { label: '자동 제작', desc: 'OpenAI 사진부터 상세페이지까지' },
-  { label: '📸 1차 사진 보정', desc: '원본 사진 AI 보정 및 누끼' },
-  { label: '🎭 AI 착용샷', desc: 'AI 모델 착용샷 자동 생성' },
-  { label: '🛍️ 2차 상세페이지', desc: '상품 상세페이지 자동 제작' },
-]
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(0)
-  const [refinedImages, setRefinedImages] = useState([])
-
   return (
-    <div style={{ minHeight: '100vh', background: '#f4f4f0' }}>
-      {/* 헤더 */}
-      <header style={{ background: '#1a1a2e', color: '#fff', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 60, position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 2px 12px rgba(0,0,0,0.15)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 22 }}>✂️</span>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: '-0.3px' }}>Fashion AI Studio</div>
-            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', letterSpacing: '0.05em' }}>여성의류 쇼핑몰 전용 AI 편집기</div>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 4 }}>
-          {TABS.map((tab, i) => (
-            <button key={i} onClick={() => setActiveTab(i)}
-              style={{ padding: '8px 16px', borderRadius: 24, border: 'none', background: activeTab === i ? '#fff' : 'rgba(255,255,255,0.1)', color: activeTab === i ? '#1a1a2e' : 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: activeTab === i ? 700 : 400, transition: 'all 0.2s', cursor: 'pointer' }}>
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.08)', padding: '4px 12px', borderRadius: 12 }}>
-          보정완료 {refinedImages.filter(i => i.status === 'done').length}장 · 최종확정 {refinedImages.filter(i => i.approved).length}장
-        </div>
-      </header>
-
-      <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-        {activeTab === 0 && <AutoStudio />}
-        {activeTab === 1 && <PhotoEditor onFilesReady={files => setRefinedImages(files.map(f => ({...f, editedUrl:f.corrected, approved:true})))} />}
-        {activeTab === 2 && <TryOnStudio refinedImages={refinedImages} />}
-        {activeTab === 3 && <DetailPageBuilder refinedImages={refinedImages} />}
-      </main>
-    </div>
+    <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
+      <AutoStudio />
+    </main>
   )
 }
