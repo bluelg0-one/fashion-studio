@@ -26,23 +26,47 @@ const CORRECTION_OPTIONS = [
 ];
 
 const DEFAULT_FILTERS = { brightness: 100, contrast: 100, saturation: 100 };
-const FASHN_API      = "https://api.fashn.ai/v1";
+const FASHN_PROXY    = "/api/fashn"; // API Key는 서버(api/fashn.js)에만 있음
 const POLL_INTERVAL  = 2500;
 const POLL_TIMEOUT   = 150000;
+const MAX_UPLOAD_CHARS = 4000000; // Vercel 함수 요청 본문 한도(4.5MB) 이내로 유지
+
+// 한도를 넘는 이미지만 흰 배경 JPEG로 줄여서 전송 (한도 이내면 원본 그대로)
+function fitForUpload(dataUrl) {
+  if (typeof dataUrl !== "string" || dataUrl.length <= MAX_UPLOAD_CHARS) return Promise.resolve(dataUrl);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      let scale = Math.min(1, 3000 / Math.max(img.width, img.height));
+      let out = dataUrl;
+      for (let i = 0; i < 8; i++) {
+        canvas.width  = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        out = canvas.toDataURL("image/jpeg", 0.9);
+        if (out.length <= MAX_UPLOAD_CHARS) break;
+        scale *= 0.8;
+      }
+      resolve(out);
+    };
+    img.onerror = () => reject(new Error("이미지를 불러올 수 없습니다"));
+    img.src = dataUrl;
+  });
+}
 
 // ────────────────────────────────────────────────────────────
-// FASHN 공통 폴링
+// FASHN 공통 폴링 (서버 프록시 경유)
 // ────────────────────────────────────────────────────────────
 async function fashnRun(modelName, inputs) {
-  const apiKey = import.meta.env.VITE_FASHN_API_KEY;
-  if (!apiKey) throw new Error("VITE_FASHN_API_KEY 미설정");
+  if (inputs.image) inputs = { ...inputs, image: await fitForUpload(inputs.image) };
 
-  const res = await fetch(`${FASHN_API}/run`, {
+  const res = await fetch(FASHN_PROXY, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model_name: modelName, inputs }),
   });
   if (!res.ok) {
@@ -56,9 +80,7 @@ async function fashnRun(modelName, inputs) {
   const start = Date.now();
   while (Date.now() - start < POLL_TIMEOUT) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-    const statusRes = await fetch(`${FASHN_API}/status/${id}`, {
-      headers: { "Authorization": `Bearer ${apiKey}` },
-    });
+    const statusRes = await fetch(`${FASHN_PROXY}?id=${encodeURIComponent(id)}`);
     const status = await statusRes.json();
     if (status.status === "completed") {
       const outputUrl = status.output?.[0];

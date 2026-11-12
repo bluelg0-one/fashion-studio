@@ -1,43 +1,18 @@
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
+const CLAUDE_PROXY_URL = '/api/claude'
 
+// API Key는 서버(api/claude.js)에만 있고, 브라우저는 프록시만 호출한다.
 export async function callClaude(prompt, imageBase64 = null, mimeType = 'image/jpeg') {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
-  if (!apiKey) {
-    throw new Error('Anthropic API Key가 설정되지 않았습니다. Vercel 환경변수를 확인해주세요.')
-  }
-
-  const content = []
-
-  if (imageBase64) {
-    content.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mimeType,
-        data: imageBase64,
-      },
-    })
-  }
-
-  content.push({ type: 'text', text: prompt })
-
-  const response = await fetch(CLAUDE_API_URL, {
+  const response = await fetch(CLAUDE_PROXY_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, imageBase64, mimeType }),
   })
 
   if (!response.ok) {
-    const err = await response.json()
+    if (response.status === 413) {
+      throw new Error('이미지 용량이 너무 큽니다. 3MB 이하 이미지로 다시 시도해주세요.')
+    }
+    const err = await response.json().catch(() => null)
     throw new Error(err?.error?.message || 'Claude API 오류가 발생했습니다.')
   }
 
