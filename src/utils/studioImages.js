@@ -95,8 +95,9 @@ export async function thumbnail(src,side=512) {
 // 일관성: 모든 컷을 같은 비율·크기·여백으로 맞춥니다(투명 누끼 기준).
 // 옷 전체가 보이는 컷은 같은 여백으로 가운데 배치, 가장자리가 잘린 접사 컷은 비율에 맞춰 가운데를 채웁니다.
 export const FRAME_SIZES={'3:4':[1500,2000],'1:1':[1800,1800],'4:5':[1600,2000]};
-export function framePhoto(source,{ratio='3:4',margin=6}={}) {
-  const [W,H]=FRAME_SIZES[ratio]||FRAME_SIZES['3:4'];
+// size:[W,H]를 주면 그 크기로(예: 원본 크기 그대로 중앙 정렬만), 아니면 비율별 표준 크기로 맞춥니다.
+export function framePhoto(source,{ratio='3:4',margin=6,size}={}) {
+  const [W,H]=size||FRAME_SIZES[ratio]||FRAME_SIZES['3:4'];
   const {data,width,height}=source.getContext('2d').getImageData(0,0,source.width,source.height);
   let l=width,t=height,r=-1,b=-1;
   for(let y=0;y<height;y+=2)for(let x=0;x<width;x+=2)if(data[(y*width+x)*4+3]>128){if(x<l)l=x;if(x>r)r=x;if(y<t)t=y;if(y>b)b=y;}

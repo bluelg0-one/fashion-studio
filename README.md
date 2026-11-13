@@ -53,7 +53,17 @@ npm run dev
 
 ### IOPaint 설치 (Windows)
 
-앱 상단 ‘사용 도구·비용’에서 `public/iopaint/install-iopaint.bat`을 받아 실행합니다: Python 3.11(없으면 winget) → `%USERPROFILE%\iopaint\venv`에 PyTorch CPU + `iopaint` 설치 → 바탕화면 ‘IOPaint Start’ 바로가기(`iopaint start --model lama --device cpu --host 127.0.0.1 --port 8080`). 다른 PC도 같은 파일로 설치합니다. IOPaint는 앱을 연 그 PC에서 켜져 있어야 합니다. 크롬이 로컬 네트워크 접근 허용을 물으면 허용합니다. 라이선스: IOPaint Apache-2.0.
+앱 상단 ‘사용 도구·비용’에서 `public/iopaint/install-iopaint.bat`을 받아 실행합니다: Python 3.11(없으면 winget) → `%USERPROFILE%\iopaint\venv`에 PyTorch CPU + `iopaint` 설치 → BiRefNet용 패키지와 서버 파일 → 바탕화면 ‘IOPaint Start’ 바로가기(`%USERPROFILE%\iopaint\start-iopaint.bat`: BiRefNet 서버 + `iopaint start --model lama --device cpu --host 127.0.0.1 --port 8080`). 다른 PC도 같은 파일로 설치합니다. IOPaint는 앱을 연 그 PC에서 켜져 있어야 합니다. 크롬이 로컬 네트워크 접근 허용을 물으면 허용합니다. 라이선스: IOPaint Apache-2.0.
+
+### 무료 배경 지우기 (BiRefNet, 내 PC)
+
+누끼·보정 설정의 ‘배경 지우기 엔진’에서 **Photoroom(기본, $0.10/장)** 또는 **BiRefNet(무료)** 을 고릅니다(전체 기본값·사진별 설정 모두). BiRefNet을 고르면 브라우저가 내 PC의 `public/iopaint/birefnet_server.py`(기본 `http://127.0.0.1:8081`, `GET /health`, `POST /remove`)에 사진을 보내 투명 배경 PNG를 받고, 중앙 정렬(여백 6%)은 브라우저에서 합니다. Photoroom 생성형 추가 편집은 BiRefNet일 때 숨깁니다. Photoroom 키가 없어도 동작합니다.
+
+- 모델: `ZhengPeng7/BiRefNet`(MIT, 리비전 고정) PyTorch CPU, 입력 1024px → 마스크를 원본 크기로. 가장자리 옛 배경색 번짐은 blur-fusion 전경 추정으로 제거합니다.
+- 실측(이 개발 환경, 4코어): 1500×2000 사진 약 32초, 최대 메모리 약 3.7GB(대기 1.7GB). IOPaint 내장 RemoveBG(rembg ONNX)의 birefnet-general은 최대 약 10GB여서 쓰지 않았습니다.
+- 설치: `install-iopaint.bat`이 같은 venv에 `kornia==0.9.0 timm einops`를 더 깔고, 파일 끝에 들어 있는 `birefnet_server.py`·`start-iopaint.bat`을 `%USERPROFILE%\iopaint`에 꺼내 둡니다. 바탕화면 ‘IOPaint Start’는 그 시작 파일을 실행해 BiRefNet과 IOPaint를 한 창에서 함께 켭니다. 첫 실행 때 BiRefNet 모델 약 450MB를 내려받습니다.
+- 두 파일을 고친 뒤에는 `npm run sync:iopaint`로 설치 파일을 다시 만듭니다(`server/iopaint-installer.test.js`가 일치를 검사).
+- `tests/studio-birefnet.mjs`: 실제 BiRefNet 서버로 앱에서 누끼(`PHOTO_PATH`=배경 있는 원본 JPG).
 
 `tests/studio-iopaint.mjs`는 실제 IOPaint 서버로 얼룩 지우기를 검사합니다(`CUTOUT_PATH`=투명 누끼 PNG, Claude 표시는 모의).
 

@@ -9,8 +9,10 @@ export const PRESERVE_PROMPT = 'This is a real clothing product photo for an onl
 
 // 다림질(구김)·얼룩 지우기는 IOPaint(무료, 내 PC)로 옮겼습니다. 예전에 저장된 설정의 해당 항목은 지웁니다.
 export const MOVED_TO_IOPAINT=['iron','clean'];
-export const sanitizeRetouch=r=>r&&{...r,presets:(r.presets||[]).filter(p=>!MOVED_TO_IOPAINT.includes(p))};
-export const DEFAULT_RETOUCH = {removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+export const sanitizeRetouch=r=>r&&{...r,cutout:CUTOUT_ENGINES.includes(r.cutout)?r.cutout:'photoroom',presets:(r.presets||[]).filter(p=>!MOVED_TO_IOPAINT.includes(p))};
+// cutout: 배경 지우기 엔진 — 'photoroom'(유료, 서버) 또는 'birefnet'(무료, 내 PC의 IOPaint).
+export const CUTOUT_ENGINES=['photoroom','birefnet'];
+export const DEFAULT_RETOUCH = {cutout:'photoroom', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
 // 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
 export const MANNEQUIN_MODES = [
   {id:'keep', label:'마네킹 그대로 두기'},

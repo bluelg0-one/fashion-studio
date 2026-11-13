@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/start.js",
-    "test": "node --test server/*.test.js"
+    "test": "node --test server/*.test.js",
+    "sync:iopaint": "node scripts/sync-iopaint-installer.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

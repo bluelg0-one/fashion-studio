@@ -3,7 +3,7 @@ import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt, sanitizeRetouch} from '../utils/retouchPresets.js';
-import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, markedPreview, inpaint, DEFECT_LABEL} from '../utils/iopaint.js';
+import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import {COST, Cost} from './Cost.jsx';
@@ -24,7 +24,8 @@ async function api(action,body) {
   return result;
 }
 
-function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 설정'}) {
+const cutoutCost=o=>o?.cutout==='birefnet'?'birefnet':'photoroom';
+function RetouchSettings({value,onChange,status,bir,prefix='',title='누끼·보정 설정'}) {
   const set=patch=>onChange({...value,...patch});
   const togglePreset=id=>set({presets:value.presets.includes(id)?value.presets.filter(p=>p!==id):[...value.presets,id]});
   const prompted=value.presets.length>0||value.custom.trim().length>0;
@@ -32,11 +33,19 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
   const small=lowResolution(value,retouchPrompt(value,value.engine!=='openai'));
   const advancedOn=prompted||special||value.lighting||value.shadow;
   return <div className="retouch-settings">
-    <h3>{title} <Cost k="photoroom"/></h3>
+    <h3>{title} <Cost k={cutoutCost(value)}/></h3>
+    <label>배경 지우기 엔진<select aria-label={`${prefix}배경 지우기 엔진`} value={value.cutout||'photoroom'} onChange={e=>set({cutout:e.target.value})}>
+      <option value="photoroom">Photoroom (유료 $0.10/장 · 테두리 가장 깔끔)</option>
+      <option value="birefnet">BiRefNet (무료 · 내 PC에서 실행)</option>
+    </select></label>
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}중앙 정렬`} checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
-    <p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>
-    <details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
+    {value.cutout==='birefnet'
+      ?<><p className="slot-note">BiRefNet은 사장님 PC에서 돌아가 비용이 없습니다(IOPaint Start로 함께 켜짐). 사진 1장에 30초 안팎(PC 성능에 따라 다름), 처리 중 메모리 약 4GB를 씁니다. 마네킹 받침대처럼 옷 아닌 부분이 남거나 테두리가 마음에 안 들면 이 사진만 Photoroom으로 바꿔 다시 하세요.</p>
+        {bir&&!bir.ok&&<p className="review-note">BiRefNet이 꺼져 있습니다. 위쪽 ‘사용 도구·비용’ 안내대로 바탕화면의 IOPaint Start를 실행하세요. 예전에 설치했다면 설치 파일을 한 번 더 실행해야 합니다.</p>}
+        {bir?.ok&&!bir.ready&&<p className="review-note">BiRefNet 모델 준비 중입니다(처음 한 번 약 450MB 내려받기).</p>}</>
+      :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
+    {value.cutout!=='birefnet'&&<details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
       <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
       <h4>마네킹 처리</h4>
@@ -50,8 +59,8 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
         <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집 (별도 사용료){status&&!status.openai?' (키 없음)':''}</option>
       </select></label>}
       {prompted&&<p className="review-note">프롬프트 편집은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 달라질 수 있습니다. 실패해도 누끼 결과는 유지됩니다.</p>}
-    </details>
-    {small&&<p className="review-note low-res">⚠ 지금 설정은 결과 사진이 약 1024px(1K)로 작아집니다.</p>}
+    </details>}
+    {value.cutout!=='birefnet'&&small&&<p className="review-note low-res">⚠ 지금 설정은 결과 사진이 약 1024px(1K)로 작아집니다.</p>}
   </div>;
 }
 
@@ -91,7 +100,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch,slotList,onMove,iop,onFindDefects,onInpaint}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,onColorMatch,slotList,onMove,iop,onFindDefects,onInpaint}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -111,12 +120,12 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSa
     {slot.source&&<VersionBar slot={slot} onVersion={onVersion}/>}
     {slot.source&&<details className="slot-retouch"><summary>이 사진 보정 설정{slot.retouch?' · 개별 설정 사용 중':' · 기본 설정 사용 중'}</summary>
       <label className="check"><input type="checkbox" aria-label={`${slot.id} 개별 설정 사용`} checked={Boolean(slot.retouch)} onChange={e=>onPatch(slot.id,{retouch:e.target.checked?{...retouchDefault}:null})}/>이 사진만 따로 설정하기</label>
-      {slot.retouch?<RetouchSettings value={slot.retouch} onChange={value=>onPatch(slot.id,{retouch:value})} status={status} prefix={`${slot.id} `} title="이 사진 보정 설정"/>:<p className="slot-note">위쪽 ‘누끼·보정 설정(모든 사진 기본값)’을 따릅니다.</p>}
+      {slot.retouch?<RetouchSettings value={slot.retouch} onChange={value=>onPatch(slot.id,{retouch:value})} status={status} bir={bir} prefix={`${slot.id} `} title="이 사진 보정 설정"/>:<p className="slot-note">위쪽 ‘누끼·보정 설정(모든 사진 기본값)’을 따릅니다.</p>}
     </details>}
     {slot.source&&<details className="source-compare"><summary>원본과 비교</summary><img src={slot.source} alt={`${name} 원본`}/></details>}
     <div className="slot-actions">
       <label className="file-button">사진 {slot.image?'교체':'선택'}<input aria-label={`${slot.id} 사진 선택`} type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)onUpload(slot.id,file);e.target.value='';}}/></label>
-      {slot.source&&<span className="btn-with-cost"><button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button><Cost k="photoroom"/></span>}
+      {slot.source&&<span className="btn-with-cost"><button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button><Cost k={cutoutCost(slot.retouch||retouchDefault)}/></span>}
       {slot.cutout&&colorRef?.slotId!==slot.id&&<button type="button" onClick={()=>onColorRef(slot.id)}>🎨 이 컷 색감을 기준으로</button>}
       {slot.cutout&&colorRef&&colorRef.slotId!==slot.id&&<button type="button" onClick={()=>onColorMatch([slot.id])}>기준 색감으로 맞추기</button>}
       {colorRef?.slotId===slot.id&&<span className="color-badge"><i style={{background:labCss(colorRef.lab)}}/>색감 기준 컷</span>}
@@ -132,14 +141,14 @@ export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
-  const [iop,setIop]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
+  const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null);
   const rows=sizeRows[garment]||[newSizeRow()];
-  useEffect(()=>{checkIopaint(getIopaintUrl()).then(setIop);api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
+  useEffect(()=>{checkIopaint(getIopaintUrl()).then(setIop);checkBirefnet().then(setBir);api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
   const patch=(id,values)=>{setSlots(current=>({...current,[id]:{...current[id],...values}}));setPreview(null);};
   const setText=(key,value)=>{setTexts(current=>({...current,[key]:value}));setPreview(null);};
   async function task(work) {
@@ -217,6 +226,13 @@ export default function AutoStudio() {
     // 같은 사진·같은 설정은 다시 과금하지 않고 저장된 결과를 씁니다.
     const key=JSON.stringify(options)+source;
     if(cache.current.has(key))return cache.current.get(key);
+    if(options.cutout==='birefnet'){
+      // BiRefNet(내 PC의 IOPaint) → 중앙 정렬은 브라우저에서 원본 크기 그대로 여백 6%로 맞춥니다.
+      let c=await imageCanvas(await removeBackground(source));
+      cutoutBounds(c.getContext('2d').getImageData(0,0,c.width,c.height));
+      if(options.center!==false)c=framePhoto(c,{margin:6,size:[c.width,c.height]});
+      const image=c.toDataURL('image/png');cache.current.set(key,image);return image;
+    }
     const response=await api('retouch',{image:source,options});
     const canvas=await imageCanvas(response.image);
     cutoutBounds(canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height));
@@ -240,11 +256,13 @@ export default function AutoStudio() {
   async function processPhotos(onlyId) {
     await task(async()=>{
       const status=await api('status');setReady(status);
-      if(!status.photoroom)throw new Error('서버에 Photoroom API 키(PHOTOROOM_API_KEY)가 연결되지 않았습니다. Vercel 환경변수에 등록한 뒤 다시 배포하세요.');
       let current={...slots};const warnings=[];
       const pending=Object.values(current).filter(slot=>slot.source&&(onlyId?slot.id===onlyId:slot.enabled&&(slot.id!=='fit'||fitEnabled)&&slot.status!=='done'));
+      const engines=new Set(pending.map(slot=>cutoutCost(slot.retouch||retouch)));
+      if(engines.has('photoroom')&&!status.photoroom)throw new Error('서버에 Photoroom API 키(PHOTOROOM_API_KEY)가 연결되지 않았습니다. Vercel 환경변수에 등록한 뒤 다시 배포하거나, 배경 지우기 엔진을 BiRefNet(무료)으로 바꾸세요.');
+      if(engines.has('birefnet'))setBir(await checkBirefnet());
       for(let index=0;index<pending.length;index++){
-        const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거·약한 주름 보정`);
+        const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
         const cutout=await edited(slot.source,warnings,slot.retouch||retouch);
         const kept=(slot.versions||[null]).slice(0,(slot.vIndex??0)+1);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
@@ -458,25 +476,26 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors,slotList:Object.values(slots).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors,slotList:Object.values(slots).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
-    <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
+    <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · BiRefNet(내 PC) {bir?.ok&&bir.ready?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
       <table className="cost-table"><thead><tr><th>기능</th><th>사용 모델</th><th>비용</th></tr></thead><tbody>
-        {[['배경 지우기 (누끼)','photoroom'],['Photoroom 생성형 추가 편집 (선택)','photoroomAI'],['사진 한꺼번에 올리기 (옷별·컷별 분류)','claudeClassify'],['얼룩·구김 자동 찾기','claudeDefects'],['얼룩·구김 지우기 (다림질 포함)','iopaint'],['상품 문구·쇼피 영문 문구','openai'],['색감·일관성 맞추기 · PNG 압축 · ZIP','browser']].map(([f,k])=><tr key={k}><td>{f}</td><td>{COST[k][0]}</td><td>{COST[k][1]}</td></tr>)}
+        {[['배경 지우기 (누끼) · 기본','photoroom'],['배경 지우기 (누끼) · 무료 선택','birefnet'],['Photoroom 생성형 추가 편집 (선택)','photoroomAI'],['사진 한꺼번에 올리기 (옷별·컷별 분류)','claudeClassify'],['얼룩·구김 자동 찾기','claudeDefects'],['얼룩·구김 지우기 (다림질 포함)','iopaint'],['상품 문구·쇼피 영문 문구','openai'],['색감·일관성 맞추기 · PNG 압축 · ZIP','browser']].map(([f,k])=><tr key={k}><td>{f}</td><td>{COST[k][0]}</td><td>{COST[k][1]}</td></tr>)}
       </tbody></table>
       <p className="slot-note">Claude 비용은 사진 크기·개수에 따른 추정치입니다. 실제 금액은 Claude Console·Photoroom 대시보드에서 확인하세요.</p>
-      <h3>IOPaint 연결 (내 PC) {iop?.ok?<span className="ok-tag">연결됨 · {iop.model}</span>:<span className="off-tag">꺼짐</span>}</h3>
-      <p className="slot-note">IOPaint는 사장님 PC에서 실행되는 무료 프로그램입니다. 이 앱을 연 그 PC에서 IOPaint가 켜져 있어야 얼룩·구김 지우기가 됩니다(사진은 PC 안에서만 처리).</p>
+      <h3>IOPaint · BiRefNet 연결 (내 PC) {iop?.ok?<span className="ok-tag">IOPaint 연결됨 · {iop.model}</span>:<span className="off-tag">IOPaint 꺼짐</span>} {bir?.ok?<span className={bir.ready?'ok-tag':'off-tag'}>BiRefNet {bir.ready?'연결됨':bir.error?'오류':'준비 중'}</span>:<span className="off-tag">BiRefNet 꺼짐</span>}</h3>
+      {iop?.ok&&!bir?.ok&&<p className="review-note">얼룩·구김 지우기는 됩니다. 무료 배경 지우기(BiRefNet)도 쓰려면 아래 설치 파일을 다시 받아 한 번 더 실행하고, 바탕화면 IOPaint Start로 다시 켜세요(이미 설치된 부분은 건너뛰어 빨리 끝납니다).</p>}
+      <p className="slot-note">IOPaint(얼룩·구김 지우기)와 BiRefNet(무료 배경 지우기)은 사장님 PC에서 실행되는 무료 프로그램입니다. 설치 파일 하나로 둘 다 설치되고, IOPaint Start 하나로 둘 다 켜집니다. 이 앱을 연 그 PC에서 켜져 있어야 합니다(사진은 PC 안에서만 처리).</p>
       <ol className="steps">
-        <li>처음 한 번: <a href="/iopaint/install-iopaint.bat" download>설치 파일(install-iopaint.bat)</a>을 받아 더블클릭 → 끝날 때까지 기다립니다(10~20분, 약 2GB).</li>
+        <li>처음 한 번: <a href="/iopaint/install-iopaint.bat" download>설치 파일(install-iopaint.bat)</a>을 받아 더블클릭 → 끝날 때까지 기다립니다(10~20분, 약 3GB). 얼룩·구김 지우기(LaMa)와 무료 배경 지우기(BiRefNet)가 함께 설치됩니다.</li>
         <li>쓸 때마다: 바탕화면의 <b>IOPaint Start</b>(또는 <a href="/iopaint/start-iopaint.bat" download>start-iopaint.bat</a>)을 더블클릭 → 검은 창은 닫지 말고 둡니다.</li>
         <li>아래 ‘다시 확인’을 누릅니다. 크롬이 “이 기기의 다른 앱 및 서비스에 액세스” 허용을 물으면 <b>허용</b>을 누릅니다.</li>
       </ol>
       <div className="btn-row"><label className="iop-url">IOPaint 주소<input aria-label="IOPaint 주소" value={iopUrl} onChange={e=>{setIopUrl(e.target.value);setIopaintUrl(e.target.value);}}/></label>
-        <button type="button" onClick={async()=>{setIop(null);setIop(await checkIopaint(iopUrl));}}>다시 확인</button></div>
+        <button type="button" onClick={async()=>{setIop(null);setBir(null);const [a,b]=await Promise.all([checkIopaint(iopUrl),checkBirefnet()]);setIop(a);setBir(b);}}>다시 확인</button></div>
     </details>
     <section className="product-bar" aria-label="상품 목록">
       <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
@@ -495,7 +514,7 @@ export default function AutoStudio() {
         <label>상품 정보<textarea value={texts.product} maxLength={3000} placeholder="확인된 소재·색상·상품 정보만 입력하세요." onChange={e=>setText('product',e.target.value)}/></label>
         <label>상품 제목<input value={texts.headline} maxLength={200} onChange={e=>setText('headline',e.target.value)}/></label>
         <label>상품 설명<textarea value={texts.description} maxLength={4000} onChange={e=>setText('description',e.target.value)}/></label>
-        <RetouchSettings value={retouch} onChange={setRetouch} status={ready} title="누끼·보정 설정 (모든 사진 기본값)"/>
+        <RetouchSettings value={retouch} onChange={setRetouch} status={ready} bir={bir} title="누끼·보정 설정 (모든 사진 기본값)"/>
         <p className="slot-note">사진별로 다르게 하려면 각 사진 아래 ‘이 사진 보정 설정’에서 바꾸세요.</p>
         {credits&&Number.isFinite(credits.available)&&credits.available<=3&&<p className="review-note">Photoroom 남은 이미지가 {credits.available}장입니다. 사진 1장 보정에 1장이 사용됩니다.</p>}
         <label>공통 밝기 · {brightness}%<input aria-label="공통 밝기" type="range" min="0" max="8" value={brightness} onChange={e=>setBrightness(Number(e.target.value))}/></label>
@@ -515,7 +534,7 @@ export default function AutoStudio() {
           <label className="check"><input type="checkbox" aria-label="새 보정 컷 자동 색감 맞춤" disabled={!colorRef} checked={autoMatch} onChange={e=>setAutoMatch(e.target.checked)}/>앞으로 보정하는 컷도 자동으로 기준 색감에 맞추기</label>
           <p className="slot-note">누끼·보정된 컷에만 적용됩니다. 한 번에 바꾸는 양에 한계를 둬서 색이 크게 틀어지지 않으며, 각 컷의 ‘이전으로’로 되돌릴 수 있습니다. 같은 컷에 여러 번 누르면 조금씩 더 맞춰집니다.</p>
         </div>
-        <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k="photoroom"/><Cost k="openai"/></span>
+        <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k={cutoutCost(retouch)}/><Cost k="openai"/></span>
         <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
       </section>
       <PhotoSlot slot={slots.hero} {...photoProps}/>

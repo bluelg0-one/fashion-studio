@@ -7,12 +7,41 @@ export const DEFAULT_IOPAINT_URL='http://127.0.0.1:8080';
 export function getIopaintUrl() {try{return localStorage.getItem(KEY)||DEFAULT_IOPAINT_URL;}catch{return DEFAULT_IOPAINT_URL;}}
 export function setIopaintUrl(url) {try{localStorage.setItem(KEY,url);}catch{}}
 
+const base=url=>url.replace(/\/$/,'');
 export async function checkIopaint(url=getIopaintUrl()) {
   try {
-    const r=await fetch(`${url.replace(/\/$/,'')}/api/v1/model`,{signal:AbortSignal.timeout(2500)});
+    const r=await fetch(`${base(url)}/api/v1/model`,{signal:AbortSignal.timeout(2500)});
     if(!r.ok)return {ok:false};
     const m=await r.json();return {ok:true,model:m.name||'lama'};
   } catch {return {ok:false};}
+}
+
+const toDataUrl=blob=>new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(new Error('결과 사진을 읽지 못했습니다.'));fr.readAsDataURL(blob);});
+const NOT_RUNNING='IOPaint에 연결할 수 없습니다. 내 PC에서 ‘IOPaint Start’를 실행했는지 확인하세요. 크롬이 "이 기기의 다른 앱에 액세스" 허용을 물으면 허용을 누르세요.';
+
+// ---- BiRefNet 배경 지우기 (무료, 내 PC) ----
+// IOPaint Start가 함께 켜는 작은 서버(public/iopaint/birefnet_server.py, 기본 http://127.0.0.1:8081)에 요청합니다.
+export const DEFAULT_BIREFNET_URL='http://127.0.0.1:8081';
+export function getBirefnetUrl() {try{return localStorage.getItem('birefnetUrl')||DEFAULT_BIREFNET_URL;}catch{return DEFAULT_BIREFNET_URL;}}
+export function setBirefnetUrl(url) {try{localStorage.setItem('birefnetUrl',url);}catch{}}
+export async function checkBirefnet(url=getBirefnetUrl()) {
+  try {
+    const r=await fetch(`${base(url)}/health`,{signal:AbortSignal.timeout(2500)});
+    if(!r.ok)return {ok:false};
+    const h=await r.json();return {ok:true,ready:Boolean(h.ready),error:h.error||null};
+  } catch {return {ok:false};}
+}
+const BIREFNET_OFF='BiRefNet에 연결할 수 없습니다. 바탕화면의 ‘IOPaint Start’로 켰는지 확인하세요. 예전에 설치했다면 설치 파일(install-iopaint.bat)을 다시 받아 한 번 더 실행해야 BiRefNet이 추가됩니다.';
+export async function removeBackground(src,url=getBirefnetUrl()) {
+  const h=await checkBirefnet(url);
+  if(!h.ok)throw new Error(BIREFNET_OFF);
+  if(h.error)throw new Error(`BiRefNet 모델을 불러오지 못했습니다: ${h.error.slice(0,200)}`);
+  if(!h.ready)throw new Error('BiRefNet 모델을 준비하는 중입니다(처음 한 번은 약 450MB를 내려받습니다). 검은 창에 “Ready”가 보이면 다시 누르세요.');
+  let r;
+  try {r=await fetch(`${base(url)}/remove`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:src}),signal:AbortSignal.timeout(600000)});}
+  catch {throw new Error(BIREFNET_OFF);}
+  if(!r.ok){let msg='';try{msg=(await r.json()).error||'';}catch{}throw new Error(`BiRefNet 배경 지우기 실패 (${r.status}) ${msg}`.trim());}
+  return toDataUrl(await r.blob());
 }
 
 export const DEFECT_LABEL={stain:'얼룩',wrinkle:'구김',lint:'먼지·보풀',thread:'실밥',mannequin_mark:'마네킹 흔적',wall_mark:'벽 흔적',other:'기타'};
@@ -58,9 +87,8 @@ export async function inpaint(src,regions,url=getIopaintUrl()) {
   ctx.putImageData(d,0,0);
   const body={image:c.toDataURL('image/png'),mask:maskFromRegions(c.width,c.height,regions)};
   let r;
-  try {r=await fetch(`${url.replace(/\/$/,'')}/api/v1/inpaint`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(180000)});}
-  catch {throw new Error('IOPaint에 연결할 수 없습니다. 내 PC에서 ‘IOPaint 시작’을 실행했는지 확인하세요. 크롬이 "이 기기의 다른 앱에 액세스" 허용을 물으면 허용을 누르세요.');}
+  try {r=await fetch(`${base(url)}/api/v1/inpaint`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(180000)});}
+  catch {throw new Error(NOT_RUNNING);}
   if(!r.ok)throw new Error(`IOPaint 처리 실패 (${r.status}).`);
-  const blob=await r.blob();
-  return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>rej(new Error('IOPaint 결과를 읽지 못했습니다.'));fr.readAsDataURL(blob);});
+  return toDataUrl(await r.blob());
 }
