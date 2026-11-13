@@ -1,6 +1,7 @@
 import {GARMENTS} from '../utils/studioDocument.js';
 import {SHOPEE_IMAGE, SHOPEE_TITLE_MAX, shopeePhotos, shopeePackage, sizeTableEn} from '../utils/shopeeExport.js';
 import {downloadBlob} from '../utils/studioImages.js';
+import {Cost} from './Cost.jsx';
 
 export default function ShopeePanel({shopee,setShopee,slots,fitEnabled,garment,rows,texts,ready,task,setStep,api,productName}) {
   const set=patch=>setShopee(current=>({...current,...patch}));
@@ -26,7 +27,7 @@ export default function ShopeePanel({shopee,setShopee,slots,fitEnabled,garment,r
   }
   return <section className="editor-section shopee-panel"><h2>05 · 쇼피 등록 준비</h2>
     <p>싱가포르 쇼피에 올릴 영문 상품명·설명과, 쇼피 규격 사진(정사각형 · 흰 배경 · JPG 2MB 이하)을 한 번에 준비합니다.</p>
-    <button type="button" disabled={!slots.hero.image||(ready&&!ready.openai)} onClick={writeCopy}>영문 상품명·설명 자동 작성</button>
+    <span className="btn-with-cost"><button type="button" disabled={!slots.hero.image||(ready&&!ready.openai)} onClick={writeCopy}>영문 상품명·설명 자동 작성</button><Cost k="openai"/></span>
     {ready&&!ready.openai&&<p className="slot-note">OpenAI 키가 없어 자동 작성은 쓸 수 없습니다. 직접 입력하세요.</p>}
     <label>영문 상품명 <small>{(shopee.title||'').length}/{SHOPEE_TITLE_MAX}</small><input aria-label="쇼피 영문 상품명" maxLength={SHOPEE_TITLE_MAX} value={shopee.title||''} onChange={e=>set({title:e.target.value})} placeholder="Women's Striped Round Neck Long Sleeve T-Shirt"/></label>
     <label>영문 상품 설명<textarea aria-label="쇼피 영문 상품 설명" maxLength={3000} value={shopee.description||''} onChange={e=>set({description:e.target.value})} placeholder="스타일·핏·디테일. 사이즈는 아래 사이즈표에서 자동으로 붙습니다."/></label>
@@ -37,7 +38,7 @@ export default function ShopeePanel({shopee,setShopee,slots,fitEnabled,garment,r
       {chart&&<figure className="chart"><div>Size Chart</div><figcaption>{Math.min(photos.length,SHOPEE_IMAGE.maxCount-1)+1}. 영문 사이즈표</figcaption></figure>}
     </div>
     <p className="slot-note">사진 {Math.min(total,SHOPEE_IMAGE.maxCount)}장 · 대표 → 모델컷 → 디테일 → 사이즈표 순서{total>SHOPEE_IMAGE.maxCount?` · 쇼피는 최대 ${SHOPEE_IMAGE.maxCount}장이라 ${total-SHOPEE_IMAGE.maxCount}장은 빠집니다(디테일의 ‘상세페이지에 포함’ 체크로 고르세요)`:''}</p>
-    <button type="button" className="primary" disabled={!photos.length} onClick={download}>쇼피 등록 묶음 다운로드 (ZIP)</button>
+    <span className="btn-with-cost"><button type="button" className="primary" disabled={!photos.length} onClick={download}>쇼피 등록 묶음 다운로드 (ZIP)</button><Cost k="browser"/></span>
     <p className="review-note">쇼피 개발자 승인이 나면 이 자리에 ‘쇼피에 바로 등록’ 버튼이 추가됩니다.</p>
   </section>;
 }

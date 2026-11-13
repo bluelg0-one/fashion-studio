@@ -1,5 +1,5 @@
 import {retouchPrompt, lowResolution} from '../src/utils/retouchPresets.js';
-import {classifyPhotos} from './classify.js';
+import {classifyPhotos, findDefects} from './classify.js';
 const MAX = 8 * 1024 * 1024;
 const fail=(message,status)=>Object.assign(new Error(message),{status});
 const PHOTOROOM_URL='https://image-api.photoroom.com/v2/edit';
@@ -97,6 +97,7 @@ async function shopeeCopy(body,env,request) {
 export async function studio(action, body, env = process.env, request = fetch) {
   if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY) };
   if (action === 'classify') return classifyPhotos(body,env);
+  if (action === 'defects') return findDefects(body,env);
   if (action === 'retouch') return retouch(body,env,request);
   if (action === 'credits') {
     // 남은 Photoroom 이미지 수 조회 (과금 없음).

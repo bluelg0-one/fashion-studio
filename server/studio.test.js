@@ -34,12 +34,12 @@ test('retouch without prompts makes one Photoroom cutout call with centering',as
 });
 test('presets use one Photoroom call: AI ironing feature plus editWithAI prompt',async()=>{
  const calls=[];
- await studio('retouch',{image,options:{presets:['iron','clean','bogus'],custom:'라벨 숨기기',lighting:true}},env,async(url,o)=>{calls.push(o);return imageResponse();});
+ await studio('retouch',{image,options:{presets:['iron','straighten','bogus'],custom:'라벨 숨기기',lighting:true}},env,async(url,o)=>{calls.push(o);return imageResponse();});
  assert.equal(calls.length,1);const f=calls[0].body;
  assert.equal(f.get('ironing.mode'),'ai.auto');assert.equal(calls[0].headers['pr-ironing-model-version'],'v2');
  assert.equal(f.get('lighting.mode'),'ai.preserve-hue-and-saturation');assert.equal(f.get('editWithAI.mode'),'ai.auto');assert.equal(f.get('removeBackground'),'true');
  const p=f.get('editWithAI.prompt');
- assert.match(p,/do not change its color, pattern/);assert.match(p,/dust/);assert.match(p,/라벨 숨기기/);assert.doesNotMatch(p,/ironed/);assert.doesNotMatch(p,/symmetrical/);
+ assert.match(p,/do not change its color, pattern/);assert.match(p,/upright/);assert.match(p,/라벨 숨기기/);assert.doesNotMatch(p,/ironed/);assert.doesNotMatch(p,/symmetrical/);
 });
 test('ironing alone needs no prompt',async()=>{
  const calls=[];
@@ -53,7 +53,7 @@ test('openai engine edits the Photoroom cutout',async()=>{
 });
 test('failed prompt step keeps the cutout and reports a warning',async()=>{
  const forms=[];
- const r=await studio('retouch',{image,options:{presets:['clean']}},env,async(url,o)=>{forms.push(o.body);return forms.length===1?{ok:false,status:400,json:async()=>({detail:'unknown argument'})}:imageResponse();});
+ const r=await studio('retouch',{image,options:{presets:['symmetry']}},env,async(url,o)=>{forms.push(o.body);return forms.length===1?{ok:false,status:400,json:async()=>({detail:'unknown argument'})}:imageResponse();});
  assert.equal(forms.length,2);assert.equal(forms[1].get('editWithAI.mode'),null);
  assert.equal(r.image,'data:image/webp;base64,d2VicA==');assert.match(r.warning,/unknown argument/);
 });
@@ -95,5 +95,5 @@ test('flat lay uses square output; editWithAI prompts are flagged as 1K, ironing
  await studio('retouch',{image,options:{mannequin:'flatlay'}},env,async(url,o)=>{call=o;return imageResponse();});
  assert.equal(call.body.get('flatLay.mode'),'ai.auto');assert.equal(call.body.get('flatLay.size'),'SQUARE_HD');
  const iron=await studio('retouch',{image,options:{presets:['iron']}},env,async()=>imageResponse());assert.equal(iron.lowResolution,undefined);
- const clean=await studio('retouch',{image,options:{presets:['clean']}},env,async()=>imageResponse());assert.equal(clean.lowResolution,true);
+ const sym=await studio('retouch',{image,options:{presets:['symmetry']}},env,async()=>imageResponse());assert.equal(sym.lowResolution,true);
 });

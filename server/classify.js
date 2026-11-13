@@ -80,3 +80,53 @@ export async function classifyPhotos(body,env=process.env,client) {
   photos.forEach((p,i)=>{if(!seen.has(i+1))list.push({id:p.id,garment:out.garments[0]?.id||'g1',shot:'unknown',confidence:0,review:true,note:'분류 결과에서 빠졌습니다.'});});
   return {garments:out.garments,photos:list,model:response.model,usage:{input:response.usage.input_tokens,output:response.usage.output_tokens}};
 }
+
+// ---- 수정할 곳 찾기 (Claude 비전) → IOPaint로 지울 영역 ----
+export const DEFECTS=['stain','wrinkle','lint','thread','mannequin_mark','wall_mark','other'];
+const Defects=z.object({regions:z.array(z.object({
+  type:z.enum(DEFECTS),
+  x0:z.number().int(),y0:z.number().int(),x1:z.number().int(),y1:z.number().int(),
+  confidence:z.number(),
+  note:z.string(),
+}))});
+const DEFECT_INSTRUCTIONS=`This is a clothing product photo (usually on a mannequin, background may already be removed to white). Find small, local flaws that should be erased with an inpainting tool so the product looks clean:
+- stain: spots, smudges or discoloration on the garment or mannequin
+- wrinkle: accidental creases, dents or crumpled spots in the fabric (NOT designed folds, pleats, gathers, ribbing, seams or the natural drape around the body)
+- lint: dust, fluff or hair
+- thread: loose threads
+- mannequin_mark: marks, tape or damage on the mannequin
+- wall_mark: leftover wall/background marks
+Never mark prints, logos, buttons, labels the shop wants visible, stitching, pockets or texture of the fabric itself. Prefer missing a doubtful spot over marking a real design element.
+Coordinates: the image is ${'{W}'}x${'{H}'} pixels; give each region as a tight box in a 0-1000 scale of width (x) and height (y), with x0<x1 and y0<y1. Keep boxes as small as possible while fully covering the flaw. At most 12 regions. note: one short Korean phrase describing the flaw. Return an empty list if the photo is clean.`;
+
+export async function findDefects(body,env=process.env,client) {
+  if(!env.ANTHROPIC_API_KEY&&!client)throw fail('현재 실행 환경에 ANTHROPIC_API_KEY가 연결되지 않았습니다.',503);
+  const m=typeof body.image==='string'&&body.image.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if(!m||body.image.length>2500000)throw fail('검사할 사진 형식이 올바르지 않습니다.',400);
+  const W=Number(body.width)||0,H=Number(body.height)||0;
+  const anthropic=client||new Anthropic({apiKey:env.ANTHROPIC_API_KEY,timeout:120000,maxRetries:1});
+  let response;
+  try {
+    response=await anthropic.beta.messages.parse({
+      model:MODEL,max_tokens:16000,
+      output_config:{effort:'medium',format:betaZodOutputFormat(Defects)},
+      betas:['server-side-fallback-2026-07-01'],fallbacks:'default',
+      messages:[{role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:`image/${m[1]}`,data:m[2]}},
+        {type:'text',text:DEFECT_INSTRUCTIONS.replace('{W}',W||'?').replace('{H}',H||'?')},
+      ]}],
+    });
+  } catch(e) {
+    if(e instanceof Anthropic.AuthenticationError)throw fail('Claude API 키 인증에 실패했습니다.',401);
+    if(e instanceof Anthropic.RateLimitError)throw fail('Claude API 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요.',429);
+    if(e instanceof Anthropic.BadRequestError)throw fail(`Claude API 요청 오류: ${String(e.message).slice(0,200)}`,400);
+    if(e instanceof Anthropic.APIError)throw fail(`Claude API 오류 (${e.status??'연결'}). 잠시 후 다시 시도하세요.`,502);
+    throw e;
+  }
+  if(response.stop_reason==='refusal')throw fail('Claude가 이 사진 검사를 거절했습니다.',422);
+  if(!response.parsed_output)throw fail('검사 결과를 읽지 못했습니다. 다시 시도하세요.',502);
+  const clamp=v=>Math.max(0,Math.min(1000,v));
+  const regions=response.parsed_output.regions.map(r=>({...r,x0:clamp(Math.min(r.x0,r.x1)),x1:clamp(Math.max(r.x0,r.x1)),y0:clamp(Math.min(r.y0,r.y1)),y1:clamp(Math.max(r.y0,r.y1)),confidence:Math.max(0,Math.min(1,r.confidence))}))
+    .filter(r=>r.x1-r.x0>=2&&r.y1-r.y0>=2).slice(0,12);
+  return {regions,model:response.model};
+}

@@ -22,3 +22,13 @@ test('input validation and missing key',async()=>{
  await assert.rejects(classifyPhotos({photos:[{id:'a',image:img}]},{}),{status:503});
  await assert.rejects(classifyPhotos({photos:[{id:'a',image:img}]},{},fake(null,{stop_reason:'refusal'})),{status:422});
 });
+import {findDefects} from './classify.js';
+test('defect finder sends one image with size, clamps and filters boxes',async()=>{
+ const client=fake({regions:[{type:'stain',x0:480,y0:180,x1:500,y1:195,confidence:.9,note:'목 얼룩'},{type:'wrinkle',x1:300,y1:780,x0:380,y0:760,confidence:.7,note:'구김'},{type:'lint',x0:10,y0:10,x1:11,y1:11,confidence:.5,note:'점'},{type:'other',x0:-5,y0:990,x1:20,y1:1200,confidence:2,note:''}]});
+ const r=await findDefects({image:img,width:1024,height:1365},{},client);
+ const t=client.calls[0].messages[0].content.at(-1).text;assert.match(t,/1024x1365/);assert.match(t,/NOT designed folds/);
+ assert.equal(r.regions.length,3,'tiny box dropped');
+ assert.deepEqual(r.regions[1],{type:'wrinkle',x0:300,y0:760,x1:380,y1:780,confidence:.7,note:'구김'},'swapped corners fixed');
+ assert.deepEqual([r.regions[2].x0,r.regions[2].y1,r.regions[2].confidence],[0,1000,1]);
+ await assert.rejects(findDefects({image:'x'},{ANTHROPIC_API_KEY:'k'}),{status:400});
+});

@@ -2,9 +2,11 @@ import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
-import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt} from '../utils/retouchPresets.js';
+import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt, sanitizeRetouch} from '../utils/retouchPresets.js';
+import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, markedPreview, inpaint, DEFECT_LABEL} from '../utils/iopaint.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
+import {COST, Cost} from './Cost.jsx';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
@@ -28,35 +30,56 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
   const prompted=value.presets.length>0||value.custom.trim().length>0;
   const special=value.mannequin==='ghost'||value.mannequin==='flatlay';
   const small=lowResolution(value,retouchPrompt(value,value.engine!=='openai'));
+  const advancedOn=prompted||special||value.lighting||value.shadow;
   return <div className="retouch-settings">
-    <h3>{title} <small>Photoroom</small></h3>
+    <h3>{title} <Cost k="photoroom"/></h3>
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}중앙 정렬`} checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
-    <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
-    <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
-    <p className="slot-note">여기까지는 원본 옷을 그대로 두고 배경만 정리합니다. 원본 해상도(최대 2400px)를 유지하고 옷 테두리는 HD로 땁니다. 그림자는 마네킹 사진에서는 어색할 수 있어 기본으로 꺼 두었습니다.</p>
-    <h4>마네킹 처리</h4>
-    <select aria-label={`${prefix}마네킹 처리`} value={value.mannequin||'keep'} onChange={e=>set({mannequin:e.target.value})}>{MANNEQUIN_MODES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select>
-    {special&&<p className="review-note">AI가 옷을 새로 그리는 방식입니다. 깔끔해지지만 없던 디테일(예: 목 안쪽 라벨)이 생기거나 원단 질감이 달라질 수 있으니 원본과 꼭 비교하세요. 이 모드에서는 아래 기본 프롬프트·다림질·그림자는 적용되지 않습니다.</p>}
-    <h4>기본 프롬프트 (선택)</h4>
-    {RETOUCH_PRESETS.map(p=><label key={p.id} className="check"><input type="checkbox" aria-label={prefix+p.label} checked={value.presets.includes(p.id)} onChange={()=>togglePreset(p.id)}/>{p.label}</label>)}
-    <label>직접 입력 프롬프트<textarea aria-label={`${prefix}직접 입력 프롬프트`} maxLength={1000} value={value.custom} placeholder="예: 목 부분 라벨이 보이지 않게 정리해 주세요." onChange={e=>set({custom:e.target.value})}/></label>
-    {prompted&&<>
-      <label>프롬프트 보정 엔진<select aria-label={`${prefix}프롬프트 보정 엔진`} value={value.engine} onChange={e=>set({engine:e.target.value})}>
-        <option value="photoroom">Photoroom AI 편집</option>
-        <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집{status&&!status.openai?' (키 없음)':''}</option>
-      </select></label>
-      <p className="review-note">{value.presets.includes('iron')&&'구김 펴기는 원본 해상도(최대 2K)를 유지합니다. '}Photoroom은 사진 1장당 한 번만 요청합니다(선택 항목 수와 관계없이 같은 요금). 프롬프트 보정은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 원본과 달라질 수 있습니다. 결과를 ‘원본과 비교’로 꼭 확인하세요. 실패해도 누끼 결과는 유지됩니다.</p>
-    </>}
-    {small&&<p className="review-note low-res">⚠ 이 설정은 결과 사진이 약 1024px(1K)로 작아집니다. 선명도가 중요하면 마네킹 그대로 + 구김 펴기만 쓰세요.</p>}
+    <p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>
+    <details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
+      <h4>마네킹 처리</h4>
+      <select aria-label={`${prefix}마네킹 처리`} value={value.mannequin||'keep'} onChange={e=>set({mannequin:e.target.value})}>{MANNEQUIN_MODES.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}</select>
+      {special&&<p className="review-note">AI가 옷을 새로 그리는 방식입니다. 없던 디테일(예: 목 안쪽 라벨)이 생기거나 원단 질감이 달라질 수 있으니 원본과 꼭 비교하세요. 이 모드에서는 아래 프롬프트·그림자는 적용되지 않습니다.</p>}
+      <h4>프롬프트 편집</h4>
+      {RETOUCH_PRESETS.map(p=><label key={p.id} className="check"><input type="checkbox" aria-label={prefix+p.label} checked={value.presets.includes(p.id)} onChange={()=>togglePreset(p.id)}/>{p.label}</label>)}
+      <label>직접 입력 프롬프트<textarea aria-label={`${prefix}직접 입력 프롬프트`} maxLength={1000} value={value.custom} placeholder="예: 목 부분 라벨이 보이지 않게 정리해 주세요." onChange={e=>set({custom:e.target.value})}/></label>
+      {prompted&&<label>프롬프트 보정 엔진<select aria-label={`${prefix}프롬프트 보정 엔진`} value={value.engine} onChange={e=>set({engine:e.target.value})}>
+        <option value="photoroom">Photoroom AI 편집 (같은 $0.10/장)</option>
+        <option value="openai" disabled={status&&!status.openai}>OpenAI 이미지 편집 (별도 사용료){status&&!status.openai?' (키 없음)':''}</option>
+      </select></label>}
+      {prompted&&<p className="review-note">프롬프트 편집은 AI가 사진을 새로 그리는 방식이라 원단 질감·무늬가 달라질 수 있습니다. 실패해도 누끼 결과는 유지됩니다.</p>}
+    </details>
+    {small&&<p className="review-note low-res">⚠ 지금 설정은 결과 사진이 약 1024px(1K)로 작아집니다.</p>}
   </div>;
+}
+
+// 얼룩·구김 수정: Claude가 수정할 곳을 표시 → 사장님이 확인/선택 → 내 PC의 IOPaint가 지움
+function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
+  const d=slot.defects,sel=d?.selected||[];
+  const toggle=i=>onPatch(slot.id,{defects:{...d,selected:sel.includes(i)?sel.filter(x=>x!==i):[...sel,i].sort((a,b)=>a-b),preview:null}});
+  return <details className="defect-panel" open={Boolean(d)||undefined}><summary>얼룩·구김 수정 (IOPaint){d?` · 표시 ${d.regions.length}곳`:''}</summary>
+    <div className="btn-row"><span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><Cost k="claudeDefects"/></span></div>
+    {d&&<>
+      {d.preview&&<img className="defect-preview" src={d.preview} alt={`${slot.label} 수정할 곳 표시`}/>}
+      {d.regions.length?<ul className="defect-list">{d.regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} <small>({Math.round(r.confidence*100)}%)</small></label></li>)}</ul>
+        :<p className="slot-note">고칠 곳을 찾지 못했습니다.</p>}
+      <div className="btn-row">
+        <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>onInpaint(slot.id)}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
+        <button type="button" className="subtle" onClick={()=>onPatch(slot.id,{defects:null})}>표시 지우기</button>
+      </div>
+      {!iop?.ok&&<p className="review-note">IOPaint가 꺼져 있습니다. 위쪽 ‘IOPaint 연결’ 안내대로 내 PC에서 IOPaint를 실행하세요.</p>}
+      <p className="slot-note">빨간 상자만 지웁니다. 체크를 풀면 그 곳은 그대로 둡니다. 결과가 마음에 안 들면 ‘이전으로’로 되돌리세요(무료).</p>
+    </>}
+  </details>;
 }
 
 const MAX_VERSIONS=8;
 // Claude 분류 결과(컷 종류) → 업로드 칸
 const SHOT_SLOT={front:'hero',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
 const SHOT_LABEL={front:'정면 전체',frontTop:'정면 상단',frontBottom:'정면 하단',side:'측면',back:'후면',fabric:'원단 디테일',fit:'모델 착용',detail:'기타 디테일',unknown:'알 수 없음'};
-const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai'];
+const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects'];
 // 버전 이동은 브라우저에 저장된 결과만 바꾸므로 API 호출·과금이 없습니다.
 function VersionBar({slot,onVersion}) {
   const versions=slot.versions||[null],index=slot.vIndex??0;
@@ -68,7 +91,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch,slotList,onMove}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch,slotList,onMove,iop,onFindDefects,onInpaint}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -93,12 +116,13 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSa
     {slot.source&&<details className="source-compare"><summary>원본과 비교</summary><img src={slot.source} alt={`${name} 원본`}/></details>}
     <div className="slot-actions">
       <label className="file-button">사진 {slot.image?'교체':'선택'}<input aria-label={`${slot.id} 사진 선택`} type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)onUpload(slot.id,file);e.target.value='';}}/></label>
-      {slot.source&&<button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button>}
+      {slot.source&&<span className="btn-with-cost"><button type="button" onClick={()=>onProcess(slot.id)}>이 사진 누끼·보정</button><Cost k="photoroom"/></span>}
       {slot.cutout&&colorRef?.slotId!==slot.id&&<button type="button" onClick={()=>onColorRef(slot.id)}>🎨 이 컷 색감을 기준으로</button>}
       {slot.cutout&&colorRef&&colorRef.slotId!==slot.id&&<button type="button" onClick={()=>onColorMatch([slot.id])}>기준 색감으로 맞추기</button>}
       {colorRef?.slotId===slot.id&&<span className="color-badge"><i style={{background:labCss(colorRef.lab)}}/>색감 기준 컷</span>}
       {slot.image&&<><button type="button" onClick={()=>onSave(slot.id)}>개별 PNG 저장</button><button type="button" className="subtle" onClick={()=>onRemove(slot.id)}>사진 삭제</button></>}
     </div>
+    {slot.cutout&&<DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint}/>}
     {slot.status==='raw'&&<p className="slot-note">업로드한 사진입니다. 배경 제거·주름 보정은 ‘이 사진 누끼·보정’을 눌러 적용하세요.</p>}
     {slot.status==='done'&&<p className="slot-note">흰 배경 적용 · 색상과 무늬를 원본과 비교해 주세요.</p>}
   </section>;
@@ -108,14 +132,14 @@ export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
-  const [frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
+  const [iop,setIop]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null);
   const rows=sizeRows[garment]||[newSizeRow()];
-  useEffect(()=>{api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
+  useEffect(()=>{checkIopaint(getIopaintUrl()).then(setIop);api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
   const patch=(id,values)=>{setSlots(current=>({...current,[id]:{...current[id],...values}}));setPreview(null);};
   const setText=(key,value)=>{setTexts(current=>({...current,[key]:value}));setPreview(null);};
   async function task(work) {
@@ -129,9 +153,9 @@ export default function AutoStudio() {
     const d=product?.data||{};
     skipSave.current=true;
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
-    const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:v]));
+    const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
-    setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
+    setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch({...DEFAULT_RETOUCH,...d.retouch}));setShopee({...defaultShopee(),...d.shopee});
     setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);setAutoMatch(Boolean(d.color?.auto));
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
@@ -303,6 +327,34 @@ export default function AutoStudio() {
       setStep(`색감 통일 완료 · ${done.length}컷 (API 사용 없음, ‘이전으로’로 되돌릴 수 있습니다)${skipped.length?` · 보정 전이라 제외: ${skipped.join(', ')}`:''}`);
     });
   }
+  // ---- 얼룩·구김: Claude가 표시 → IOPaint가 지움 ----
+  async function findDefectsFor(id) {
+    await task(async()=>{
+      const slot=slots[id];if(!slot?.cutout)throw new Error('먼저 ‘이 사진 누끼·보정’으로 배경을 지운 뒤 찾아 주세요.');
+      const status=await api('status');setReady(status);
+      if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');
+      setStep(`Claude가 ${slot.label}에서 얼룩·구김을 찾는 중`);
+      const shot=await inspectImage(slot.cutout);
+      const {regions}=await api('defects',shot);
+      const selected=regions.map((r,i)=>r.confidence>=.5?i:-1).filter(i=>i>=0);
+      const preview=regions.length?await markedPreview(slot.cutout,regions,selected):null;
+      patch(id,{defects:{regions,selected,preview}});
+      setStep(regions.length?`${slot.label} · 수정할 곳 ${regions.length}곳을 표시했습니다. 확인 후 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · 고칠 곳을 찾지 못했습니다.`);
+    });
+  }
+  async function inpaintFor(id) {
+    await task(async()=>{
+      const slot=slots[id],d=slot.defects;if(!d?.selected?.length)return;
+      setStep(`내 PC의 IOPaint가 ${slot.label}의 ${d.selected.length}곳을 지우는 중`);
+      const result=await inpaint(slot.cutout,d.selected.map(i=>d.regions[i]),iopUrl);
+      const versions=[...(slot.versions||[null]).slice(0,(slot.vIndex??0)+1),result].slice(-MAX_VERSIONS);
+      const next=await refreshImages({...slots,[id]:{...slot,cutout:result,status:'done',versions,vIndex:versions.length-1,defects:null}});
+      setSlots(next);
+      setStep(`${slot.label} · IOPaint로 ${d.selected.length}곳을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
+    });
+  }
+  // 같은 사진에서 다시 찾으면 표시 미리보기를 새로 그립니다.
+  useEffect(()=>{(async()=>{for(const s of Object.values(slots))if(s.defects&&!s.defects.preview&&s.cutout&&s.defects.regions.length){const preview=await markedPreview(s.cutout,s.defects.regions,s.defects.selected);setSlots(cur=>cur[s.id]?.defects===s.defects?{...cur,[s.id]:{...cur[s.id],defects:{...s.defects,preview}}}:cur);}})();},[slots]);
   function moveSlot(from,to) {
     setPreview(null);
     setSlots(current=>{
@@ -406,16 +458,31 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors,slotList:Object.values(slots).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors,slotList:Object.values(slots).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
+    <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
+      <table className="cost-table"><thead><tr><th>기능</th><th>사용 모델</th><th>비용</th></tr></thead><tbody>
+        {[['배경 지우기 (누끼)','photoroom'],['Photoroom 생성형 추가 편집 (선택)','photoroomAI'],['사진 한꺼번에 올리기 (옷별·컷별 분류)','claudeClassify'],['얼룩·구김 자동 찾기','claudeDefects'],['얼룩·구김 지우기 (다림질 포함)','iopaint'],['상품 문구·쇼피 영문 문구','openai'],['색감·일관성 맞추기 · PNG 압축 · ZIP','browser']].map(([f,k])=><tr key={k}><td>{f}</td><td>{COST[k][0]}</td><td>{COST[k][1]}</td></tr>)}
+      </tbody></table>
+      <p className="slot-note">Claude 비용은 사진 크기·개수에 따른 추정치입니다. 실제 금액은 Claude Console·Photoroom 대시보드에서 확인하세요.</p>
+      <h3>IOPaint 연결 (내 PC) {iop?.ok?<span className="ok-tag">연결됨 · {iop.model}</span>:<span className="off-tag">꺼짐</span>}</h3>
+      <p className="slot-note">IOPaint는 사장님 PC에서 실행되는 무료 프로그램입니다. 이 앱을 연 그 PC에서 IOPaint가 켜져 있어야 얼룩·구김 지우기가 됩니다(사진은 PC 안에서만 처리).</p>
+      <ol className="steps">
+        <li>처음 한 번: <a href="/iopaint/install-iopaint.bat" download>설치 파일(install-iopaint.bat)</a>을 받아 더블클릭 → 끝날 때까지 기다립니다(10~20분, 약 2GB).</li>
+        <li>쓸 때마다: 바탕화면의 <b>IOPaint Start</b>(또는 <a href="/iopaint/start-iopaint.bat" download>start-iopaint.bat</a>)을 더블클릭 → 검은 창은 닫지 말고 둡니다.</li>
+        <li>아래 ‘다시 확인’을 누릅니다. 크롬이 “이 기기의 다른 앱 및 서비스에 액세스” 허용을 물으면 <b>허용</b>을 누릅니다.</li>
+      </ol>
+      <div className="btn-row"><label className="iop-url">IOPaint 주소<input aria-label="IOPaint 주소" value={iopUrl} onChange={e=>{setIopUrl(e.target.value);setIopaintUrl(e.target.value);}}/></label>
+        <button type="button" onClick={async()=>{setIop(null);setIop(await checkIopaint(iopUrl));}}>다시 확인</button></div>
+    </details>
     <section className="product-bar" aria-label="상품 목록">
       <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
       <label>상품 이름<input aria-label="상품 이름" disabled={busy} maxLength={80} value={productName} onChange={e=>setProductName(e.target.value)}/></label>
       <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
-      <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label>
+      <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label><Cost k="claudeClassify"/>
       <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
@@ -435,7 +502,7 @@ export default function AutoStudio() {
         <button onClick={()=>task(async()=>{setSlots(await refreshImages(slots));setStep('보정된 사진 전체에 공통 밝기를 적용했습니다.');})}>보정된 사진에 공통 밝기 적용</button>
         <div className="color-unify" aria-label="색감 통일">
           <h3>일관성 맞추기 <small>API 비용 없음</small></h3>
-          <button type="button" className="primary" onClick={unifyAll}>모든 컷 일관성 맞추기 (색감·밝기·크기·여백·중앙)</button>
+          <span className="btn-with-cost"><button type="button" className="primary" onClick={unifyAll}>모든 컷 일관성 맞추기 (색감·밝기·크기·여백·중앙)</button><Cost k="browser"/></span>
           <p className="slot-note">기준 색감(없으면 대표 사진)에 맞춰 모든 보정 컷의 색감·밝기를 맞추고, 같은 비율·크기·여백으로 가운데 정렬합니다. 각 컷의 ‘이전으로’로 색감을 되돌릴 수 있습니다.</p>
           <label className="check"><input type="checkbox" aria-label="같은 크기·여백으로 정렬" checked={frame.enabled} onChange={e=>{const fr={...frame,enabled:e.target.checked};setFrame(fr);task(async()=>setSlots(await refreshImages(slots,{frame:fr})));}}/>모든 보정 컷을 같은 비율·크기·여백으로 정렬</label>
           {frame.enabled&&<div className="frame-opts"><label>비율<select aria-label="정렬 비율" value={frame.ratio} onChange={e=>{const fr={...frame,ratio:e.target.value};setFrame(fr);task(async()=>setSlots(await refreshImages(slots,{frame:fr})));}}><option value="3:4">3:4 세로 (1500×2000)</option><option value="4:5">4:5 세로 (1600×2000)</option><option value="1:1">1:1 정사각 (1800×1800)</option></select></label>
@@ -448,7 +515,7 @@ export default function AutoStudio() {
           <label className="check"><input type="checkbox" aria-label="새 보정 컷 자동 색감 맞춤" disabled={!colorRef} checked={autoMatch} onChange={e=>setAutoMatch(e.target.checked)}/>앞으로 보정하는 컷도 자동으로 기준 색감에 맞추기</label>
           <p className="slot-note">누끼·보정된 컷에만 적용됩니다. 한 번에 바꾸는 양에 한계를 둬서 색이 크게 틀어지지 않으며, 각 컷의 ‘이전으로’로 되돌릴 수 있습니다. 같은 컷에 여러 번 누르면 조금씩 더 맞춰집니다.</p>
         </div>
-        <button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button>
+        <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k="photoroom"/><Cost k="openai"/></span>
         <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
       </section>
       <PhotoSlot slot={slots.hero} {...photoProps}/>

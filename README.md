@@ -43,6 +43,20 @@ npm run dev
 
 상단 ‘사진 한꺼번에 올리기 (자동 분류)’로 여러 옷이 섞인 사진을 최대 24장까지 올리면, 긴 변 512px 작은 사진을 `/api/studio?action=classify`(`server/classify.js`, `@anthropic-ai/sdk`, 모델 `claude-opus-5-5`, 구조화 출력 + 서버 측 거절 대체 `fallbacks: "default"`)로 보내 ① 같은 옷끼리 묶고 ② 컷 종류(정면 전체·정면 상단·정면 하단·측면·후면·원단·모델 착용·기타)를 판별합니다. 옷마다 상품을 만들고(현재 상품이 비어 있으면 첫 옷을 그 자리에) 컷별 칸에 넣습니다. 같은 컷이 두 장이면 추가 칸에 넣습니다. 확신이 낮거나(0.6 미만) 모델이 애매하다고 한 사진은 노란 ‘확인 필요’로 표시하며, 각 사진의 ‘자리 이동’으로 다른 칸과 바꿀 수 있습니다. 서버 환경변수 `ANTHROPIC_API_KEY`가 필요합니다(VITE_ 금지).
 
+## 얼룩·구김 수정 (Claude 표시 → IOPaint)
+
+역할 분담: **배경 지우기만 Photoroom**, 구김(다림질)·얼룩·먼지·마네킹/벽 흔적 지우기는 **IOPaint(LaMa, 무료)**. 다림질·오염 정리 프리셋은 Photoroom 설정에서 뺐습니다(예전 저장값은 불러올 때 제거).
+
+1. 누끼 후 각 사진의 ‘얼룩·구김 수정 (IOPaint)’ → ‘🤖 수정할 곳 자동 찾기’: 긴 변 1024px JPG를 `/api/studio?action=defects`(`findDefects`, Claude Opus 5.5)로 보내 수정할 곳 상자(0~1000 비율, 종류·설명·확신도)를 받습니다. 디자인 주름·봉제선·로고 등은 표시하지 않도록 지시합니다.
+2. 사진 위에 번호 상자를 그려 보여 주고, 확신도 50% 이상만 기본 선택합니다.
+3. ‘IOPaint로 지우기’: 브라우저가 **사장님 PC의 IOPaint**(기본 `http://127.0.0.1:8080`, `src/utils/iopaint.js`)에 누끼 PNG와 타원 마스크를 보내 지우고, 투명 배경을 유지한 결과를 새 버전으로 저장합니다(되돌리기 무료). 사진은 Vercel 서버를 거치지 않습니다.
+
+### IOPaint 설치 (Windows)
+
+앱 상단 ‘사용 도구·비용’에서 `public/iopaint/install-iopaint.bat`을 받아 실행합니다: Python 3.11(없으면 winget) → `%USERPROFILE%\iopaint\venv`에 PyTorch CPU + `iopaint` 설치 → 바탕화면 ‘IOPaint Start’ 바로가기(`iopaint start --model lama --device cpu --host 127.0.0.1 --port 8080`). 다른 PC도 같은 파일로 설치합니다. IOPaint는 앱을 연 그 PC에서 켜져 있어야 합니다. 크롬이 로컬 네트워크 접근 허용을 물으면 허용합니다. 라이선스: IOPaint Apache-2.0.
+
+`tests/studio-iopaint.mjs`는 실제 IOPaint 서버로 얼룩 지우기를 검사합니다(`CUTOUT_PATH`=투명 누끼 PNG, Claude 표시는 모의).
+
 ## 일관성 맞추기
 
 ‘모든 컷 일관성 맞추기’는 기준 색감(없으면 대표 사진)으로 모든 보정 컷의 색감·밝기를 맞추고, 같은 비율(3:4 1500×2000 / 4:5 / 1:1)·같은 여백으로 가운데 정렬합니다(`framePhoto`). 옷 전체가 보이는 컷은 같은 여백으로 배치하고, 가장자리가 잘린 접사 컷은 비율에 맞춰 채웁니다. 브라우저 계산이라 API 비용이 없습니다.

@@ -26,9 +26,10 @@ try{
  // 이 사진만 개별 설정: 다림질 체크 후 2차 보정
  await hero.locator('.slot-retouch summary').click();
  await page.getByLabel('hero 개별 설정 사용').check();
- await page.getByLabel('hero 원단 구김·접힌 부분 다림질한 듯 펴기 (Photoroom AI 다림질)').check();
+ await hero.locator('.slot-retouch .advanced summary').click();
+ await page.getByLabel('hero 좌우 대칭 옷은 대칭 맞추기').check();
  await hero.getByRole('button',{name:'이 사진 누끼·보정'}).click();await idle();
- assert.equal(bodies.length,2);assert.deepEqual(bodies[1].presets,['iron']);
+ assert.equal(bodies.length,2);assert.deepEqual(bodies[1].presets,['symmetry']);
  const v2=await img();assert.notEqual(v2,v1);
  assert.match(await hero.locator('.version-bar span').innerText(),/보정 2/);
  // 되돌리기 2번 → 원본, 다시 적용 2번 → 보정 2. API 호출 수는 그대로.
