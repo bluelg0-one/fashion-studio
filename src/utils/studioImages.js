@@ -84,3 +84,32 @@ export async function renderDocument(blocks) {
   }
   const blob=await new Promise(resolve=>c.toBlob(resolve,'image/png'));if(!blob)throw new Error('이미지 저장에 실패했습니다. HTML로 저장하거나 사진 수를 줄여주세요.');return blob;
 }
+
+// 분류용 작은 사진 (긴 변 512px JPG) — 업로드 비용·시간을 줄입니다.
+export async function thumbnail(src,side=512) {
+  const im=await loadImage(src),scale=Math.min(1,side/Math.max(im.naturalWidth,im.naturalHeight));
+  const c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*scale);c.height=Math.round(im.naturalHeight*scale);
+  const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(im,0,0,c.width,c.height);
+  return c.toDataURL('image/jpeg',.82);
+}
+// 일관성: 모든 컷을 같은 비율·크기·여백으로 맞춥니다(투명 누끼 기준).
+// 옷 전체가 보이는 컷은 같은 여백으로 가운데 배치, 가장자리가 잘린 접사 컷은 비율에 맞춰 가운데를 채웁니다.
+export const FRAME_SIZES={'3:4':[1500,2000],'1:1':[1800,1800],'4:5':[1600,2000]};
+export function framePhoto(source,{ratio='3:4',margin=6}={}) {
+  const [W,H]=FRAME_SIZES[ratio]||FRAME_SIZES['3:4'];
+  const {data,width,height}=source.getContext('2d').getImageData(0,0,source.width,source.height);
+  let l=width,t=height,r=-1,b=-1;
+  for(let y=0;y<height;y+=2)for(let x=0;x<width;x+=2)if(data[(y*width+x)*4+3]>128){if(x<l)l=x;if(x>r)r=x;if(y<t)t=y;if(y>b)b=y;}
+  const out=document.createElement('canvas');out.width=W;out.height=H;const ctx=out.getContext('2d');ctx.imageSmoothingQuality='high';
+  if(r<l){ctx.drawImage(source,0,0,W,H);return out;}
+  const edge=4,cut=(l<=edge&&r>=width-1-edge)||(t<=edge&&b>=height-1-edge);
+  if(cut){
+    const s=Math.max(W/width,H/height),w=width*s,h=height*s;
+    ctx.drawImage(source,(W-w)/2,(H-h)/2,w,h);
+  } else {
+    const bw=r-l+1,bh=b-t+1,m=Math.max(0,Math.min(30,margin))/100;
+    const s=Math.min(W*(1-2*m)/bw,H*(1-2*m)/bh);
+    ctx.drawImage(source,l,t,bw,bh,(W-bw*s)/2,(H-bh*s)/2,bw*s,bh*s);
+  }
+  return out;
+}

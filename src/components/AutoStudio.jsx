@@ -6,7 +6,7 @@ import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouc
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
-import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng} from '../utils/studioImages.js';
+import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
 const defaultShopee=()=>({title:'',description:'',includeSizeChart:true});
@@ -53,6 +53,10 @@ function RetouchSettings({value,onChange,status,prefix='',title='누끼·보정 
 }
 
 const MAX_VERSIONS=8;
+// Claude 분류 결과(컷 종류) → 업로드 칸
+const SHOT_SLOT={front:'hero',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
+const SHOT_LABEL={front:'정면 전체',frontTop:'정면 상단',frontBottom:'정면 하단',side:'측면',back:'후면',fabric:'원단 디테일',fit:'모델 착용',detail:'기타 디테일',unknown:'알 수 없음'};
+const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai'];
 // 버전 이동은 브라우저에 저장된 결과만 바꾸므로 API 호출·과금이 없습니다.
 function VersionBar({slot,onVersion}) {
   const versions=slot.versions||[null],index=slot.vIndex??0;
@@ -64,7 +68,7 @@ function VersionBar({slot,onVersion}) {
   </div>;
 }
 
-function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch}) {
+function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSave,retouchDefault,status,colorRef,onColorRef,onColorMatch,slotList,onMove}) {
   function paste(event) {
     const file=Array.from(event.clipboardData?.files||[]).find(f=>f.type.startsWith('image/'));
     if(file){event.preventDefault();onUpload(slot.id,file);}
@@ -78,6 +82,9 @@ function PhotoSlot({slot,busy,onUpload,onPatch,onProcess,onRemove,onVersion,onSa
     <div className="paste-zone" tabIndex={busy?-1:0} onPaste={busy?undefined:paste} aria-label={`${name} 이미지 붙여넣기`}>
       {slot.image?<img src={slot.image} alt={name}/>:<p>사진을 선택하거나 여기를 클릭한 뒤<br/>Ctrl + V로 이미지를 붙여넣으세요.</p>}
     </div>
+    {slot.ai&&<div className={`ai-badge${slot.ai.review?' review':''}`}>{slot.ai.review?'⚠ 확인 필요':'AI 분류'} · {SHOT_LABEL[slot.ai.shot]||slot.ai.shot} {Math.round(slot.ai.confidence*100)}%{slot.ai.note?` — ${slot.ai.note}`:''}
+      {slot.ai.review&&<button type="button" onClick={()=>onPatch(slot.id,{ai:{...slot.ai,review:false}})}>맞아요</button>}</div>}
+    {slot.source&&slotList&&<label className="move-slot">자리 이동<select aria-label={`${slot.id} 자리 이동`} value="" onChange={e=>{if(e.target.value)onMove(slot.id,e.target.value);}}><option value="">이 사진을 다른 칸으로…</option>{slotList.filter(s=>s.id!==slot.id).map(s=><option key={s.id} value={s.id}>{s.label}{s.source?' (서로 바꾸기)':''}</option>)}</select></label>}
     {slot.source&&<VersionBar slot={slot} onVersion={onVersion}/>}
     {slot.source&&<details className="slot-retouch"><summary>이 사진 보정 설정{slot.retouch?' · 개별 설정 사용 중':' · 기본 설정 사용 중'}</summary>
       <label className="check"><input type="checkbox" aria-label={`${slot.id} 개별 설정 사용`} checked={Boolean(slot.retouch)} onChange={e=>onPatch(slot.id,{retouch:e.target.checked?{...retouchDefault}:null})}/>이 사진만 따로 설정하기</label>
@@ -101,7 +108,7 @@ export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee);
-  const [colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
+  const [frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80),[autoMatch,setAutoMatch]=useState(false);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState('');
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
@@ -117,7 +124,7 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,color:{ref:colorRef,strength:matchStrength,auto:autoMatch}});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,color:{ref:colorRef,strength:matchStrength,auto:autoMatch},frame});
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;
@@ -125,7 +132,7 @@ export default function AutoStudio() {
     const nextSlots=Object.fromEntries(Object.entries(d.slots||initialSlots()).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:v]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch({...DEFAULT_RETOUCH,...d.retouch});setShopee({...defaultShopee(),...d.shopee});
-    setColorRef(d.color?.ref||null);setMatchStrength(d.color?.strength??80);setAutoMatch(Boolean(d.color?.auto));
+    setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);setAutoMatch(Boolean(d.color?.auto));
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   async function saveNow(id=productId,name=productName,data=snapshot()) {
@@ -152,7 +159,7 @@ export default function AutoStudio() {
     setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName,colorRef,matchStrength,autoMatch]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,productName,colorRef,matchStrength,autoMatch,frame]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -194,11 +201,16 @@ export default function AutoStudio() {
     return response.image;
   }
   // 보정된 사진마다 공통 밝기를 적용합니다. 디테일컷은 각 자리에 넣은 사진으로만 만듭니다(자동 생성 없음).
-  async function refreshImages(current) {
+  async function refreshImages(current,opts={}) {
+    const ref=opts.colorRef!==undefined?opts.colorRef:colorRef,fr=opts.frame||frame;
     // 색감 기준이 있으면 대표 사진 밝기 맞춤은 하지 않습니다(색감 통일 결과를 다시 바꾸지 않도록).
-    const target=!colorRef&&current.hero.cutout?medianLight(await imageCanvas(current.hero.cutout)):null;
+    const target=!ref&&current.hero.cutout?medianLight(await imageCanvas(current.hero.cutout)):null;
     const next={...current};
-    for(const [id,slot] of Object.entries(next))if(slot.cutout)next[id]={...slot,image:whitePhoto(await imageCanvas(slot.cutout),target,brightness),status:'done'};
+    for(const [id,slot] of Object.entries(next))if(slot.cutout){
+      let c=await imageCanvas(slot.cutout);
+      if(fr.enabled)c=framePhoto(c,fr);
+      next[id]={...slot,image:whitePhoto(c,target,brightness),status:'done'};
+    }
     return next;
   }
   async function processPhotos(onlyId) {
@@ -245,6 +257,35 @@ export default function AutoStudio() {
       setStep(`‘${slot.label}’의 옷 색감을 기준으로 정했습니다. ‘기준 색감으로 맞추기’를 누르면 다른 컷이 이 색감에 맞춰집니다.`);
     });
   }
+  async function matchColorsIn(current,ids,ref) {
+    const next={...current},done=[],skipped=[];
+    for(const id of ids){
+      const slot=next[id];
+      if(!slot||id===ref.slotId)continue;
+      if(!slot.cutout){if(slot.source)skipped.push(slot.label);continue;}
+      setStep(`${done.length+1} · ${slot.label} 색감 맞추는 중`);
+      const {image}=await matchedCutout(slot.cutout,ref.lab);
+      const versions=[...(slot.versions||[null]).slice(0,(slot.vIndex??0)+1),image].slice(-MAX_VERSIONS);
+      next[id]={...slot,cutout:image,status:'done',versions,vIndex:versions.length-1};done.push(slot.label);
+    }
+    return {next,done,skipped};
+  }
+  // 한 번에: 기준 색(없으면 대표 사진) → 모든 컷 색감·밝기 맞춤 → 같은 비율·크기·여백·중앙 정렬
+  async function unifyAll() {
+    await task(async()=>{
+      let ref=colorRef;
+      if(!ref){
+        const src=slots.hero.cutout?slots.hero:Object.values(slots).find(s=>s.cutout);
+        if(!src)throw new Error('누끼·보정된 컷이 없습니다. 먼저 사진을 보정하세요.');
+        const c=await imageCanvas(src.cutout),lab=dominantLab(c.getContext('2d').getImageData(0,0,c.width,c.height));
+        ref={slotId:src.id,label:src.label,lab:{L:lab.L,a:lab.a,b:lab.b}};setColorRef(ref);
+      }
+      const {next,done,skipped}=await matchColorsIn(slots,Object.keys(slots),ref);
+      const fr={...frame,enabled:true};setFrame(fr);
+      setSlots(await refreshImages(next,{colorRef:ref,frame:fr}));
+      setStep(`일관성 맞추기 완료 · 기준: ${ref.label} · 색감 ${done.length}컷 · 모든 보정 컷을 ${fr.ratio} 같은 크기·여백으로 정렬 (API 사용 없음)${skipped.length?` · 보정 전이라 제외: ${skipped.join(', ')}`:''}`);
+    });
+  }
   async function matchColors(ids) {
     if(!colorRef)return;
     await task(async()=>{
@@ -260,6 +301,55 @@ export default function AutoStudio() {
       }
       setSlots(await refreshImages(next));
       setStep(`색감 통일 완료 · ${done.length}컷 (API 사용 없음, ‘이전으로’로 되돌릴 수 있습니다)${skipped.length?` · 보정 전이라 제외: ${skipped.join(', ')}`:''}`);
+    });
+  }
+  function moveSlot(from,to) {
+    setPreview(null);
+    setSlots(current=>{
+      const a=current[from],b=current[to],pick=s=>Object.fromEntries(PHOTO_FIELDS.map(k=>[k,s[k]??(k==='versions'?[null]:k==='vIndex'?0:k==='status'?'empty':null)]));
+      return {...current,[from]:{...a,...pick(b)},[to]:{...b,...pick(a),enabled:true,ai:a.ai?{...a.ai,review:false}:a.ai}};
+    });
+    setStep('사진 자리를 옮겼습니다.');
+  }
+  // ---- 한꺼번에 올리기 + Claude 자동 분류 ----
+  async function bulkUpload(files) {
+    await task(async()=>{
+      const status=await api('status');setReady(status);
+      if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다. Vercel 환경변수에 등록한 뒤 다시 배포하세요.');
+      const list=Array.from(files).filter(f=>f.type.startsWith('image/'));
+      if(!list.length)return;
+      if(list.length>24)throw new Error('한 번에 24장까지 분류할 수 있습니다. 나눠서 올려 주세요.');
+      const photos=[];
+      for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name});}
+      setStep(`Claude가 사진 ${photos.length}장을 옷별·컷별로 분류하는 중`);
+      const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb}))});
+      const byId=Object.fromEntries(photos.map(p=>[p.id,p]));
+      const groups=result.garments.map(g=>({...g,items:result.photos.filter(p=>p.garment===g.id)})).filter(g=>g.items.length);
+      const orphans=result.photos.filter(p=>!result.garments.some(g=>g.id===p.garment));
+      if(orphans.length){if(groups.length)groups[0].items.push(...orphans.map(p=>({...p,review:true})));else groups.push({id:'g1',description:'분류 안 된 사진',items:orphans});}
+      const built=[];
+      for(const g of groups){
+        const next=initialSlots();let fit=false;
+        const order=[...g.items].sort((a,b)=>b.confidence-a.confidence);
+        for(const item of order){
+          const p=byId[item.id];let id=SHOT_SLOT[item.shot];
+          if(!id||next[id].source){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
+          if(id==='fit')fit=true;
+          next[id]={...next[id],source:p.full,image:whitePhoto(await imageCanvas(p.full),null,0),status:'raw',enabled:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
+        }
+        built.push({name:g.description,data:{slots:next,fitEnabled:fit}});
+      }
+      const currentEmpty=!Object.values(slots).some(s=>s.source);
+      let first=null;
+      for(let i=0;i<built.length;i++){
+        const id=i===0&&currentEmpty?productId:newProductId();
+        const product={id,name:built[i].name,data:built[i].data};
+        await saveProduct(product);if(!first)first=product;
+      }
+      if(first){skipSave.current=false;await applyProduct(first);}
+      setProducts(await listProducts());
+      const review=result.photos.filter(p=>p.review).length;
+      setStep(`분류 완료 · 옷 ${built.length}벌 · 사진 ${result.photos.length}장${review?` · ⚠ 확인 필요 ${review}장 (노란 표시)`:''} · 상품 선택에서 옷별로 확인하세요.`);
     });
   }
   async function changeVersion(id,index) {
@@ -316,7 +406,7 @@ export default function AutoStudio() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     downloadBlob(new Blob([documentHtml(blocks(),texts.headline||'의류 상세페이지')],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors};
+  const photoProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,colorRef,onColorRef:chooseColorRef,onColorMatch:matchColors,slotList:Object.values(slots).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot};
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
@@ -325,9 +415,11 @@ export default function AutoStudio() {
       <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
       <label>상품 이름<input aria-label="상품 이름" disabled={busy} maxLength={80} value={productName} onChange={e=>setProductName(e.target.value)}/></label>
       <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
+      <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label>
       <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
+    <p className="session-note">‘사진 한꺼번에 올리기’: 여러 옷이 섞인 사진을 최대 24장까지 올리면 Claude가 같은 옷끼리 묶어 상품을 만들고 컷 종류별 칸에 넣습니다(분류 1회당 Claude API 요금 발생). 옷마다 첫 컷을 정면 전체로 찍으면 더 정확합니다. </p>
     <p className="session-note">상품은 이 브라우저에 자동 저장됩니다(총 {products.length}개). 다른 컴퓨터·다른 브라우저에서는 보이지 않으니, 완성본은 다운로드해서 보관하세요.</p>
     <p role="status" aria-live="polite">{step}</p>{error&&<p role="alert" className="studio-error">{error}</p>}
     <div className="studio-workspace"><fieldset disabled={busy} className="studio-editor">
@@ -342,7 +434,13 @@ export default function AutoStudio() {
         <label>공통 밝기 · {brightness}%<input aria-label="공통 밝기" type="range" min="0" max="8" value={brightness} onChange={e=>setBrightness(Number(e.target.value))}/></label>
         <button onClick={()=>task(async()=>{setSlots(await refreshImages(slots));setStep('보정된 사진 전체에 공통 밝기를 적용했습니다.');})}>보정된 사진에 공통 밝기 적용</button>
         <div className="color-unify" aria-label="색감 통일">
-          <h3>색감 통일 <small>API 비용 없음</small></h3>
+          <h3>일관성 맞추기 <small>API 비용 없음</small></h3>
+          <button type="button" className="primary" onClick={unifyAll}>모든 컷 일관성 맞추기 (색감·밝기·크기·여백·중앙)</button>
+          <p className="slot-note">기준 색감(없으면 대표 사진)에 맞춰 모든 보정 컷의 색감·밝기를 맞추고, 같은 비율·크기·여백으로 가운데 정렬합니다. 각 컷의 ‘이전으로’로 색감을 되돌릴 수 있습니다.</p>
+          <label className="check"><input type="checkbox" aria-label="같은 크기·여백으로 정렬" checked={frame.enabled} onChange={e=>{const fr={...frame,enabled:e.target.checked};setFrame(fr);task(async()=>setSlots(await refreshImages(slots,{frame:fr})));}}/>모든 보정 컷을 같은 비율·크기·여백으로 정렬</label>
+          {frame.enabled&&<div className="frame-opts"><label>비율<select aria-label="정렬 비율" value={frame.ratio} onChange={e=>{const fr={...frame,ratio:e.target.value};setFrame(fr);task(async()=>setSlots(await refreshImages(slots,{frame:fr})));}}><option value="3:4">3:4 세로 (1500×2000)</option><option value="4:5">4:5 세로 (1600×2000)</option><option value="1:1">1:1 정사각 (1800×1800)</option></select></label>
+            <label>여백 · {frame.margin}%<input aria-label="정렬 여백" type="range" min="0" max="20" value={frame.margin} onChange={e=>setFrame({...frame,margin:Number(e.target.value)})} onMouseUp={()=>task(async()=>setSlots(await refreshImages(slots)))} onTouchEnd={()=>task(async()=>setSlots(await refreshImages(slots)))} onKeyUp={()=>task(async()=>setSlots(await refreshImages(slots)))}/></label></div>}
+          <h4>색감만 따로 맞추기</h4>
           {colorRef?<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>기준: <b>{colorRef.label}</b>의 옷 대표 색 <button type="button" className="subtle" onClick={()=>setColorRef(null)}>기준 해제</button></p>
             :<p className="slot-note">마음에 드는 보정 컷에서 ‘🎨 이 컷 색감을 기준으로’를 누르세요. 그 컷 옷의 대표 색에 맞춰 다른 컷의 밝기·색조를 조정합니다.</p>}
           <label>맞추는 강도 · {matchStrength}%<input aria-label="색감 맞추는 강도" type="range" min="10" max="100" step="10" value={matchStrength} onChange={e=>setMatchStrength(Number(e.target.value))}/></label>

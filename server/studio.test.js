@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {studio} from './studio.js';
 const image='data:image/png;base64,aGVsbG8=';
-test('status exposes only credential presence',async()=>{assert.deepEqual(await studio('status',{},{}),{configured:false,openai:false,photoroom:false});assert.deepEqual(await studio('status',{}, {OPENAI_API_KEY:'test-only',PHOTOROOM_API_KEY:'test-only'}),{configured:true,openai:true,photoroom:true});});
+test('status exposes only credential presence',async()=>{assert.deepEqual(await studio('status',{},{}),{configured:false,openai:false,photoroom:false,claude:false});assert.deepEqual(await studio('status',{}, {OPENAI_API_KEY:'test-only',PHOTOROOM_API_KEY:'test-only'}),{configured:true,openai:true,photoroom:true,claude:false});});
 test('missing key fails before upstream call',async()=>{await assert.rejects(studio('edit',{image},{},()=>{throw Error('unexpected request')}),{status:503});});
 test('rejects URLs and oversized input',async()=>{for(const input of ['https://example.com/p.png','data:image/png;base64,'+'a'.repeat(9*1024*1024)])await assert.rejects(studio('edit',{image:input},{OPENAI_API_KEY:'test-only'}),{status:400});});
 test('upstream credentials and errors do not leak',async()=>{await assert.rejects(studio('edit',{image},{OPENAI_API_KEY:'test-only'},async()=>({ok:false,status:401,json:async()=>({error:{message:'sensitive upstream text'}})})),e=>e.status===401&&!e.message.includes('sensitive'));});

@@ -1,4 +1,5 @@
 import {retouchPrompt, lowResolution} from '../src/utils/retouchPresets.js';
+import {classifyPhotos} from './classify.js';
 const MAX = 8 * 1024 * 1024;
 const fail=(message,status)=>Object.assign(new Error(message),{status});
 const PHOTOROOM_URL='https://image-api.photoroom.com/v2/edit';
@@ -94,7 +95,8 @@ async function shopeeCopy(body,env,request) {
   return {title:parsed.title.trim().slice(0,120),description:parsed.description.trim().slice(0,3000)};
 }
 export async function studio(action, body, env = process.env, request = fetch) {
-  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY) };
+  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY) };
+  if (action === 'classify') return classifyPhotos(body,env);
   if (action === 'retouch') return retouch(body,env,request);
   if (action === 'credits') {
     // 남은 Photoroom 이미지 수 조회 (과금 없음).
