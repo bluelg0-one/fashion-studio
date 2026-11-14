@@ -19,7 +19,7 @@ try{
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'a.png',mimeType:'image/png',buffer:Buffer.from(cutout.split(',')[1],'base64')});await idle();
  await page.locator('[data-slot="hero"]').getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
  const panel=page.locator('[data-slot="hero"] .defect-panel');
- await panel.locator('summary').click();
+
  await panel.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(await panel.locator('.defect-list li').count(),2);
  assert.ok(await page.getByLabel('hero 수정 1').isChecked(),'확신 높은 곳은 기본 선택');assert.ok(!(await page.getByLabel('hero 수정 2').isChecked()),'애매한 곳은 기본 해제');
@@ -30,7 +30,7 @@ try{
  assert.match(await page.locator('[role=status]').innerText(),/IOPaint로 1곳을 지웠습니다/,await page.locator('[role=alert]').allInnerTexts().then(a=>a.join()));
  // 결과: 얼룩 자리 색이 주변(마네킹 크림색)과 비슷해졌는지, 투명 배경 유지
  const res=await page.evaluate(async([src,box])=>{
-  const slotImg=document.querySelector('[data-slot="hero"] .paste-zone img');
+  const slotImg=document.querySelector('[data-slot="hero"] .final-zone img');
   const load=s=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=s;});
   const before=await load(src),after=await load(slotImg.src);
   const px=(im,x,y,r=5)=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const g=c.getContext('2d');g.drawImage(im,0,0);const d=g.getImageData(x-r,y-r,2*r+1,2*r+1).data;const s=[0,0,0,0];for(let i=0;i<d.length;i+=4)for(let k=0;k<4;k++)s[k]+=d[i+k];return s.map(v=>Math.round(v/(d.length/4)));};

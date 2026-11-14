@@ -11,11 +11,11 @@ try{
  await page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();
  await page.getByRole('alert').waitFor();
- assert.ok(await page.locator('[data-slot="hero"] .paste-zone img').getAttribute('src'));
+ assert.ok(await page.locator('[data-slot="hero"] .final-zone img').getAttribute('src'));
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
  assert.equal(edits,1);assert.equal(analyses,2);assert.equal(await page.getByLabel('상품 제목',{exact:true}).inputValue(),'재시도 결과');
  await page.locator('[data-slot="hero"]').getByRole('button',{name:'사진 삭제',exact:true}).click();
- for(const id of ['hero','frontZoom','frontTop','frontBottom','fabric'])assert.equal(await page.locator(`[data-slot="${id}"] .paste-zone img`).count(),0);
+ for(const id of ['hero','frontZoom','frontTop','frontBottom','fabric'])assert.equal(await page.locator(`[data-slot="${id}"] .final-zone img`).count(),0);
  console.log('PASS: analysis failure preserves successful photos; retry does not charge for another edit; removing hero leaves detail slots empty.');
 }finally{await browser.close();}

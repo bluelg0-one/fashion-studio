@@ -11,3 +11,22 @@
 
 .defect-stage{text-align:center;margin:8px 0}.defect-box{position:relative;display:inline-block;max-width:100%;line-height:0}.defect-box .defect-preview{margin:0;user-select:none;-webkit-user-drag:none}.defect-stage.drawing .defect-box{cursor:crosshair;touch-action:none;outline:2px dashed #e0245e;outline-offset:2px}.defect-drag{position:absolute;border:2px solid #e0245e;background:rgba(224,36,94,.15);pointer-events:none}.defect-list li{display:flex;align-items:center;gap:6px}.defect-list li label{flex:1}.tiny{padding:2px 8px!important;font-size:12px!important;min-height:0!important}.draw-tools label{margin:0}
 .drive-panel{background:#f4f8ff;border:1px solid #cfdcf3;border-radius:10px;padding:10px 14px;margin:8px 0;font-size:13px}.drive-panel h3{font-size:15px;margin:0 0 6px}.drive-folder{margin:4px 0}.drive-note{color:#233d78}
+.cut-section{border:0;margin:0 0 24px;padding:0;min-width:0}.cut-section>h2{font-size:21px;margin:8px 0 12px}.cut-section>h2 small{font-size:13px;font-weight:400;color:#637083;margin-left:8px}
+.cut-row{background:#fff;border:1px solid #dce2e9;border-radius:12px;padding:12px 14px;margin:0 0 16px}
+.cut-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px}.cut-head .cut-title{width:auto!important;flex:0 1 220px;font-weight:700;font-size:16px;margin:0!important;padding:6px 10px!important}.cut-head .move-slot{margin:0;display:flex;align-items:center;gap:6px;font-size:12px}.cut-head .move-slot select{margin:0;padding:5px;width:auto}.cut-head .ai-badge{margin:0}
+.cut-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px;align-items:start}
+.cut-col{position:relative;min-width:0;font-size:13px}.cut-col h4{margin:0 0 6px;font-size:14px}.cut-col h4 small{font-weight:400;color:#637083}
+.cut-col+.cut-col::before{content:'➜';position:absolute;left:-19px;top:150px;color:#c2462f;font-size:16px}
+.cut-img{background:#fff;border:1px solid #e3e7ee;border-radius:8px;height:300px;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}
+.cut-img img{max-width:100%;max-height:100%;object-fit:contain;display:block}.cut-img .defect-box{max-height:100%;max-width:100%}.cut-img .defect-box img{max-height:298px}
+.source-zone{border-style:dashed;border-color:#aebed4;outline-offset:3px}.source-zone:focus{outline:2px solid #233d78}.empty-stage{font-size:12px;color:#8a94a6!important;padding:10px}
+.cut-col .btn-row{margin:6px 0}.cut-col button,.cut-col .file-button{padding:7px 10px!important;font-size:13px!important}
+.color-ref-check{margin:6px 0!important;font-size:12px!important}.color-ref-check.on{font-weight:700;color:#233d78}.color-ref-check .swatch{display:inline-block;width:14px;height:14px;border-radius:50%;border:1px solid #ccd}.color-ref-check input:disabled+*{opacity:.5}
+.tone-tools{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;align-items:end;margin:6px 0}.tone-tools label{margin:0!important;font-size:12px}.tone-tools button{grid-column:1/-1;justify-self:start}
+.cut-col .slot-retouch{margin:6px 0;font-size:12px}.cut-col .version-bar{flex-wrap:wrap;font-size:12px}.cut-col .defect-panel{border:0;background:none;padding:0;margin:0}
+.matte-stage{position:relative;height:300px;display:flex;align-items:center;justify-content:center;border:2px dashed #e0245e;border-radius:8px;touch-action:none;cursor:crosshair;overflow:hidden;background:#fff}
+.matte-canvas,.matte-overlay{max-width:100%;max-height:296px;display:block}.matte-canvas{background:repeating-conic-gradient(#ffd6e2 0 25%,#fff 0 50%) 0 0/16px 16px}.matte-overlay{position:absolute;pointer-events:none}
+.matte-editor label{margin:4px 0!important;font-size:12px}.tool-pick{display:flex;flex-wrap:wrap;gap:4px 12px;margin:6px 0}
+.add-cuts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:#fff;border:2px dashed #aebed4;border-radius:12px;padding:12px 14px}.add-cuts>span{font-weight:700;margin-right:6px}
+@media(max-width:1000px){.cut-grid{grid-template-columns:minmax(0,1fr);gap:14px}.cut-col+.cut-col::before{content:'⬇';position:static;display:block;text-align:center}}
+.auto-studio input[type=radio]{width:auto!important;display:inline-block!important;margin:0!important;padding:0!important}.tool-pick label{white-space:nowrap}

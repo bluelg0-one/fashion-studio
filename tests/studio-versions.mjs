@@ -17,7 +17,7 @@ try{
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'a.png',mimeType:'image/png',buffer:Buffer.from(red.split(',')[1],'base64')});
  const idle=()=>page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
  await idle();
- const hero=page.locator('[data-slot="hero"]'),img=()=>hero.locator('.paste-zone img').getAttribute('src');
+ const hero=page.locator('[data-slot="hero"]'),img=()=>hero.locator('.final-zone img').getAttribute('src');
  const original=await img();
  // 1차: 기본 설정으로 보정
  await hero.getByRole('button',{name:'이 사진 누끼·보정'}).click();await idle();

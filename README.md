@@ -141,3 +141,12 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 - ‘이 상품 드라이브에 저장’, ‘드라이브에서 불러오기’, ‘바뀐 뒤 1분 지나면 자동 저장’(연결돼 있는 동안). 상품별로 마지막으로 맞춘 시점을 기억해, 다른 컴퓨터가 그 뒤에 저장했으면 덮어쓰기 전에 묻고 자동 저장은 멈춥니다.
 - 설정: Vercel 환경변수 `GOOGLE_CLIENT_ID`(구글 클라우드의 OAuth 웹 클라이언트 ID, 공개 값). `status`가 형식을 확인해 브라우저에 넘깁니다. 승인된 JavaScript 원본에 앱 주소를 넣어야 합니다.
 - `tests/studio-drive.mjs`: 모의 구글 로그인·모의 드라이브로 컴퓨터 2대 흐름 검사.
+
+## 컷별 보정 화면 (PC: 한 줄에 원본 → 1차 → 2차 → 최종)
+
+`src/components/CutRow.jsx`. 컷 종류: 정면, 정면 확대, 정면 상단, 정면 하단, 원단 및 디테일, 디테일 2·3, 측면, 후면, 포인트 1·2(+모델컷, + 직접 이름). 사진이 없는 컷은 숨기고 맨 아래 ‘+ 컷 추가’로 꺼냅니다. 화면 폭 1000px 이하에서는 세로로 쌓입니다.
+
+- 버전 한 칸 = `{matte, stage1, stage2}`: matte는 원본과 같은 크기·위치의 누끼(Photoroom은 `referenceBox/outputSize=originalImage`로 요청), stage1 = matte + 색상 보정(밝기·화사하게) + 기준 색감 맞춤 + 중앙 정렬(브라우저), stage2 = IOPaint 결과. 예전 문자열 버전은 stage1로 읽습니다.
+- 색감 기준: 1차·2차·최종 사진 아래 체크. 한 컷에서 고르면 다른 컷 체크는 잠기고, 다른 컷은 1차를 만들 때 자동으로 그 색감에 맞춰집니다.
+- 배경 직접 수정(`src/utils/matte.js`): 되살리기(원본 픽셀 복원) · 배경색만 지우기(붓 주변의 이미 지워진 곳 원본색 = 배경색, 그와 비슷한 색만 투명) · 모두 지우기. 한 획 되돌리기, 적용 시 1차를 다시 만들고 2차는 비웁니다.
+- `tests/studio-cuts.mjs`, `server/matte.test.js`.

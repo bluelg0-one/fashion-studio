@@ -24,29 +24,29 @@ try{
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();
  await idle();assert.equal(edits,1);assert.equal(analyses,1);
  // 대표 사진만 보정해도 디테일컷은 자동으로 만들어지지 않습니다.
- for(const id of ['frontZoom','frontTop','frontBottom','fabric'])assert.equal(await slot(id).locator('.paste-zone img').count(),0);
- assert.equal(await slot('side').locator('.paste-zone img').count(),0);
+ for(const id of ['frontZoom','frontTop','frontBottom','fabric'])assert.equal(await slot(id).locator('.final-zone img').count(),0);
+ assert.equal(await slot('side').locator('.final-zone img').count(),0);
  await page.getByLabel('1행 사이즈',{exact:true}).fill('M');await page.getByLabel('1행 가슴단면',{exact:true}).fill('48');await page.getByLabel('1행 총장',{exact:true}).fill('62');
  let html=(await download('HTML 다운로드')).toString();
- assert.ok(html.indexOf('alt="대표 정면샷"')<html.indexOf('스트라이프 티셔츠',html.indexOf('<main>')));
- assert.ok(!html.includes('Fit guide'));assert.ok(!html.includes('alt="옆면컷"'));assert.ok(html.includes('<td>48</td>'));assert.ok(html.includes('&lt;면 추정 금지&gt;'));
+ assert.ok(html.indexOf('alt="정면"')<html.indexOf('스트라이프 티셔츠',html.indexOf('<main>')));
+ assert.ok(!html.includes('Fit guide'));assert.ok(!html.includes('alt="측면"'));assert.ok(html.includes('<td>48</td>'));assert.ok(html.includes('&lt;면 추정 금지&gt;'));
  // Missing model image never creates an empty section.
  await page.getByLabel('모델컷 적용',{exact:true}).check();
  html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('Fit guide'));
  // Clipboard image replacement, no external image CORS.
- await slot('fit').locator('.paste-zone').evaluate(async(el,url)=>{const blob=await(await fetch(url)).blob();const dt=new DataTransfer();dt.items.add(new File([blob],'model.png',{type:'image/png'}));el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));},fixture);
- await idle();assert.equal(await slot('fit').locator('.paste-zone img').count(),1);
+ await slot('fit').locator('.source-zone').evaluate(async(el,url)=>{const blob=await(await fetch(url)).blob();const dt=new DataTransfer();dt.items.add(new File([blob],'model.png',{type:'image/png'}));el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));},fixture);
+ await idle();assert.equal(await slot('fit').locator('.final-zone img').count(),1);
  await page.getByLabel('모델 설명',{exact:true}).fill('모델 165cm / M 착용');
  html=(await download('HTML 다운로드')).toString();assert.ok(html.includes('Fit guide'));assert.ok(html.includes('모델 165cm'));
  await page.getByLabel('모델컷 적용',{exact:true}).uncheck();html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('Fit guide'));
  // 디테일컷은 각 자리에 직접 넣고 개별 보정합니다.
- for(const id of ['frontTop','frontBottom']){await page.getByLabel(`${id} 사진 선택`,{exact:true}).setInputFiles(file);await idle();}
+ for(const id of ['frontTop','frontBottom']){await page.getByLabel(`${id} 컷 추가`).click();await page.getByLabel(`${id} 사진 선택`,{exact:true}).setInputFiles(file);await idle();}
  await slot('frontTop').getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
- assert.equal(await slot('frontZoom').locator('.paste-zone img').count(),0,'빈 자리는 계속 비어 있음');
- const after=await slot('frontTop').locator('.paste-zone img').getAttribute('src');
- const pixel=await slot('frontTop').locator('.paste-zone img').evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const ctx=c.getContext('2d');ctx.drawImage(im,0,0);return [...ctx.getImageData(0,0,1,1).data];});assert.deepEqual(pixel,[255,255,255,255]);
+ assert.equal(await slot('frontZoom').locator('.final-zone img').count(),0,'빈 자리는 계속 비어 있음');
+ const after=await slot('frontTop').locator('.final-zone img').getAttribute('src');
+ const pixel=await slot('frontTop').locator('.final-zone img').evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const ctx=c.getContext('2d');ctx.drawImage(im,0,0);return [...ctx.getImageData(0,0,1,1).data];});assert.deepEqual(pixel,[255,255,255,255]);
  await slot('frontBottom').getByLabel('상세페이지에 포함',{exact:true}).uncheck();
- html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('alt="정면 하단컷"'));assert.ok(html.includes(after));assert.ok(!html.includes('alt="정면 확대컷"'));
+ html=(await download('HTML 다운로드')).toString();assert.ok(!html.includes('alt="정면 하단"'));assert.ok(html.includes(after));assert.ok(!html.includes('alt="정면 확대"'));
  assert.equal(await page.getByRole('button',{name:'옷 종류 기준으로 자동 확대 위치 초기화'}).count(),0);
  // All six silhouettes and garment-specific measurements; switching restores entries.
  const guides=[];
@@ -61,11 +61,11 @@ try{
  html=(await download('HTML 다운로드')).toString();assert.ok(html.includes('허리단면'));assert.ok(html.includes('<td>34</td>'));assert.ok(html.includes('<td>XL</td>'));
  await page.getByLabel('옷 종류',{exact:true}).selectOption('long-top');await idle();assert.equal(await page.getByLabel('1행 가슴단면',{exact:true}).inputValue(),'48');
  // Side/back and arbitrary extras are opt-in actual photographs.
- await page.getByLabel('side 사진 선택',{exact:true}).setInputFiles(file);await idle();
- await page.getByLabel('back 사진 선택',{exact:true}).setInputFiles(file);await idle();
- await page.getByRole('button',{name:'특정 디테일컷 추가',exact:true}).click();assert.equal(await page.locator('[data-slot^="extra-"]').count(),1);
+ await page.getByLabel('side 컷 추가').click();await page.getByLabel('side 사진 선택',{exact:true}).setInputFiles(file);await idle();
+ await page.getByLabel('back 컷 추가').click();await page.getByLabel('back 사진 선택',{exact:true}).setInputFiles(file);await idle();
+ await page.getByRole('button',{name:'+ 직접 이름 정하기',exact:true}).click();assert.equal(await page.locator('[data-slot^="extra-"]').count(),1);
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();await idle();assert.equal(edits,1,'same image reuses successful processing');
- html=(await download('HTML 다운로드')).toString();assert.ok(html.includes('alt="옆면컷"'));assert.ok(html.includes('alt="후면컷"'));assert.ok(!html.includes('alt="추가 디테일컷"'));
+ html=(await download('HTML 다운로드')).toString();assert.ok(html.includes('alt="측면"'));assert.ok(html.includes('alt="후면"'));assert.ok(!html.includes('alt="추가 컷"'));
  const png=await download('상세페이지 전체 PNG 저장');assert.equal(png.subarray(1,4).toString(),'PNG');assert.equal(png.readUInt32BE(16),860);assert.ok(png.readUInt32BE(20)>3000);
  await page.locator('img[alt="완성 상세페이지 미리보기"]').waitFor();
  await page.screenshot({path:'/tmp/fashion-editor-desktop.png',fullPage:false});

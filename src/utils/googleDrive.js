@@ -88,7 +88,10 @@ export async function listDriveProducts(folderId) {
 export function trimForDrive(data={}) {
   const slots=Object.fromEntries(Object.entries(data.slots||{}).map(([k,s])=>{
     const vi=s.vIndex??0,cur=(s.versions||[null])[vi]??null;
-    return [k,{...s,versions:vi>0&&cur?[null,cur]:[null],vIndex:vi>0&&cur?1:0,defects:s.defects?{...s.defects,preview:null}:s.defects}];
+    const out={...s,versions:vi>0&&cur?[null,cur]:[null],vIndex:vi>0&&cur?1:0,defects:s.defects?{...s.defects,preview:null}:s.defects};
+    // 지금 결과(누끼·1차·2차)는 버전 칸에 이미 있으므로 겹치는 사본은 빼고 올립니다(불러올 때 다시 채움).
+    if(cur&&typeof cur==='object'){delete out.matte;delete out.stage1;delete out.stage2;delete out.cutout;}
+    return [k,out];
   }));
   return {...data,slots};
 }

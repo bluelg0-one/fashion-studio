@@ -21,7 +21,7 @@ try{
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'a.png',mimeType:'image/png',buffer:png});await idle();
  await page.locator('[data-slot="hero"]').getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
  const panel=page.locator('[data-slot="hero"] .defect-panel');
- await panel.locator('summary').click();
+
  // 1) Claude 없이 직접 표시
  await panel.getByRole('button',{name:/직접 표시하기/}).click();
  await page.getByLabel('hero 직접 표시 종류').selectOption('wrinkle');

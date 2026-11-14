@@ -27,12 +27,12 @@ try{
  await page.reload();await idle();
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'스트라이프 티');
  assert.equal(await page.getByLabel('상품 제목',{exact:true}).inputValue(),'스트라이프 긴팔티');
- assert.equal(await page.locator('[data-slot="hero"] .paste-zone img').count(),1);
+ assert.equal(await page.locator('[data-slot="hero"] .final-zone img').count(),1);
  assert.equal(await page.getByLabel('1행 가슴단면').inputValue(),'48');
  // 새 상품은 빈 상태, 다시 돌아오면 복원
  await page.getByRole('button',{name:'+ 새 상품'}).click();await idle();
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'상품 2');
- assert.equal(await page.locator('[data-slot="hero"] .paste-zone img').count(),0);
+ assert.equal(await page.locator('[data-slot="hero"] .final-zone img').count(),0);
  assert.equal(await page.getByLabel('상품 선택').locator('option').count(),2);
  const firstId=await page.getByLabel('상품 선택').locator('option',{hasText:'스트라이프 티'}).getAttribute('value');
  await page.getByLabel('상품 선택').selectOption(firstId);await idle();

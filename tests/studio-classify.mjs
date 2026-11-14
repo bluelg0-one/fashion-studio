@@ -24,7 +24,7 @@ try{
  assert.equal(sentPhotos.length,4);assert.ok(sentPhotos.every(p=>p.image.startsWith('data:image/jpeg')&&p.image.length<400000),'작은 JPG로 보냄');
  assert.equal(await page.getByLabel('상품 선택').locator('option').count(),2,'옷 2벌 → 상품 2개');
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'카키 브이넥 긴팔티');
- const has=id=>page.locator(`[data-slot="${id}"] .paste-zone img`).count();
+ const has=id=>page.locator(`[data-slot="${id}"] .final-zone img`).count();
  assert.equal(await has('hero'),1);assert.equal(await has('back'),1);assert.equal(await has('fabric'),1);assert.equal(await has('side'),0);
  assert.match(await page.locator('[data-slot="fabric"] .ai-badge').innerText(),/확인 필요/);
  assert.match(await page.locator('[role=status]').innerText(),/확인 필요 1장/);
@@ -41,7 +41,7 @@ try{
  for(const id of ['hero','back']){await page.locator(`[data-slot="${id}"]`).getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();}
  await page.getByRole('button',{name:'모든 컷 일관성 맞추기 (색감·밝기·크기·여백·중앙)'}).click();await idle();
  assert.match(await page.locator('[role=status]').innerText(),/일관성 맞추기 완료/);
- const info=id=>page.locator(`[data-slot="${id}"] .paste-zone img`).evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const x=c.getContext('2d');x.drawImage(im,0,0);const d=x.getImageData(0,0,c.width,c.height).data;let l=c.width,r=0,t=c.height,b=0;for(let y=0;y<c.height;y+=4)for(let X=0;X<c.width;X+=4){const i=(y*c.width+X)*4;if(d[i]<240||d[i+1]<240||d[i+2]<240){l=Math.min(l,X);r=Math.max(r,X);t=Math.min(t,y);b=Math.max(b,y);}}return {w:c.width,h:c.height,cx:(l+r)/2/c.width,cy:(t+b)/2/c.height,fill:Math.max((r-l)/c.width,(b-t)/c.height),mid:[...x.getImageData(c.width/2|0,c.height/2|0,1,1).data].slice(0,3)};});
+ const info=id=>page.locator(`[data-slot="${id}"] .final-zone img`).evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const x=c.getContext('2d');x.drawImage(im,0,0);const d=x.getImageData(0,0,c.width,c.height).data;let l=c.width,r=0,t=c.height,b=0;for(let y=0;y<c.height;y+=4)for(let X=0;X<c.width;X+=4){const i=(y*c.width+X)*4;if(d[i]<240||d[i+1]<240||d[i+2]<240){l=Math.min(l,X);r=Math.max(r,X);t=Math.min(t,y);b=Math.max(b,y);}}return {w:c.width,h:c.height,cx:(l+r)/2/c.width,cy:(t+b)/2/c.height,fill:Math.max((r-l)/c.width,(b-t)/c.height),mid:[...x.getImageData(c.width/2|0,c.height/2|0,1,1).data].slice(0,3)};});
  const A=await info('hero'),B=await info('back');
  assert.deepEqual([A.w,A.h],[1500,2000]);assert.deepEqual([B.w,B.h],[1500,2000],'같은 크기');
  for(const v of [A,B]){assert.ok(Math.abs(v.cx-.5)<.02&&Math.abs(v.cy-.5)<.02,'가운데 정렬');}

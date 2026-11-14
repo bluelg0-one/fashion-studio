@@ -97,3 +97,8 @@ test('flat lay uses square output; editWithAI prompts are flagged as 1K, ironing
  const iron=await studio('retouch',{image,options:{presets:['iron']}},env,async()=>imageResponse());assert.equal(iron.lowResolution,undefined);
  const sym=await studio('retouch',{image,options:{presets:['symmetry']}},env,async()=>imageResponse());assert.equal(sym.lowResolution,true);
 });
+test('retouch with center:false keeps the original size and position (for the manual brush)',async()=>{
+ const env={PHOTOROOM_API_KEY:'pr-test'};let call;
+ await studio('retouch',{image,options:{center:false,presets:[],custom:''}},env,async(url,o)=>{call=o;return imageResponse();});
+ const f=call.body;assert.equal(f.get('referenceBox'),'originalImage');assert.equal(f.get('outputSize'),'originalImage');assert.equal(f.get('horizontalAlignment'),null);assert.equal(f.get('padding'),null);
+});

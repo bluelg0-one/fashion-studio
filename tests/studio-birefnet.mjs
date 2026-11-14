@@ -28,7 +28,7 @@ try{
  assert.deepEqual(await page.locator('[role=alert]').allInnerTexts(),[]);
  assert.match(await page.locator('[role=status]').innerText(),/완료/);
  const res=await page.evaluate(async()=>{
-  const img=document.querySelector('[data-slot="hero"] .paste-zone img');
+  const img=document.querySelector('[data-slot="hero"] .final-zone img');
   const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=img.src;});
   const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const g=c.getContext('2d');g.drawImage(im,0,0);
   const px=(x,y)=>Array.from(g.getImageData(x,y,1,1).data);
@@ -44,7 +44,7 @@ try{
  assert.ok(Date.now()-t2<5000,'재사용');
  // 받침대 기둥: 켜짐(기본) vs 꺼짐 결과의 옷 영역 비율 비교. 꺼도 BiRefNet을 다시 돌리지 않아야 함.
  const shape=()=>page.evaluate(async()=>{
-  const img=document.querySelector('[data-slot="hero"] .paste-zone img');
+  const img=document.querySelector('[data-slot="hero"] .final-zone img');
   const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=img.src;});
   const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const g=c.getContext('2d');g.drawImage(im,0,0);
   const d=g.getImageData(0,0,c.width,c.height).data;let t=c.height,b=0,l=c.width,r=0;

@@ -9,7 +9,7 @@ test('document places hero first and sizes after enabled real detail images',()=
  const blocks=documentBlocks({slots,fitEnabled:true,texts,garment:'long-top',rows:[newSizeRow()]});
  assert.equal(blocks[0].src,slots.hero.image);
  assert.ok(!blocks.some(b=>b.value==='Fit guide'));
- assert.deepEqual(blocks.filter(b=>b.kind==='image'&&!b.guide).map(b=>b.label),['대표 정면샷','정면 확대컷','옆면컷']);
+ assert.deepEqual(blocks.filter(b=>b.kind==='image'&&!b.guide).map(b=>b.label),['정면','정면 확대','측면']);
  assert.ok(blocks.findIndex(b=>b.value==='Size')>blocks.findIndex(b=>b.src===slots.side.image));
  assert.deepEqual(blocks.find(b=>b.kind==='table').rows,[['—','—','—']]);
 });

@@ -4,7 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import {z} from 'zod';
 import {betaZodOutputFormat} from '@anthropic-ai/sdk/helpers/beta/zod';
 
-export const SHOTS=['front','frontTop','frontBottom','side','back','fabric','fit','detail','unknown'];
+export const SHOTS=['front','frontZoom','frontTop','frontBottom','side','back','fabric','fit','detail','unknown'];
 export const MAX_PHOTOS=24;
 const MODEL='claude-opus-5-5';
 
@@ -25,6 +25,7 @@ const INSTRUCTIONS=`You sort product photos for a women's clothing shop. Photos 
 1. Group photos that show the same physical garment (same item, same color). Different colors of the same design are different garments. Give each garment an id like "g1" and a short Korean description (color + type, e.g. "카키 브이넥 긴팔티").
 2. Label every photo with one shot type:
 - front: the whole garment from the front
+- frontZoom: front view zoomed in on the middle of the garment (most of the body, cropped at the edges, not only the top or bottom)
 - frontTop: front close-up of the upper part (neckline, shoulders, chest)
 - frontBottom: front close-up of the lower part (hem, waist, legs for pants)
 - side: side view

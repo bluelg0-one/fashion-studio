@@ -53,6 +53,8 @@ async function retouch(body,env,request) {
   // 2K 이상 사진은 HD 배경 제거로 옷 테두리를 더 정밀하게 땁니다.
   if(base.removeBackground==='true')headers['pr-hd-background-removal']='auto';
   if(o.center!==false)Object.assign(base,{horizontalAlignment:'center',verticalAlignment:'center',padding:'0.06'});
+  // 정렬을 브라우저에서 할 때: 원본 크기·위치 그대로(직접 수정 붓이 원본과 픽셀 단위로 맞도록). 문서: positioning(referenceBox), output-size
+  else Object.assign(base,{referenceBox:'originalImage',outputSize:'originalImage'});
   // 색상·채도를 원본에 가깝게 유지하는 조명 보정.
   if(o.lighting)base['lighting.mode']='ai.preserve-hue-and-saturation';
   if(o.shadow){base['shadow.mode']='ai.auto-with-overrides';base['shadow.subjectPoseOverride']='upright';headers['pr-ai-shadows-model-version']='2026-04-15';}

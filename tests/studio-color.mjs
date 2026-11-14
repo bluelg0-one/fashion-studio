@@ -15,16 +15,16 @@ try{
  await page.reload();
  const idle=()=>page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);await idle();
  const file=d=>({name:'a.png',mimeType:'image/png',buffer:Buffer.from(d.split(',')[1],'base64')});
- for(const [id,d] of [['hero',dark],['frontTop',light]]){await page.getByLabel(`${id} 사진 선택`,{exact:true}).setInputFiles(file(d));await idle();await page.locator(`[data-slot="${id}"]`).getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();}
- const center=id=>page.locator(`[data-slot="${id}"] .paste-zone img`).evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const x=c.getContext('2d');x.drawImage(im,0,0);return [...x.getImageData(Math.floor(c.width/2),Math.floor(c.height/2),1,1).data].slice(0,3);});
+ for(const [id,d] of [['hero',dark],['frontTop',light]]){if(id!=='hero')await page.getByLabel(`${id} 컷 추가`).click();await page.getByLabel(`${id} 사진 선택`,{exact:true}).setInputFiles(file(d));await idle();await page.locator(`[data-slot="${id}"]`).getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();}
+ const center=id=>page.locator(`[data-slot="${id}"] .final-zone img`).evaluate(im=>{const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const x=c.getContext('2d');x.drawImage(im,0,0);return [...x.getImageData(Math.floor(c.width/2),Math.floor(c.height/2),1,1).data].slice(0,3);});
  const heroColor=await center('hero'),before=await center('frontTop');
  const dist=(p,q)=>Math.hypot(p[0]-q[0],p[1]-q[1],p[2]-q[2]);
  assert.ok(dist(before,heroColor)>25,'시작할 때 색이 다름');
  const retouches=calls.filter(c=>c==='retouch').length;
- await page.locator('[data-slot="hero"]').getByRole('button',{name:'🎨 이 컷 색감을 기준으로'}).click();await idle();
- assert.equal(await page.locator('[data-slot="hero"] .color-badge').count(),1);
+ await page.getByLabel('hero 색감 기준 최종').click();await idle();
+ assert.equal(await page.locator('[data-slot="hero"] .color-ref-check.on').count(),1);
  await page.getByLabel('색감 맞추는 강도').fill('100');
- await page.getByRole('button',{name:'보정된 모든 컷을 기준 색감으로 맞추기'}).click();await idle();
+ await page.getByRole('button',{name:'기준 색감으로 다른 컷 지금 맞추기'}).click();await idle();
  const after=await center('frontTop');
  assert.ok(dist(after,heroColor)<6,`맞춘 뒤 색 차이 ${dist(after,heroColor).toFixed(1)} (${after} vs ${heroColor})`);
  assert.deepEqual(await center('hero'),heroColor,'기준 컷은 그대로');
@@ -35,7 +35,7 @@ try{
  assert.match(await page.locator('[role=status]').innerText(),/API 사용 없음/);
  // 저장 후 새로고침해도 기준 색이 유지됨
  await page.waitForFunction(()=>document.querySelector('.save-state')?.textContent==='자동 저장됨');
- await page.reload();await idle();assert.equal(await page.locator('[data-slot="hero"] .color-badge').count(),1);
+ await page.reload();await idle();assert.equal(await page.locator('[data-slot="hero"] .color-ref-check.on').count(),1);
  assert.deepEqual(errors,[]);
  console.log(`PASS: reference color set, detail shot matched (diff ${dist(after,heroColor).toFixed(1)} from ${dist(before,heroColor).toFixed(1)}), no API calls, undo restores, reference survives reload.`);
 }finally{await browser.close();}

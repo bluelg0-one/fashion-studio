@@ -7,11 +7,13 @@ export const TOP_FIELDS = [['size','사이즈'],['chest','가슴단면'],['lengt
 export const BOTTOM_FIELDS = [['size','사이즈'],['waist','허리단면'],['rise','밑위'],['hip','엉덩이 단면'],['thigh','허벅지 단면'],['hem','밑단단면'],['length','총장']];
 export const sizeFields = type => type.endsWith('pants') ? BOTTOM_FIELDS : TOP_FIELDS;
 export const newSizeRow = () => Object.fromEntries([...TOP_FIELDS,...BOTTOM_FIELDS].map(([key])=>[key,'']));
+// 컷 종류 (상세페이지 순서). 사진이 없는 컷은 편집 화면에서 숨기고 '+ 컷 추가'로 꺼냅니다.
 export const DETAIL_SLOTS = [
-  ['frontZoom','정면 확대컷'],['frontTop','정면 상단컷'],['frontBottom','정면 하단컷'],
-  ['fabric','원단컷'],['side','옆면컷'],['back','후면컷'],['extra','특정 디테일컷'],
+  ['frontZoom','정면 확대'],['frontTop','정면 상단'],['frontBottom','정면 하단'],
+  ['fabric','원단 및 디테일'],['detail2','디테일 2'],['detail3','디테일 3'],
+  ['side','측면'],['back','후면'],['point1','포인트 1'],['point2','포인트 2'],
 ];
-export const initialSlots = () => Object.fromEntries([['hero','대표 정면샷'],['fit','모델컷'],...DETAIL_SLOTS].map(([id,label])=>[id,{id,label,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'}]));
+export const initialSlots = () => Object.fromEntries([['hero','정면'],['fit','모델컷'],...DETAIL_SLOTS].map(([id,label])=>[id,{id,label,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'}]));
 const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // The guide describes where to measure; numeric values only come from the user.
