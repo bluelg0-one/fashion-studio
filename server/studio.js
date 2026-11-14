@@ -95,7 +95,8 @@ async function shopeeCopy(body,env,request) {
   return {title:parsed.title.trim().slice(0,120),description:parsed.description.trim().slice(0,3000)};
 }
 export async function studio(action, body, env = process.env, request = fetch) {
-  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY) };
+  // googleClientId는 비밀이 아닌 공개 값(브라우저의 구글 로그인에 필요)입니다. 형식이 맞을 때만 돌려줍니다.
+  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY), googleClientId: /^[\w-]+\.apps\.googleusercontent\.com$/.test(env.GOOGLE_CLIENT_ID||'') ? env.GOOGLE_CLIENT_ID : null };
   if (action === 'classify') return classifyPhotos(body,env);
   if (action === 'defects') return findDefects(body,env);
   if (action === 'retouch') return retouch(body,env,request);

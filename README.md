@@ -131,3 +131,13 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 `tests/studio-versions.mjs`는 사진별 설정, 무료 되돌리기·다시 적용, 저장 결과 재사용을 검사합니다.
 
 `tests/studio-retry.mjs`는 문구 생성 실패 후 사진 보존·이미지 API 중복 호출 방지·대표 사진 삭제 시 디테일 자리 유지를 검사합니다.
+
+## 구글 드라이브 저장 (여러 컴퓨터에서 이어서 작업)
+
+상품 목록 아래 ‘☁️ 구글 드라이브 저장’(`src/components/DrivePanel.jsx`, `src/utils/googleDrive.js`). 브라우저가 구글 로그인(Google Identity Services, 토큰 약 1시간)으로 **`drive.file` 권한만** 받아 구글 드라이브에 직접 저장합니다(서버를 거치지 않음). 이 권한으로는 앱이 만든 폴더·파일만 보이고 드라이브의 다른 파일은 볼 수 없습니다.
+
+- 처음 연결하면 작업 폴더 이름을 정해 ‘내 드라이브’에 만듭니다(`appProperties.fashionStudio=folder`). 드라이브에서 다른 위치로 옮겨도 됩니다. 다른 컴퓨터에서 같은 계정으로 연결하면 그 폴더를 자동으로 찾습니다(여러 개면 고르기). 폴더는 컴퓨터마다 localStorage에 기억합니다.
+- 상품 1개 = 폴더 안 JSON 파일 1개(`appProperties.productId`). 현재 보이는 결과만 올리고 되돌리기 기록·미리보기는 빼서 용량을 줄입니다. 큰 파일도 올라가도록 resumable 업로드를 씁니다.
+- ‘이 상품 드라이브에 저장’, ‘드라이브에서 불러오기’, ‘바뀐 뒤 1분 지나면 자동 저장’(연결돼 있는 동안). 상품별로 마지막으로 맞춘 시점을 기억해, 다른 컴퓨터가 그 뒤에 저장했으면 덮어쓰기 전에 묻고 자동 저장은 멈춥니다.
+- 설정: Vercel 환경변수 `GOOGLE_CLIENT_ID`(구글 클라우드의 OAuth 웹 클라이언트 ID, 공개 값). `status`가 형식을 확인해 브라우저에 넘깁니다. 승인된 JavaScript 원본에 앱 주소를 넣어야 합니다.
+- `tests/studio-drive.mjs`: 모의 구글 로그인·모의 드라이브로 컴퓨터 2대 흐름 검사.

@@ -8,6 +8,7 @@ export const COST={
   iopaint:['IOPaint LaMa','무료 · 내 PC'],
   openai:['OpenAI gpt-4.1-mini','소액 · 사용량만큼'],
   browser:['브라우저 계산','무료'],
+  gdrive:['구글 드라이브','무료 · 15GB까지'],
 };
 export function Cost({k}) {const [m,p]=COST[k];return <span className={`cost cost-${k}`} title={`${m} · ${p}`}>{m} · {p}</span>;}
 
