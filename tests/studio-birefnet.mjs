@@ -42,6 +42,23 @@ try{
  // 같은 사진·같은 설정으로 다시 누르면 저장된 결과를 써서 즉시 끝남
  const t2=Date.now();await btn.getByRole('button').click();await idle();
  assert.ok(Date.now()-t2<5000,'재사용');
+ // 받침대 기둥: 켜짐(기본) vs 꺼짐 결과의 옷 영역 비율 비교. 꺼도 BiRefNet을 다시 돌리지 않아야 함.
+ const shape=()=>page.evaluate(async()=>{
+  const img=document.querySelector('[data-slot="hero"] .paste-zone img');
+  const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=img.src;});
+  const c=document.createElement('canvas');c.width=im.naturalWidth;c.height=im.naturalHeight;const g=c.getContext('2d');g.drawImage(im,0,0);
+  const d=g.getImageData(0,0,c.width,c.height).data;let t=c.height,b=0,l=c.width,r=0;
+  for(let y=0;y<c.height;y+=2)for(let x=0;x<c.width;x+=2){const i=(y*c.width+x)*4;if(d[i]+d[i+1]+d[i+2]<720){if(y<t)t=y;if(y>b)b=y;if(x<l)l=x;if(x>r)r=x;}}
+  return {t,b,l,r,ratio:(b-t)/(r-l)};
+ });
+ const withoutPole=await shape();
+ assert.ok(await page.getByLabel('받침대 기둥 지우기',{exact:true}).isChecked(),'기본으로 켜짐');
+ await page.getByLabel('받침대 기둥 지우기',{exact:true}).uncheck();
+ const t3=Date.now();await btn.getByRole('button').click();await idle();
+ assert.ok(Date.now()-t3<5000,'기둥 설정만 바꾸면 BiRefNet을 다시 돌리지 않음');
+ const withPole=await shape();
+ console.log('shape',JSON.stringify({withoutPole,withPole}));
+ if(process.env.EXPECT_POLE)assert.ok(withPole.ratio>withoutPole.ratio*1.03,'기둥을 지우면 옷 영역이 덜 길쭉해짐(기둥이 빠짐)');
  assert.deepEqual(errors,[]);
  console.log(`PASS: BiRefNet (local server) cut out the photo in ${secs}s (${res.w}x${res.h}), white background, no Photoroom call, re-run reuses the result.`);
 }finally{await browser.close();}

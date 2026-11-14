@@ -62,6 +62,7 @@ npm run dev
 - 모델: `ZhengPeng7/BiRefNet`(MIT, 리비전 고정) PyTorch CPU, 입력 1024px → 마스크를 원본 크기로. 가장자리 옛 배경색 번짐은 blur-fusion 전경 추정으로 제거합니다.
 - 실측(이 개발 환경, 4코어): 1500×2000 사진 약 32초, 최대 메모리 약 3.7GB(대기 1.7GB). IOPaint 내장 RemoveBG(rembg ONNX)의 birefnet-general은 최대 약 10GB여서 쓰지 않았습니다.
 - 설치: `install-iopaint.bat`이 같은 venv에 `kornia==0.9.0 timm einops`를 더 깔고, 파일 끝에 들어 있는 `birefnet_server.py`·`start-iopaint.bat`을 `%USERPROFILE%\iopaint`에 꺼내 둡니다. 바탕화면 ‘IOPaint Start’는 그 시작 파일을 실행해 BiRefNet과 IOPaint를 한 창에서 함께 켭니다. 첫 실행 때 BiRefNet 모델 약 450MB를 내려받습니다.
+- 마네킹 받침대(검은 기둥): BiRefNet은 기둥을 옷의 일부로 남기므로, 기본으로 `src/utils/stand.js`의 `removeStand`가 브라우저에서 지웁니다(설정 ‘마네킹 받침대(검은 기둥) 자동 지우기’, 무료). 사진 맨 아래에서 시작해 곧게 올라가는 좁고 폭이 일정한 무채색 기둥만 찾고, 옷과 만나는 곳은 기둥 양옆 옷 테두리를 이은 선 아래만 지웁니다. 소매·색 있는 끈은 지우지 않습니다(`server/stand.test.js`). BiRefNet 원본 결과는 사진별로 보관해 이 설정만 바꿀 때는 다시 돌리지 않습니다.
 - 두 파일을 고친 뒤에는 `npm run sync:iopaint`로 설치 파일을 다시 만듭니다(`server/iopaint-installer.test.js`가 일치를 검사).
 - `tests/studio-birefnet.mjs`: 실제 BiRefNet 서버로 앱에서 누끼(`PHOTO_PATH`=배경 있는 원본 JPG).
 

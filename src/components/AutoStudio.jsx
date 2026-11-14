@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
+import {removeStand} from '../utils/stand.js';
 import {GARMENTS, initialSlots, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {RETOUCH_PRESETS, DEFAULT_RETOUCH, MANNEQUIN_MODES, lowResolution, retouchPrompt, sanitizeRetouch} from '../utils/retouchPresets.js';
 import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
@@ -41,7 +42,8 @@ function RetouchSettings({value,onChange,status,bir,prefix='',title='누끼·보
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}중앙 정렬`} checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
     {value.cutout==='birefnet'
-      ?<><p className="slot-note">BiRefNet은 사장님 PC에서 돌아가 비용이 없습니다(IOPaint Start로 함께 켜짐). 사진 1장에 30초 안팎(PC 성능에 따라 다름), 처리 중 메모리 약 4GB를 씁니다. 마네킹 받침대처럼 옷 아닌 부분이 남거나 테두리가 마음에 안 들면 이 사진만 Photoroom으로 바꿔 다시 하세요.</p>
+      ?<><label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 · 무료</label>
+        <p className="slot-note">BiRefNet은 사장님 PC에서 돌아가 비용이 없습니다(IOPaint Start로 함께 켜짐). 사진 1장에 30초 안팎(PC 성능에 따라 다름), 처리 중 메모리 약 4GB를 씁니다. 받침대 기둥은 자동으로 지웁니다. 다른 물건이 남거나 테두리가 마음에 안 들면 이 사진만 Photoroom으로 바꿔 다시 하세요.</p>
         {bir&&!bir.ok&&<p className="review-note">BiRefNet이 꺼져 있습니다. 위쪽 ‘사용 도구·비용’ 안내대로 바탕화면의 IOPaint Start를 실행하세요. 예전에 설치했다면 설치 파일을 한 번 더 실행해야 합니다.</p>}
         {bir?.ok&&!bir.ready&&<p className="review-note">BiRefNet 모델 준비 중입니다(처음 한 번 약 450MB 내려받기).</p>}</>
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
@@ -228,7 +230,15 @@ export default function AutoStudio() {
     if(cache.current.has(key))return cache.current.get(key);
     if(options.cutout==='birefnet'){
       // BiRefNet(내 PC의 IOPaint) → 중앙 정렬은 브라우저에서 원본 크기 그대로 여백 6%로 맞춥니다.
-      let c=await imageCanvas(await removeBackground(source));
+      // BiRefNet 원본 결과는 사진별로 따로 보관 → 기둥 지우기·중앙 정렬만 바꿀 때 다시 돌리지 않음.
+      const rawKey='birefnet:'+source;
+      if(!cache.current.has(rawKey))cache.current.set(rawKey,await removeBackground(source));
+      let c=await imageCanvas(cache.current.get(rawKey));
+      if(options.removeStand!==false){
+        // BiRefNet은 받침대 기둥을 옷의 일부로 남기므로, 사진 아래에서 올라오는 좁고 곧은 기둥만 지웁니다.
+        const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+        if(removeStand(px))ctx.putImageData(px,0,0);
+      }
       cutoutBounds(c.getContext('2d').getImageData(0,0,c.width,c.height));
       if(options.center!==false)c=framePhoto(c,{margin:6,size:[c.width,c.height]});
       const image=c.toDataURL('image/png');cache.current.set(key,image);return image;
