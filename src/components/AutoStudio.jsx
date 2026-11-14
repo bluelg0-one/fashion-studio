@@ -66,22 +66,50 @@ function RetouchSettings({value,onChange,status,bir,prefix='',title='누끼·보
   </div>;
 }
 
-// 얼룩·구김 수정: Claude가 수정할 곳을 표시 → 사장님이 확인/선택 → 내 PC의 IOPaint가 지움
+// 얼룩·구김 수정: Claude가 수정할 곳을 표시 → 사장님이 확인/선택(직접 추가·삭제 가능) → 내 PC의 IOPaint가 지움
+const MANUAL_TYPES=['stain','wrinkle','lint','thread','mannequin_mark','other'];
 function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
-  const d=slot.defects,sel=d?.selected||[];
-  const toggle=i=>onPatch(slot.id,{defects:{...d,selected:sel.includes(i)?sel.filter(x=>x!==i):[...sel,i].sort((a,b)=>a-b),preview:null}});
-  return <details className="defect-panel" open={Boolean(d)||undefined}><summary>얼룩·구김 수정 (IOPaint){d?` · 표시 ${d.regions.length}곳`:''}</summary>
-    <div className="btn-row"><span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><Cost k="claudeDefects"/></span></div>
+  const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
+  const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null);
+  const box=useRef(null);
+  const save=(nextRegions,nextSel)=>onPatch(slot.id,{defects:{...(d||{}),regions:nextRegions,selected:nextSel,preview:null}});
+  const toggle=i=>save(regions,sel.includes(i)?sel.filter(x=>x!==i):[...sel,i].sort((a,b)=>a-b));
+  const remove=i=>save(regions.filter((_,k)=>k!==i),sel.filter(x=>x!==i).map(x=>x>i?x-1:x));
+  function startManual() {
+    if(!d)onPatch(slot.id,{defects:{regions:[],selected:[],preview:null}});
+    setDraw(v=>!v);
+  }
+  // 미리보기 사진 위 좌표 → 0~1000 비율
+  const at=e=>{const r=box.current.getBoundingClientRect();const c=v=>Math.max(0,Math.min(1000,Math.round(v)));return {x:c((e.clientX-r.left)/r.width*1000),y:c((e.clientY-r.top)/r.height*1000)};};
+  const down=e=>{if(!draw)return;e.preventDefault();e.currentTarget.setPointerCapture?.(e.pointerId);const p=at(e);setDrag({a:p,b:p});};
+  const move=e=>{if(drag)setDrag({...drag,b:at(e)});};
+  const up=e=>{
+    if(!drag)return;const b=at(e),r={x0:Math.min(drag.a.x,b.x),y0:Math.min(drag.a.y,b.y),x1:Math.max(drag.a.x,b.x),y1:Math.max(drag.a.y,b.y)};setDrag(null);
+    if(r.x1-r.x0<4||r.y1-r.y0<4)return;
+    save([...regions,{type:kind,...r,confidence:1,note:'직접 표시',manual:true}],[...sel,regions.length]);
+  };
+  const live=drag&&{left:`${Math.min(drag.a.x,drag.b.x)/10}%`,top:`${Math.min(drag.a.y,drag.b.y)/10}%`,width:`${Math.abs(drag.b.x-drag.a.x)/10}%`,height:`${Math.abs(drag.b.y-drag.a.y)/10}%`};
+  const auto=regions.filter(r=>!r.manual).length,manual=regions.length-auto;
+  return <details className="defect-panel" open={Boolean(d)||undefined}><summary>얼룩·구김 수정 (IOPaint){d?` · 표시 ${regions.length}곳${manual?` (직접 ${manual})`:''}`:''}</summary>
+    <div className="btn-row">
+      <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><Cost k="claudeDefects"/></span>
+      <span className="btn-with-cost"><button type="button" className={draw?'primary':''} aria-pressed={draw} onClick={startManual}>✏️ 직접 표시하기{draw?' (켜짐)':''}</button><Cost k="browser"/></span>
+    </div>
+    {draw&&<div className="btn-row draw-tools"><label>표시 종류<select aria-label={`${slot.id} 직접 표시 종류`} value={kind} onChange={e=>setKind(e.target.value)}>{MANUAL_TYPES.map(t=><option key={t} value={t}>{DEFECT_LABEL[t]}</option>)}</select></label>
+      <p className="slot-note">사진 위에서 지울 곳을 <b>끌어서 상자</b>로 표시하세요(손가락으로도 됩니다). 여러 곳을 계속 표시할 수 있습니다. 다 했으면 ‘직접 표시하기’를 다시 눌러 끕니다.</p></div>}
     {d&&<>
-      {d.preview&&<img className="defect-preview" src={d.preview} alt={`${slot.label} 수정할 곳 표시`}/>}
-      {d.regions.length?<ul className="defect-list">{d.regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} <small>({Math.round(r.confidence*100)}%)</small></label></li>)}</ul>
-        :<p className="slot-note">고칠 곳을 찾지 못했습니다.</p>}
+      {d.preview&&<div className={`defect-stage${draw?' drawing':''}`}><div className="defect-box" ref={box} data-testid={`${slot.id}-defect-stage`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setDrag(null)}>
+        <img className="defect-preview" src={d.preview} alt={`${slot.label} 수정할 곳 표시`} draggable={false}/>
+        {live&&<div className="defect-drag" style={live}/>}
+      </div></div>}
+      {regions.length?<ul className="defect-list">{regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} {r.manual?<small>(직접)</small>:<small>({Math.round(r.confidence*100)}%)</small>}</label><button type="button" className="subtle tiny" aria-label={`${slot.id} 표시 ${i+1} 삭제`} onClick={()=>remove(i)}>✕</button></li>)}</ul>
+        :<p className="slot-note">{draw?'아직 표시한 곳이 없습니다. 사진 위에서 끌어서 표시하세요.':'표시된 곳이 없습니다. ‘직접 표시하기’로 추가할 수 있습니다.'}</p>}
       <div className="btn-row">
-        <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>onInpaint(slot.id)}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
-        <button type="button" className="subtle" onClick={()=>onPatch(slot.id,{defects:null})}>표시 지우기</button>
+        <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>{setDraw(false);onInpaint(slot.id);}}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
+        <button type="button" className="subtle" onClick={()=>{setDraw(false);onPatch(slot.id,{defects:null});}}>표시 모두 지우기</button>
       </div>
       {!iop?.ok&&<p className="review-note">IOPaint가 꺼져 있습니다. 위쪽 ‘IOPaint 연결’ 안내대로 내 PC에서 IOPaint를 실행하세요.</p>}
-      <p className="slot-note">빨간 상자만 지웁니다. 체크를 풀면 그 곳은 그대로 둡니다. 결과가 마음에 안 들면 ‘이전으로’로 되돌리세요(무료).</p>
+      <p className="slot-note">빨간 상자만 지웁니다. 체크를 풀면 그 곳은 그대로 두고, ✕는 표시를 없앱니다. 직접 표시는 Claude를 쓰지 않아 무료입니다. 결과가 마음에 안 들면 ‘이전으로’로 되돌리세요(무료).</p>
     </>}
   </details>;
 }
@@ -363,11 +391,14 @@ export default function AutoStudio() {
       if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');
       setStep(`Claude가 ${slot.label}에서 얼룩·구김을 찾는 중`);
       const shot=await inspectImage(slot.cutout);
-      const {regions}=await api('defects',shot);
-      const selected=regions.map((r,i)=>r.confidence>=.5?i:-1).filter(i=>i>=0);
-      const preview=regions.length?await markedPreview(slot.cutout,regions,selected):null;
+      const {regions:found}=await api('defects',shot);
+      // 사장님이 직접 표시한 곳은 그대로 두고, Claude가 찾은 곳만 새로 바꿉니다.
+      const old=slot.defects||{regions:[],selected:[]},kept=old.regions.map((r,i)=>({r,on:old.selected.includes(i)})).filter(x=>x.r.manual);
+      const regions=[...found,...kept.map(x=>x.r)];
+      const selected=[...found.map((r,i)=>r.confidence>=.5?i:-1).filter(i=>i>=0),...kept.map((x,k)=>x.on?found.length+k:-1).filter(i=>i>=0)];
+      const preview=await markedPreview(slot.cutout,regions,selected);
       patch(id,{defects:{regions,selected,preview}});
-      setStep(regions.length?`${slot.label} · 수정할 곳 ${regions.length}곳을 표시했습니다. 확인 후 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · 고칠 곳을 찾지 못했습니다.`);
+      setStep(found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다. 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하세요.`);
     });
   }
   async function inpaintFor(id) {
@@ -382,7 +413,7 @@ export default function AutoStudio() {
     });
   }
   // 같은 사진에서 다시 찾으면 표시 미리보기를 새로 그립니다.
-  useEffect(()=>{(async()=>{for(const s of Object.values(slots))if(s.defects&&!s.defects.preview&&s.cutout&&s.defects.regions.length){const preview=await markedPreview(s.cutout,s.defects.regions,s.defects.selected);setSlots(cur=>cur[s.id]?.defects===s.defects?{...cur,[s.id]:{...cur[s.id],defects:{...s.defects,preview}}}:cur);}})();},[slots]);
+  useEffect(()=>{(async()=>{for(const s of Object.values(slots))if(s.defects&&!s.defects.preview&&s.cutout){const preview=await markedPreview(s.cutout,s.defects.regions,s.defects.selected);setSlots(cur=>cur[s.id]?.defects===s.defects?{...cur,[s.id]:{...cur[s.id],defects:{...s.defects,preview}}}:cur);}})();},[slots]);
   function moveSlot(from,to) {
     setPreview(null);
     setSlots(current=>{
