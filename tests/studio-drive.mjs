@@ -14,24 +14,25 @@ async function fakeDrive(route) {
   const p=url.pathname;drive.log.push(`${m} ${p}`);
   if(p==='/drive/v3/files'&&m==='GET'){
     const q=url.searchParams.get('q');let list=[...drive.files.values()].filter(f=>!f.trashed);
-    if(q.includes("value='folder'"))list=list.filter(f=>f.appProperties?.fashionStudio==='folder');
-    else {const parent=q.match(/'([^']+)' in parents/)[1];list=list.filter(f=>f.appProperties?.fashionStudio==='product'&&f.parents?.includes(parent));}
+    const kind=q.match(/key='fashionStudio' and value='(\w+)'/)?.[1],parent=q.match(/'([^']+)' in parents/)?.[1],pid=q.match(/key='productId' and value='([^']+)'/)?.[1];
+    list=list.filter(f=>f.appProperties?.fashionStudio===kind&&(!parent||f.parents?.includes(parent))&&(!pid||f.appProperties?.productId===pid));
     return json({files:list.map(({content,...f})=>({...f,size:String(content?.length||0)}))});
   }
-  if(p==='/drive/v3/files'&&m==='POST'){const meta=JSON.parse(req.postData());const id='f'+(++drive.n);drive.files.set(id,{id,...meta,parents:['root'],modifiedTime:new Date().toISOString()});return json({id,name:meta.name});}
+  if(p==='/drive/v3/files'&&m==='POST'){const meta=JSON.parse(req.postData());const id='f'+(++drive.n);drive.files.set(id,{id,...meta,parents:meta.parents||['root'],modifiedTime:new Date().toISOString()});return json({id,name:meta.name});}
   let mm;
   if((mm=p.match(/^\/drive\/v3\/files\/([^/]+)$/))&&m==='GET'){
     const f=drive.files.get(mm[1]);if(!f)return route.fulfill({status:404,headers:cors,json:{}});
     if(url.searchParams.get('alt')==='media')return route.fulfill({headers:{...cors,'Content-Type':'application/json'},body:f.content});
     return json({id:f.id,name:f.name,trashed:false});
   }
+  if((mm=p.match(/^\/drive\/v3\/files\/([^/]+)$/))&&m==='PATCH'){const f=drive.files.get(mm[1]);Object.assign(f,JSON.parse(req.postData()));return json({id:f.id});}
   if(p==='/upload/drive/v3/files'||(mm=p.match(/^\/upload\/drive\/v3\/files\/([^/]+)$/))){
     const sid='s'+(++drive.n);drive.sessions.set(sid,{meta:JSON.parse(req.postData()),fileId:mm?.[1]});
     return route.fulfill({status:200,headers:{...cors,Location:`https://www.googleapis.com/upload/session/${sid}`},body:''});
   }
   if((mm=p.match(/^\/upload\/session\/(.+)$/))&&m==='PUT'){
     const s=drive.sessions.get(mm[1]);const id=s.fileId||'f'+(++drive.n);const old=drive.files.get(id)||{};
-    drive.files.set(id,{...old,id,...s.meta,parents:s.meta.parents||old.parents,appProperties:{...old.appProperties,...s.meta.appProperties},content:req.postData(),modifiedTime:new Date().toISOString()});
+    drive.files.set(id,{...old,id,...s.meta,parents:s.meta.parents||old.parents,appProperties:{...old.appProperties,...s.meta.appProperties},content:s.meta.mimeType==='image/jpeg'?null:req.postData(),bytes:req.postDataBuffer().length,uploads:(old.uploads||0)+1,modifiedTime:new Date().toISOString()});
     return json({id});
   }
   return route.fulfill({status:500,headers:cors,body:'unexpected '+m+' '+p});
@@ -72,6 +73,16 @@ try{
  assert.match(await A.panel.innerText(),/드라이브에 최신 내용 저장됨/);
  assert.equal(saved.name,'카키 브이넥');assert.ok(saved.data.slots.hero.versions[1].stage1.startsWith('data:image/webp'));assert.equal(saved.data.slots.hero.cutout,undefined,'겹치는 사본은 올리지 않음');
  assert.ok(saved.data.slots.hero.versions.length<=2,'되돌리기 기록은 올리지 않음');
+ // 완성 사진 JPG: 작업 폴더 / 상품 이름 폴더 / 01 정면.jpg
+ const photoFolder=[...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='photos');
+ assert.equal(photoFolder.name,'카키 브이넥');assert.deepEqual(photoFolder.parents,[folder.id]);
+ let jpgs=[...drive.files.values()].filter(f=>f.appProperties?.fashionStudio==='photo'&&!f.trashed);
+ assert.deepEqual(jpgs.map(f=>f.name),['01 정면.jpg']);assert.deepEqual(jpgs[0].parents,[photoFolder.id]);
+ assert.ok(jpgs[0].bytes>10000&&jpgs[0].bytes<=2*1024*1024,`JPG ${jpgs[0].bytes}바이트`);
+ assert.match(await A.panel.innerText(),/완성 사진 1장/);
+ // 다시 저장해도 같은 사진은 다시 올리지 않음
+ await A.panel.getByRole('button',{name:'이 상품 드라이브에 저장'}).click();await A.idle();
+ assert.equal([...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='photo').uploads,1);
  // ---- 컴퓨터 B: 같은 계정으로 연결 → 폴더 자동 선택 → 불러오기 ----
  const B=await computer();
  await B.panel.getByRole('button',{name:'구글 드라이브 연결'}).click();await B.idle();
@@ -87,6 +98,7 @@ try{
  assert.match(await B.panel.innerText(),/바뀐 내용이 아직 올라가지 않았습니다/);
  await B.panel.getByRole('button',{name:'이 상품 드라이브에 저장'}).click();await B.idle();
  assert.equal(JSON.parse([...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='product').content).name,'카키 브이넥 (B 수정)');
+ assert.equal([...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='photos').name,'카키 브이넥 (B 수정)','상품 이름이 바뀌면 사진 폴더 이름도');
  // ---- A가 옛 내용으로 저장하려 하면 확인을 받는다 (취소하면 B 내용 유지) ----
  let asked='';A.page.once('dialog',d=>{asked=d.message();d.dismiss();});
  await A.panel.getByRole('button',{name:'이 상품 드라이브에 저장'}).click();await A.idle();

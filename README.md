@@ -140,6 +140,7 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 - 상품 1개 = 폴더 안 JSON 파일 1개(`appProperties.productId`). 현재 보이는 결과만 올리고 되돌리기 기록·미리보기는 빼서 용량을 줄입니다. 큰 파일도 올라가도록 resumable 업로드를 씁니다.
 - ‘이 상품 드라이브에 저장’, ‘드라이브에서 불러오기’, ‘바뀐 뒤 1분 지나면 자동 저장’(연결돼 있는 동안). 상품별로 마지막으로 맞춘 시점을 기억해, 다른 컴퓨터가 그 뒤에 저장했으면 덮어쓰기 전에 묻고 자동 저장은 멈춥니다.
 - 설정: Vercel 환경변수 `GOOGLE_CLIENT_ID`(구글 클라우드의 OAuth 웹 클라이언트 ID, 공개 값). `status`가 형식을 확인해 브라우저에 넘깁니다. 승인된 JavaScript 원본에 앱 주소를 넣어야 합니다.
+- 저장할 때마다 상품 이름 폴더(`appProperties.fashionStudio=photos`)에 완성 사진을 `01 정면.jpg`처럼 흰 배경 JPG(2MB 이하)로 올립니다. 보정을 마친 컷만, 바뀐 사진만 올리고, 빠진 컷의 사진은 휴지통으로. 작업 파일의 큰 PNG는 WebP로 줄여 올립니다.
 - `tests/studio-drive.mjs`: 모의 구글 로그인·모의 드라이브로 컴퓨터 2대 흐름 검사.
 
 ## 컷별 보정 화면 (PC: 한 줄에 원본 → 1차 → 2차 → 최종)

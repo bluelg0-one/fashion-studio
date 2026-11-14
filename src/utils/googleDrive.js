@@ -136,3 +136,64 @@ export async function downloadProduct(fileId) {
   if(p?.format!==FORMAT||!p.id)throw new Error('패션스튜디오 상품 파일이 아닙니다.');
   return {id:p.id,name:p.name,updatedAt:p.updatedAt,data:p.data||{}};
 }
+
+// ---- 완성 사진 JPG: 작업 폴더 / 상품 이름 폴더 / "01 정면.jpg" ----
+const safeName=s=>String(s||'').replace(/[\\/:*?"<>|]/g,' ').trim().slice(0,80)||'이름 없는 상품';
+// 상품마다 사진 폴더 1개(appProperties.productId로 찾음). 상품 이름이 바뀌면 폴더 이름도 맞춥니다.
+export async function productPhotoFolder(parentId,product) {
+  const query=`'${esc(parentId)}' in parents and mimeType='${FOLDER_MIME}' and appProperties has { key='fashionStudio' and value='photos' } and appProperties has { key='productId' and value='${esc(product.id)}' } and trashed=false`;
+  const r=await call(`${API}/files?q=${q(query)}&fields=${q('files(id,name)')}&spaces=drive`);
+  const f=((await r.json()).files||[])[0],name=safeName(product.name);
+  if(f){
+    if(f.name!==name)await call(`${API}/files/${q(f.id)}?fields=id`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    return {id:f.id,name};
+  }
+  const c=await call(`${API}/files?fields=id,name`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name,mimeType:FOLDER_MIME,parents:[parentId],appProperties:{fashionStudio:'photos',productId:product.id}})});
+  return c.json();
+}
+async function uploadBlob(meta,blob,existing) {
+  const start=await call(existing?`${UPLOAD}/files/${q(existing)}?uploadType=resumable&fields=id`:`${UPLOAD}/files?uploadType=resumable&fields=id`,{
+    method:existing?'PATCH':'POST',headers:{'Content-Type':'application/json; charset=UTF-8','X-Upload-Content-Type':blob.type},body:JSON.stringify(meta)});
+  const location=start.headers.get('Location');
+  if(!location)throw new Error('구글 드라이브 업로드를 시작하지 못했습니다.');
+  const r=await call(location,{method:'PUT',headers:{'Content-Type':blob.type},body:blob});
+  return (await r.json()).id;
+}
+// 흰 배경 JPG, 2MB 이하(품질부터 낮추고, 그래도 크면 크기를 줄임)
+export async function finalJpg(src,maxBytes=2*1024*1024) {
+  const bmp=await createImageBitmap(await (await fetch(src)).blob());
+  let w=bmp.width,h=bmp.height,blob;
+  for(let round=0;round<8;round++){
+    const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');
+    g.fillStyle='#fff';g.fillRect(0,0,w,h);g.drawImage(bmp,0,0,w,h);
+    for(const quality of [.92,.86,.8]){
+      blob=await new Promise(res=>c.toBlob(res,'image/jpeg',quality));
+      if(blob&&blob.size<=maxBytes){bmp.close?.();return blob;}
+    }
+    w=Math.round(w*.85);h=Math.round(h*.85);
+  }
+  bmp.close?.();return blob;
+}
+// 사진 내용이 같은지 알아보는 짧은 지문(같으면 다시 올리지 않음)
+const fingerprint=s=>{let h=2166136261;const step=Math.max(1,Math.floor(s.length/4000));for(let i=0;i<s.length;i+=step){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return `${s.length}-${(h>>>0).toString(36)}`;};
+
+// photos: [{slotId,label,image}] (상세페이지 순서). 바뀐 사진만 올리고, 이제 없는 컷의 사진은 휴지통으로.
+export async function uploadFinalPhotos(parentId,product,photos,onStage=()=>{}) {
+  const folder=await productPhotoFolder(parentId,product);
+  const query=`'${esc(folder.id)}' in parents and appProperties has { key='fashionStudio' and value='photo' } and trashed=false`;
+  const existing=((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id,name,appProperties)')}&pageSize=200&spaces=drive`)).json()).files||[]);
+  const bySlot=new Map(existing.map(f=>[f.appProperties?.slotId,f]));
+  let uploaded=0,kept=0,removed=0;
+  for(let i=0;i<photos.length;i++){
+    const p=photos[i],name=`${String(i+1).padStart(2,'0')} ${safeName(p.label)}.jpg`,fp=fingerprint(p.image),old=bySlot.get(p.slotId);
+    bySlot.delete(p.slotId);
+    if(old&&old.appProperties?.fp===fp&&old.name===name){kept++;continue;}
+    onStage(`완성 사진 ${i+1}/${photos.length} 올리는 중`);
+    const meta={name,mimeType:'image/jpeg',appProperties:{fashionStudio:'photo',productId:product.id,slotId:p.slotId,fp}};
+    if(!old)meta.parents=[folder.id];
+    await uploadBlob(meta,await finalJpg(p.image),old?.id);uploaded++;
+  }
+  for(const f of bySlot.values()){await call(`${API}/files/${q(f.id)}?fields=id`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})});removed++;}
+  return {folder,uploaded,kept,removed};
+}

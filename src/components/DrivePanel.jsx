@@ -1,7 +1,11 @@
 import {useEffect, useRef, useState} from 'react';
 import {Cost} from './Cost.jsx';
 import {getProduct, saveProduct} from '../utils/productStore.js';
-import {signIn, signOut, hasToken, savedFolder, rememberFolder, listFolders, createFolder, checkFolder, listDriveProducts, uploadProduct, downloadProduct} from '../utils/googleDrive.js';
+import {signIn, signOut, hasToken, savedFolder, rememberFolder, listFolders, createFolder, checkFolder, listDriveProducts, uploadProduct, downloadProduct, uploadFinalPhotos} from '../utils/googleDrive.js';
+import {shopeePhotos} from '../utils/shopeeExport.js';
+
+// 드라이브에 JPG로 올릴 완성 사진: 상세페이지 순서, 보정을 마친 컷만
+const finalPhotos=data=>shopeePhotos(data?.slots||{},Boolean(data?.fitEnabled)).filter(s=>s.cutout||s.stage1).map(s=>({slotId:s.id,label:s.label,image:s.image}));
 
 // 상품별로 '마지막으로 드라이브와 맞춘 시점'을 이 컴퓨터에 기억 → 다른 컴퓨터가 그 뒤에 저장했는지 알 수 있음.
 const SYNC_KEY='gdriveSync';
@@ -64,8 +68,12 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
       setNote(`☁️ 드라이브에 저장 중… (창을 닫지 마세요)`);
       const {bytes}=await uploadProduct(folder.id,{...local,updatedAt:stamp},remote?.fileId,m=>{setNote(`☁️ 드라이브 저장: ${m}… (창을 닫지 마세요)`);if(manual)setStep(`구글 드라이브 저장: ${m}`);});
       setSync(productId,stamp);setFiles(null);
-      setNote(`☁️ ${when(stamp)} 드라이브에 저장됨 (${mb(bytes)})`);
-      if(manual)setStep(`구글 드라이브 ‘${folder.name}’ 폴더에 저장했습니다 (${mb(bytes)}).`);
+      // 완성 사진 JPG(바뀐 것만)를 상품 이름 폴더에
+      const photos=finalPhotos(local.data);
+      const r=await uploadFinalPhotos(folder.id,local,photos,m=>{setNote(`☁️ 드라이브 저장: ${m}… (창을 닫지 마세요)`);if(manual)setStep(`구글 드라이브 저장: ${m}`);});
+      const pics=`완성 사진 ${photos.length}장${r.uploaded?` (새로 올림 ${r.uploaded})`:' (바뀐 사진 없음)'}${r.removed?` · 빠진 컷 ${r.removed}장 휴지통`:''}`;
+      setNote(`☁️ ${when(stamp)} 드라이브에 저장됨 · 작업 파일 ${mb(bytes)} · ${pics} → ‘${folder.name} / ${r.folder.name}’`);
+      if(manual)setStep(`구글 드라이브에 저장했습니다 · 작업 파일 ${mb(bytes)} · ${pics} (폴더: ${folder.name} / ${r.folder.name})`);
     } catch(e) {
       if(e.expired)setConnected(false);
       if(manual)throw e;else setNote(`⚠ 드라이브 자동 저장 실패: ${e.message}`);
@@ -133,7 +141,7 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
         :<p className="slot-note">드라이브 폴더에 저장된 상품이 없습니다.</p>)}
       {folder&&productId&&<p className={`drive-state${!synced||changed?' warn':''}`}>{!synced?'이 상품은 아직 드라이브에 저장된 적이 없습니다.':changed?`드라이브 저장본(${when(synced)}) 이후 바뀐 내용이 아직 올라가지 않았습니다.${live&&auto?' 1분 뒤 자동 저장됩니다.':live?' ‘이 상품 드라이브에 저장’을 누르세요.':' 다시 연결한 뒤 저장하세요.'}`:`✅ 드라이브에 최신 내용 저장됨 (${when(synced)})`}</p>}
       {note&&<p className="slot-note drive-note">{note}</p>}
-      <p className="slot-note">앱은 위 작업 폴더와 앱이 만든 파일만 볼 수 있고, 구글 드라이브의 다른 파일은 볼 수 없습니다. 다른 컴퓨터에서도 같은 구글 계정으로 연결하면 같은 폴더가 자동으로 잡힙니다. 로그인은 약 1시간 유지되며, 지나면 ‘다시 연결’을 누르세요.</p>
+      <p className="slot-note">저장하면 작업 폴더에 <b>작업 파일</b>(다른 컴퓨터에서 이어서 작업용)과, 상품 이름 폴더에 <b>완성 사진 JPG</b>(보정을 마친 컷, 흰 배경, 장당 2MB 이하)가 함께 저장됩니다. 앱은 위 작업 폴더와 앱이 만든 파일만 볼 수 있고, 구글 드라이브의 다른 파일은 볼 수 없습니다. 다른 컴퓨터에서도 같은 구글 계정으로 연결하면 같은 폴더가 자동으로 잡힙니다. 로그인은 약 1시간 유지되며, 지나면 ‘다시 연결’을 누르세요.</p>
     </>}
   </section>;
 }
