@@ -6,7 +6,9 @@ import {signIn, signOut, hasToken, savedFolder, rememberFolder, listFolders, cre
 // 상품별로 '마지막으로 드라이브와 맞춘 시점'을 이 컴퓨터에 기억 → 다른 컴퓨터가 그 뒤에 저장했는지 알 수 있음.
 const SYNC_KEY='gdriveSync';
 const syncMap=()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY)||'{}');}catch{return {};}};
-const setSync=(id,at)=>{try{localStorage.setItem(SYNC_KEY,JSON.stringify({...syncMap(),[id]:at}));}catch{}};
+const setSync=(id,at)=>{try{localStorage.setItem(SYNC_KEY,JSON.stringify({...syncMap(),[id]:at}));localStorage.setItem(SYNC_KEY+'Local',JSON.stringify({...localMap(),[id]:Date.now()}));}catch{}};
+// 드라이브와 맞춘 시점(이 컴퓨터 시계) — 그 뒤 이 컴퓨터에 저장된 적이 있으면 '안 올라간 변경'
+const localMap=()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY+'Local')||'{}');}catch{return {};}};
 const AUTO_KEY='gdriveAuto';
 const when=t=>t?new Date(t).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
 const mb=b=>`${(b/1048576).toFixed(1)}MB`;
@@ -14,7 +16,8 @@ const mb=b=>`${(b/1048576).toFixed(1)}MB`;
 export default function DrivePanel({clientId,productId,localSavedAt,busy,task,setStep,flush,onLoaded}) {
   const [folder,setFolder]=useState(savedFolder),[connected,setConnected]=useState(false),[choices,setChoices]=useState(null);
   const [files,setFiles]=useState(null),[pick,setPick]=useState(''),[auto,setAuto]=useState(()=>{try{return localStorage.getItem(AUTO_KEY)!=='off';}catch{return true;}});
-  const [note,setNote]=useState(''),autoTimer=useRef(null),uploading=useRef(false);
+  const [note,setNote]=useState(''),[localUpdated,setLocalUpdated]=useState(0),autoTimer=useRef(null),uploading=useRef(false);
+  useEffect(()=>{if(productId)getProduct(productId).then(p=>setLocalUpdated(p?.updatedAt||0)).catch(()=>{});},[productId,localSavedAt,note]);
 
   async function connect() {
     await task(async()=>{
@@ -58,7 +61,8 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
       }
       const stamp=Date.now();
       if(manual)setStep(`구글 드라이브에 ‘${local.name}’ 올리는 중`);
-      const {bytes}=await uploadProduct(folder.id,{...local,updatedAt:stamp},remote?.fileId);
+      setNote(`☁️ 드라이브에 저장 중… (창을 닫지 마세요)`);
+      const {bytes}=await uploadProduct(folder.id,{...local,updatedAt:stamp},remote?.fileId,m=>{setNote(`☁️ 드라이브 저장: ${m}… (창을 닫지 마세요)`);if(manual)setStep(`구글 드라이브 저장: ${m}`);});
       setSync(productId,stamp);setFiles(null);
       setNote(`☁️ ${when(stamp)} 드라이브에 저장됨 (${mb(bytes)})`);
       if(manual)setStep(`구글 드라이브 ‘${folder.name}’ 폴더에 저장했습니다 (${mb(bytes)}).`);
@@ -106,6 +110,8 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
   }
 
   const live=connected&&hasToken();
+  // 지금 상품의 드라이브 상태: 마지막으로 올린 시각과, 그 뒤 이 컴퓨터에서 바뀌었는지
+  const synced=productId?syncMap()[productId]:null,changed=Boolean(synced&&localUpdated&&localUpdated>(localMap()[productId]||0));
   return <section className="drive-panel" aria-label="구글 드라이브">
     <h3>☁️ 구글 드라이브 저장 <Cost k="gdrive"/></h3>
     {!clientId?<p className="slot-note">구글 드라이브 연결 설정이 아직 없습니다(관리자 설정 필요).</p>:<>
@@ -125,6 +131,7 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
       {files&&(files.length?<div className="btn-row"><label>드라이브의 상품<select aria-label="드라이브 상품 선택" value={pick} onChange={e=>setPick(e.target.value)}>{files.map(f=><option key={f.fileId} value={f.fileId}>{f.name} · {when(f.updatedAt)} · {mb(f.size)}</option>)}</select></label>
         <button type="button" className="primary" disabled={busy||!pick} onClick={load}>불러오기</button><button type="button" className="subtle" onClick={()=>setFiles(null)}>닫기</button></div>
         :<p className="slot-note">드라이브 폴더에 저장된 상품이 없습니다.</p>)}
+      {folder&&productId&&<p className={`drive-state${!synced||changed?' warn':''}`}>{!synced?'이 상품은 아직 드라이브에 저장된 적이 없습니다.':changed?`드라이브 저장본(${when(synced)}) 이후 바뀐 내용이 아직 올라가지 않았습니다.${live&&auto?' 1분 뒤 자동 저장됩니다.':live?' ‘이 상품 드라이브에 저장’을 누르세요.':' 다시 연결한 뒤 저장하세요.'}`:`✅ 드라이브에 최신 내용 저장됨 (${when(synced)})`}</p>}
       {note&&<p className="slot-note drive-note">{note}</p>}
       <p className="slot-note">앱은 위 작업 폴더와 앱이 만든 파일만 볼 수 있고, 구글 드라이브의 다른 파일은 볼 수 없습니다. 다른 컴퓨터에서도 같은 구글 계정으로 연결하면 같은 폴더가 자동으로 잡힙니다. 로그인은 약 1시간 유지되며, 지나면 ‘다시 연결’을 누르세요.</p>
     </>}

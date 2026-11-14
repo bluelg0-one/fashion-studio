@@ -96,8 +96,28 @@ export function trimForDrive(data={}) {
   return {...data,slots};
 }
 
-export async function uploadProduct(folderId,product,existing) {
-  const body=JSON.stringify({format:FORMAT,version:1,id:product.id,name:product.name,updatedAt:product.updatedAt,data:trimForDrive(product.data)});
+// 드라이브용으로 사진 용량 줄이기: 큰 PNG는 WebP(투명 유지, 품질 95%)로 바꿉니다. 화면에서 차이는 거의 없고 용량은 크게 줄어듭니다.
+const packed=new Map();
+async function toWebp(url) {
+  if(packed.has(url))return packed.get(url);
+  const blob=await (await fetch(url)).blob(),bmp=await createImageBitmap(blob);
+  const c=document.createElement('canvas');c.width=bmp.width;c.height=bmp.height;c.getContext('2d').drawImage(bmp,0,0);bmp.close?.();
+  let out=c.toDataURL('image/webp',.95);
+  if(!out.startsWith('data:image/webp')||out.length>=url.length)out=url;
+  if(packed.size>40)packed.delete(packed.keys().next().value);
+  packed.set(url,out);return out;
+}
+export async function compactImages(value) {
+  if(typeof value==='string')return value.startsWith('data:image/png')&&value.length>100000?toWebp(value):value;
+  if(Array.isArray(value)){const out=[];for(const v of value)out.push(await compactImages(v));return out;}
+  if(value&&typeof value==='object'){const out={};for(const [k,v] of Object.entries(value))out[k]=k==='preview'?null:await compactImages(v);return out;}
+  return value;
+}
+
+export async function uploadProduct(folderId,product,existing,onStage=()=>{}) {
+  onStage('사진 용량 줄이는 중');
+  const body=JSON.stringify({format:FORMAT,version:1,id:product.id,name:product.name,updatedAt:product.updatedAt,data:await compactImages(trimForDrive(product.data))});
+  onStage(`올리는 중 (${(body.length/1048576).toFixed(1)}MB)`);
   const meta={name:`${(product.name||'이름 없는 상품').replace(/[\\/:*?"<>|]/g,' ').slice(0,80)}.fashion-studio.json`,
     appProperties:{fashionStudio:'product',productId:product.id,productName:String(product.name||'').slice(0,100),updatedAt:String(product.updatedAt||Date.now())}};
   if(!existing)meta.parents=[folderId];

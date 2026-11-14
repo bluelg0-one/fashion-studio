@@ -68,7 +68,9 @@ try{
  assert.equal(products.length,1);const folder=[...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='folder');
  assert.equal(folder.name,'두손 작업폴더');assert.deepEqual(products[0].parents,[folder.id],'작업 폴더 안에 저장');
  const saved=JSON.parse(products[0].content);
- assert.equal(saved.name,'카키 브이넥');assert.ok(saved.data.slots.hero.versions[1].stage1.startsWith('data:image/png'));assert.equal(saved.data.slots.hero.cutout,undefined,'겹치는 사본은 올리지 않음');
+ assert.ok(products[0].content.includes('data:image/webp'),'큰 PNG는 WebP로 줄여 올림');
+ assert.match(await A.panel.innerText(),/드라이브에 최신 내용 저장됨/);
+ assert.equal(saved.name,'카키 브이넥');assert.ok(saved.data.slots.hero.versions[1].stage1.startsWith('data:image/webp'));assert.equal(saved.data.slots.hero.cutout,undefined,'겹치는 사본은 올리지 않음');
  assert.ok(saved.data.slots.hero.versions.length<=2,'되돌리기 기록은 올리지 않음');
  // ---- 컴퓨터 B: 같은 계정으로 연결 → 폴더 자동 선택 → 불러오기 ----
  const B=await computer();
@@ -82,6 +84,7 @@ try{
  assert.ok(await B.page.locator('[data-slot="hero"] .final-zone img').count(),'사진도 불러옴');
  // B에서 고쳐서 저장
  await B.page.getByLabel('상품 이름').fill('카키 브이넥 (B 수정)');await B.page.waitForTimeout(1200);
+ assert.match(await B.panel.innerText(),/바뀐 내용이 아직 올라가지 않았습니다/);
  await B.panel.getByRole('button',{name:'이 상품 드라이브에 저장'}).click();await B.idle();
  assert.equal(JSON.parse([...drive.files.values()].find(f=>f.appProperties?.fashionStudio==='product').content).name,'카키 브이넥 (B 수정)');
  // ---- A가 옛 내용으로 저장하려 하면 확인을 받는다 (취소하면 B 내용 유지) ----
