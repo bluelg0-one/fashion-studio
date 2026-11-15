@@ -2,9 +2,11 @@ import { useState } from 'react'
 import PhotoEditor from './components/PhotoEditor.jsx'
 import DetailPageBuilder from './components/DetailPageBuilder.jsx'
 import TryOnStudio from './components/TryOnStudio.jsx'
+import ModelCutStudio from './components/ModelCutStudio.jsx'
 
 const TABS = [
   { label: '📸 1차 사진 보정', desc: '원본 사진 AI 보정 및 누끼' },
+  { label: '📸 AI모델컷', desc: '내 모델 고정 · 장면 프리셋 · 일괄 생성' },
   { label: '🎭 AI 착용샷', desc: 'AI 모델 착용샷 자동 생성' },
   { label: '🛍️ 2차 상세페이지', desc: '상품 상세페이지 자동 제작' },
 ]
@@ -12,6 +14,11 @@ const TABS = [
 export default function App() {
   const [activeTab, setActiveTab] = useState(0)
   const [refinedImages, setRefinedImages] = useState([])
+
+  // 사진 편집 탭에서 "다음 단계로 전달"한 사진을 다른 탭에서도 쓸 수 있게 맞춰줌
+  const handleFilesReady = (finals) => {
+    setRefinedImages(finals.map(f => ({ ...f, editedUrl: f.corrected, approved: true })))
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f4f4f0' }}>
@@ -35,14 +42,16 @@ export default function App() {
         </div>
 
         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.08)', padding: '4px 12px', borderRadius: 12 }}>
-          보정완료 {refinedImages.filter(i => i.status === 'done').length}장 · 최종확정 {refinedImages.filter(i => i.approved).length}장
+          전달된 편집 사진 {refinedImages.length}장
         </div>
       </header>
 
       <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-        {activeTab === 0 && <PhotoEditor images={refinedImages} setImages={setRefinedImages} />}
-        {activeTab === 1 && <TryOnStudio refinedImages={refinedImages} />}
-        {activeTab === 2 && <DetailPageBuilder refinedImages={refinedImages} />}
+        {/* 탭을 옮겨도 편집 중인 사진·생성 중인 작업이 사라지지 않도록 숨김 처리만 함 */}
+        <div style={{ display: activeTab === 0 ? 'block' : 'none' }}><PhotoEditor onFilesReady={handleFilesReady} /></div>
+        <div style={{ display: activeTab === 1 ? 'block' : 'none' }}><ModelCutStudio refinedImages={refinedImages} /></div>
+        {activeTab === 2 && <TryOnStudio refinedImages={refinedImages} />}
+        {activeTab === 3 && <DetailPageBuilder refinedImages={refinedImages} />}
       </main>
     </div>
   )
