@@ -1,9 +1,31 @@
+import { useState } from 'react'
 import AutoStudio from './components/AutoStudio.jsx'
+import ModelCutStudio from './components/ModelCutStudio.jsx'
+
+const TABS = [
+  { id: 'studio', label: '상세페이지 제작' },
+  { id: 'modelcut', label: 'AI모델컷' },
+]
 
 export default function App() {
+  const [tab, setTab] = useState('studio')
   return (
-    <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-      <AutoStudio />
-    </main>
+    <>
+      <nav style={{ position: 'sticky', top: 0, zIndex: 50, background: '#fff', borderBottom: '1px solid #e5e5e5' }}>
+        <div style={{ maxWidth: 1400, margin: '0 auto', padding: '0 32px', display: 'flex', gap: 4 }}>
+          {TABS.map(t => (
+            <button key={t.id} type="button" onClick={() => setTab(t.id)}
+              style={{ padding: '14px 18px', border: 'none', background: 'none', fontSize: 14, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? '#1a1a2e' : '#888', borderBottom: `3px solid ${tab === t.id ? '#1a1a2e' : 'transparent'}` }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+      <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
+        {/* 탭을 옮겨도 작업 중인 내용이 사라지지 않도록 숨김 처리만 함 */}
+        <div style={{ display: tab === 'studio' ? 'block' : 'none' }}><AutoStudio /></div>
+        <div style={{ display: tab === 'modelcut' ? 'block' : 'none' }}><ModelCutStudio active={tab === 'modelcut'} /></div>
+      </main>
+    </>
   )
 }
