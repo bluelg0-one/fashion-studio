@@ -2,8 +2,9 @@ import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
+import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
-import {DEFAULT_RETOUCH, sanitizeRetouch} from '../utils/retouchPresets.js';
+import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch} from '../utils/retouchPresets.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
@@ -141,7 +142,19 @@ export default function AutoStudio() {
     });
   }
   // 배경 지우기 결과(원본과 같은 위치·크기의 누끼). 같은 사진·같은 설정은 다시 과금하지 않습니다.
+  // 누끼 뒤 정리(무료): 옷걸이 → 마네킹 꼭지·목 받침 → 떨어진 조각 순서로 알파만 고칩니다.
+  async function cleanMatte(url,options) {
+    const c=await imageCanvas(url),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+    if(options.hangerMode==='remove')removeHanger(px);else solidifyThin(px);
+    if(options.cleanMannequinTop)removeMannequinTop(px);
+    if(options.cleanIslands!==false)removeIslands(px);
+    ctx.putImageData(px,0,0);
+    return c.toDataURL('image/png');
+  }
   async function engineMatte(source,warnings,options) {
+    return cleanMatte(await engineCut(source,warnings,options),options);
+  }
+  async function engineCut(source,warnings,options) {
     if(options.cutout==='birefnet'){
       const rawKey='birefnet:'+source;
       if(!cache.current.has(rawKey))cache.current.set(rawKey,await removeBackground(source));
@@ -155,7 +168,8 @@ export default function AutoStudio() {
       return c.toDataURL('image/png');
     }
     // Photoroom: 중앙 정렬은 브라우저에서 하므로 원본 위치 그대로 받습니다(직접 수정 붓이 원본과 맞도록).
-    const req={...options,center:false},key='photoroom:'+JSON.stringify(req)+source;
+    const req={...options,center:false};for(const k of POST_OPTIONS)delete req[k];
+    const key='photoroom:'+JSON.stringify(req)+source;
     if(cache.current.has(key))return cache.current.get(key);
     const response=await api('retouch',{image:source,options:req});
     const canvas=await imageCanvas(response.image);
