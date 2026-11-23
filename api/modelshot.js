@@ -7,7 +7,7 @@
 // 구조로 동작합니다.
 //
 // provider
-//   - 'fashn'     : FASHN API (https://docs.fashn.ai) — 환경변수 FASHN_API_KEY (예전 이름 VITE_FASHN_API_KEY도 인식)
+//   - 'fashn'     : FASHN API (https://docs.fashn.ai) — 환경변수 FASHN_API_KEY (서버 변수만 읽음)
 //   - 'styleroom' : 스타일룸 — 기업(Enterprise) 계약 시에만 REST API 제공, 공개 문서 없음.
 //                   API 문서/키를 받으면 아래 styleroom 블록만 채우면 됩니다.
 
@@ -17,7 +17,7 @@ const FASHN_BASE = 'https://api.fashn.ai/v1'
 const FASHN_ALLOWED_MODELS = new Set(['product-to-model', 'model-create', 'tryon-max', 'tryon-v1.6'])
 
 function fashnKey() {
-  return process.env.FASHN_API_KEY || process.env.VITE_FASHN_API_KEY
+  return process.env.FASHN_API_KEY
 }
 
 async function readJson(res) {
