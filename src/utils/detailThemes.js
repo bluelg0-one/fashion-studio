@@ -38,8 +38,8 @@ export const THEMES={
     bg:'#ffffff',text:'#111111',soft:'#333333',muted:'#707070',line:'#111111',accent:'#111111',
     pad:56,gap:36,align:'left',radius:0,
     hero:{bleed:true,maxH:1250,top:0},photo:{maxH:1000,card:null},
-    headline:{font:'title',size:44,lh:1.35,ls:-1},body:{size:17,lh:1.85},product:{size:14,lh:1.8},caption:{size:15,lh:1.8},note:{size:13,lh:1.8},
-    tag:{size:12,ls:3,upper:true},section:{style:'big',size:76},table:{style:'bold',size:16},pairs:true,
+    headline:{font:'title',size:52,lh:1.35,ls:-1},body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
+    tag:{size:26,ls:2,upper:true},section:{style:'big',size:76,num:30},table:{style:'bold',size:28},pairs:true,bigGuide:true,
   },
 };
 // 목록 순서: 사장님이 고른 소프트 무드를 맨 앞에. 새로 만드는 상품은 소프트 무드로 시작합니다.
@@ -161,7 +161,7 @@ function sectionUnit(ctx,t,u) {
     return {height:h,draw:(c,y)=>{c.fillStyle=t.accent;roundRect(c,(WIDTH-w)/2,y,w,h,h/2);c.fill();setFont(c,f,st.size,1);c.fillStyle='#ffffff';lines.forEach((l,i)=>c.fillText(l,textX(c,l,'center',0,WIDTH),y+13+i*st.size*1.4+st.size*.2));}};
   }
   // big: 번호 + 굵은 영문 제목 + 굵은 선
-  const num=textUnit(ctx,t,{value:String(u.index).padStart(2,'0'),font:'num',size:22,lh:1.3,color:t.muted});
+  const num=textUnit(ctx,t,{value:String(u.index).padStart(2,'0'),font:'num',size:st.num||22,lh:1.3,color:t.muted});
   const title=textUnit(ctx,t,{value:u.value,font:'en',size:st.size,lh:1.08,ls:-1,color:t.text});
   return {height:num.height+6+title.height+22,draw:(c,y)=>{num.draw(c,y);title.draw(c,y+num.height+6);c.fillStyle=t.line;c.fillRect(t.pad,y+num.height+6+title.height+14,inner,4);}};
 }
@@ -255,7 +255,7 @@ ${card?`.hero,.photo,.guide{background:${t.card};border-radius:${t.radius}px;pad
 .section{margin-top:${t.gap*2.2}px;margin-bottom:${t.gap*.9}px}
 ${st.style==='rule'?`.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.3;margin:0}.section:after{content:'';display:block;width:36px;height:1px;background:${t.text};margin:18px auto 0}`:''}
 ${st.style==='pill'?`.section h2{display:inline-block;${css(F.title)};font-size:${fs(st.size)};letter-spacing:1px;background:${t.accent};color:#fff;border-radius:999px;padding:13px 32px;margin:0}`:''}
-${st.style==='big'?`.section .num{${css(F.num)};font-size:${fs(22)};color:${t.muted}}.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.08;letter-spacing:-1px;margin:6px 0 0;padding-bottom:14px;border-bottom:4px solid ${t.line}}`:''}
+${st.style==='big'?`.section .num{${css(F.num)};font-size:${fs(st.num||22)};color:${t.muted}}.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.08;letter-spacing:-1px;margin:6px 0 0;padding-bottom:14px;border-bottom:4px solid ${t.line}}`:''}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;text-align:left}.pair figure{margin:0}.pair img{width:100%;height:auto;max-height:560px;object-fit:contain;background:#fff}.pair figcaption{margin-top:12px}
 table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${fs(tb.size)}}
 td,th{padding:13px 6px;text-align:center;overflow-wrap:anywhere;color:${t.soft}}th{color:${t.text};${css(F.head)}}
