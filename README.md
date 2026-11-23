@@ -115,6 +115,18 @@ npm run dev
 - `server/instagram.test.js`(모의 응답)와 `tests/studio-instagram.mjs`(브라우저, 모의 API)로 요청 형식·순서·비밀번호·중복 경고를 검사합니다. **실제 인스타그램 계정으로의 게시는 아직 시험하지 않았습니다**(토큰 발급 전).
 - 예약 게시는 아직 없습니다.
 
+## 상세페이지 디자인 테마
+
+`src/utils/detailThemes.js`. 상세페이지 제작 화면 위쪽 도구줄의 ‘디자인 테마’에서 고릅니다. 테마는 상품마다 저장됩니다(예전 상품·새 상품은 ‘기본’).
+
+- **기본**: 지금까지의 모양 그대로입니다(예전 렌더러를 그대로 씀).
+- **미니멀 화이트**: 넓은 여백, 얇은 세리프 제목(Noto Serif KR 300), 영문 이탤릭 섹션 제목(Cormorant Garamond), 무채색, 선만 있는 치수표.
+- **소프트 무드**: 웜 베이지 바탕, 사진을 흰 둥근 카드에, 테라코타색 알약 모양 섹션 제목, 둥근 치수표(Gowun Batang·Gowun Dodum).
+- **매거진**: 대표 사진을 가로 끝까지, 번호 + 굵은 영문 섹션 제목(Playfair Display 900), 디테일 컷은 두 장씩 나란히, 검은 머리글 치수표(Noto Serif KR·Noto Sans KR).
+- 순서(대표 → 문구 → Fit guide → Detail → Size)와 치수 실루엣·치수표는 모든 테마에서 같습니다. 미리보기·전체 PNG·HTML이 같은 테마로 나옵니다(HTML은 같은 색·글꼴·배치를 CSS로 그려 화면 폭에 맞게 줄어듭니다).
+- 글꼴은 모두 Google Fonts의 SIL Open Font License 1.1 글꼴(무료 상업 이용 가능)입니다. PNG를 만들 때 문서에 쓰인 글자 전체에 해당하는 글꼴 조각을 받은 뒤 그립니다. 인터넷이 끊겨 글꼴을 받지 못하면 시스템 글꼴로 그리고, 화면 안내 줄에 ‘테마 글꼴을 받지 못해 기본 글꼴로 그렸습니다’라고 표시합니다. HTML은 Google Fonts 주소를 연결합니다(인터넷이 되는 곳에서 열어야 테마 글꼴이 보임).
+- 쇼피 영문 사이즈표 이미지는 테마와 상관없이 예전 모양 그대로입니다.
+
 ## 채널별 내보내기 (07)
 
 `src/components/ChannelExportPanel.jsx`, 계산 `src/utils/channelExport.js`, 규격 `src/utils/channelSpecs.js`. 브라우저 계산만 씁니다(API 비용 없음).
@@ -176,6 +188,8 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 `tests/studio-products.mjs`는 여러 상품 자동 저장·복원과 쇼피 ZIP(정사각형 JPG·2MB 이하·사이즈표·listing.txt)을 검사합니다.
 
 `tests/studio-instagram.mjs`는 인스타그램 캡션 틀·4:5 JPG 묶음·비밀번호·게시 순서·중복 게시 경고를 검사합니다.
+
+`tests/studio-themes.mjs`는 테마 전환(미리보기 = PNG, HTML 같은 테마), 순서·치수표 유지, 상품별 테마 저장, PNG에 테마 글꼴이 실제로 들어가는지(글꼴을 막으면 결과가 달라지고 안내가 뜨는지)를 검사합니다.
 
 `tests/studio-channels.mjs`는 채널별 폴더·파일 이름·규격 크기·2MB 이하·흰 배경·같은 여백 가운데 배치·꽉 찬 접사 안 자름·채널 선택 기억을 검사합니다(API 호출 0회).
 

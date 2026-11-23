@@ -43,18 +43,19 @@ export function guideSvg(type,lang='ko') {
 export const guideUrl = (type,lang) => 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(guideSvg(type,lang));
 export function documentBlocks({slots,fitEnabled,texts,garment,rows}) {
   const blocks=[];
-  const text=(value,size=24)=>{if(value?.trim())blocks.push({kind:'text',value,size});};
-  const picture=slot=>{if(slot?.enabled&&slot.image)blocks.push({kind:'image',src:slot.image,label:slot.label});};
-  picture(slots.hero);
-  text(texts.headline,36);text(texts.description);text(texts.product,20);
-  if(fitEnabled&&slots.fit.image&&slots.fit.enabled){text(texts.fitTitle,32);picture(slots.fit);text(texts.fitDescription,22);}
+  // role은 테마(detailThemes.js)가 모양을 정할 때 쓰는 표시입니다. 기본 테마는 쓰지 않습니다.
+  const text=(value,size=24,role='body',extra={})=>{if(value?.trim())blocks.push({kind:'text',value,size,role,...extra});};
+  const picture=(slot,role='photo')=>{if(slot?.enabled&&slot.image)blocks.push({kind:'image',src:slot.image,label:slot.label,role});};
+  picture(slots.hero,'hero');
+  text(texts.headline,36,'headline');text(texts.description,24,'body');text(texts.product,20,'product');
+  if(fitEnabled&&slots.fit.image&&slots.fit.enabled){text(texts.fitTitle,32,'section',{section:'fit'});picture(slots.fit);text(texts.fitDescription,22,'caption');}
   const details=Object.values(slots).filter(s=>!['hero','fit'].includes(s.id)&&s.enabled&&s.image);
-  if(details.length){text(texts.detailTitle,32);for(const slot of details){text(slot.label,24);picture(slot);}}
-  text(texts.sizeTitle,32);
-  blocks.push({kind:'image',src:guideUrl(garment),label:'치수 측정 가이드',guide:true});
+  if(details.length){text(texts.detailTitle,32,'section',{section:'detail'});for(const slot of details){text(slot.label,24,'label');picture(slot,'detail');}}
+  text(texts.sizeTitle,32,'section',{section:'size'});
+  blocks.push({kind:'image',src:guideUrl(garment),label:'치수 측정 가이드',guide:true,role:'guide'});
   const fields=sizeFields(garment);
-  blocks.push({kind:'table',headers:fields.map(([,label])=>label),rows:rows.map(row=>fields.map(([key])=>row[key]||'—'))});
-  text(texts.sizeNote,18);
+  blocks.push({kind:'table',headers:fields.map(([,label])=>label),rows:rows.map(row=>fields.map(([key])=>row[key]||'—')),role:'table'});
+  text(texts.sizeNote,18,'note');
   return blocks;
 }
 export function documentHtml(blocks,title) {
