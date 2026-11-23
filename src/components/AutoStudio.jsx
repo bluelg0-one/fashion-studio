@@ -12,6 +12,7 @@ import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from
 import DrivePanel from './DrivePanel.jsx';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
+import ChannelExportPanel from './ChannelExportPanel.jsx';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
@@ -527,6 +528,7 @@ export default function AutoStudio() {
       </section>
       <ShopeePanel shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
       <InstagramPanel instagram={instagram} setInstagram={setInstagram} slots={slots} fitEnabled={fitEnabled} rows={rows} texts={texts} task={task} setStep={setStep} productName={productName}/>
+      <ChannelExportPanel slots={slots} fitEnabled={fitEnabled} task={task} setStep={setStep} productName={productName}/>
     </fieldset><aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside></div>
   </div>;
 }
