@@ -1,6 +1,10 @@
 // 새 화면: 컷 숨김/추가, 컷 한 줄(원본→1차→2차→최종), 색감 기준 체크(다른 컷 잠김·자동 적용), 배경 직접 수정 붓, 색상 보정.
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import assert from 'node:assert/strict';
+import {applyTone} from '../src/utils/matte.js';
+import {DEFAULT_TONE} from '../src/utils/retouchPresets.js';
+// 새로 넣은 사진은 1차 보정에 기본 색감(밝기·화사하게)이 들어가므로, 비교 기준 색도 같은 계산을 거친 색을 씁니다.
+const toned=rgb=>{const d=new Uint8ClampedArray([...rgb,255]);applyTone({data:d},DEFAULT_TONE);return [...d.slice(0,3)];};
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',headless:true,args:['--no-sandbox']});
 try{
  const page=await browser.newPage({viewport:{width:1500,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -38,7 +42,7 @@ try{
  await side.getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
  const heroC=await color(hero.locator('.stage1-img')),sideC=await color(side.locator('.stage1-img'));
  const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
- assert.ok(dist(heroC,sideC)<dist(heroC,[120,140,110])-20,`측면이 정면 색감 쪽으로 (${heroC} / ${sideC})`);
+ assert.ok(dist(heroC,sideC)<dist(heroC,toned([120,140,110]))-20,`측면이 정면 색감 쪽으로 (${heroC} / ${sideC})`);
  // 4) 배경 직접 수정: 옷 가운데를 '모두 지우기' → 최종 가운데 흰색, '되살리기'로 다시 살림
  await hero.getByRole('button',{name:'✏️ 배경 직접 수정'}).click();
  const stage=page.getByTestId('hero-matte-stage'),canvas=page.getByLabel('hero 배경 수정 화면');await canvas.scrollIntoViewIfNeeded();
@@ -49,9 +53,14 @@ try{
  await hero.getByRole('button',{name:'✏️ 배경 직접 수정'}).click();await canvas.scrollIntoViewIfNeeded();
  await page.getByLabel('hero 붓 크기').fill('12');await page.getByLabel('hero 되살리기').check();await strokeAt();
  await page.getByTestId('hero-matte-stage').locator('..').getByRole('button',{name:'수정 적용'}).click();await idle();
- assert.ok(dist((await color(hero.locator('.final-zone img'))).slice(0,3),[70,90,60])<12,'원본에서 되살림');
- // 5) 색상 보정: 밝게
+ assert.ok(dist((await color(hero.locator('.final-zone img'))).slice(0,3),toned([70,90,60]))<12,'원본에서 되살림');
+ // 5) 색상 보정: 새 사진은 기본 색감(밝기 +20·화사하게 +30)이 들어가 있음 → ‘색감 보정 끄기’로 원래 색 → 슬라이더로 밝게
+ const sum=c=>c[0]+c[1]+c[2];
+ const toneDefault=await color(hero.locator('.stage1-img'));
+ assert.equal(await page.getByLabel('hero 밝기').inputValue(),'20');assert.equal(await page.getByLabel('hero 화사하게').inputValue(),'30');
+ await hero.getByRole('button',{name:'색감 보정 끄기'}).click();await idle();
  const before=await color(hero.locator('.stage1-img'));
+ assert.ok(dist(before.slice(0,3),[70,90,60])<4,`끄면 원래 색 ${before}`);assert.ok(sum(toneDefault)>sum(before)+40,`기본 색감은 밝게 ${before}→${toneDefault}`);
  await page.getByLabel('hero 밝기').fill('25');await hero.getByRole('button',{name:'색상 보정 적용'}).click();await idle();
  const after=await color(hero.locator('.stage1-img'));
  assert.ok(after[0]+after[1]+after[2]>before[0]+before[1]+before[2]+40,`밝아짐 ${before}→${after}`);

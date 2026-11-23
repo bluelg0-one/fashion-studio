@@ -5,7 +5,7 @@ import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
-import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch} from '../utils/retouchPresets.js';
+import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
@@ -138,7 +138,7 @@ export default function AutoStudio() {
   async function upload(id,file) {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
-      patch(id,{source,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
+      patch(id,{source,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
@@ -396,7 +396,7 @@ export default function AutoStudio() {
           if((!id||next[id].source)&&['fabric','detail'].includes(item.shot))id=DETAIL_ORDER.find(k=>!next[k].source);
           if(!id||next[id].source){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
           if(id==='fit')fit=true;
-          next[id]={...next[id],source:p.full,image:whitePhoto(await imageCanvas(p.full),null,0),status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
+          next[id]={...next[id],source:p.full,image:whitePhoto(await imageCanvas(p.full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
         }
         built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
       }

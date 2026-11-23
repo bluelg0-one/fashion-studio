@@ -217,6 +217,8 @@ PLAYWRIGHT_MODULE=/tmp/fashion-browser-check/node_modules/playwright/index.mjs n
 
 ## 컷별 보정 화면 (PC: 한 줄에 원본 → 1차 → 2차 → 최종)
 
+- **1차 보정 색감 기본값(사장님 결정): 밝기 +20 · 화사하게 +30.** 새로 넣는 사진에 저장되어 1차 보정에 자동 적용됩니다. 사진마다 ‘밝기·화사하게’ 슬라이더로 조절하거나 ‘색감 보정 끄기’(0·0) / ‘기본값으로’ 버튼을 씁니다. 예전에 저장한 사진은 값이 없어 0(그대로)으로 남습니다. 값은 `src/utils/retouchPresets.js`의 `DEFAULT_TONE`. `tests/studio-tone-default.mjs`가 확인합니다.
+
 `src/components/CutRow.jsx`. 컷 종류: 정면, 정면 확대, 정면 상단, 정면 하단, 원단 및 디테일, 디테일 2·3, 측면, 후면, 포인트 1·2(+모델컷, + 직접 이름). 사진이 없는 컷은 숨기고 맨 아래 ‘+ 컷 추가’로 꺼냅니다. 화면 폭 1000px 이하에서는 세로로 쌓입니다.
 
 - 버전 한 칸 = `{matte, stage1, stage2}`: matte는 원본과 같은 크기·위치의 누끼(Photoroom은 `referenceBox/outputSize=originalImage`로 요청), stage1 = matte + 색상 보정(밝기·화사하게) + 기준 색감 맞춤 + 중앙 정렬(브라우저), stage2 = IOPaint 결과. 예전 문자열 버전은 stage1로 읽습니다.

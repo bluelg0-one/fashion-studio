@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {Cost} from './Cost.jsx';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
+import {DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {DEFECT_LABEL, strokeBox} from '../utils/iopaint.js';
 import {labCss} from '../utils/colorMatch.js';
 import {applyBrush} from '../utils/matte.js';
@@ -174,6 +175,8 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
           <label>밝기 · {draft.bright>0?'+':''}{draft.bright}<input type="range" aria-label={`${slot.id} 밝기`} min="-30" max="30" value={draft.bright} onChange={e=>setDraft({...draft,bright:Number(e.target.value)})}/></label>
           <label>화사하게 · {draft.vivid>0?'+':''}{draft.vivid}<input type="range" aria-label={`${slot.id} 화사하게`} min="-20" max="40" value={draft.vivid} onChange={e=>setDraft({...draft,vivid:Number(e.target.value)})}/></label>
           <button type="button" disabled={!toneChanged} onClick={()=>onTone(slot.id,draft)}>색상 보정 적용</button><Cost k="browser"/>
+          <button type="button" disabled={!tone.bright&&!tone.vivid} onClick={()=>onTone(slot.id,{bright:0,vivid:0})}>색감 보정 끄기</button>
+          <button type="button" disabled={tone.bright===DEFAULT_TONE.bright&&tone.vivid===DEFAULT_TONE.vivid} onClick={()=>onTone(slot.id,{...DEFAULT_TONE})}>기본값으로 (밝기 +{DEFAULT_TONE.bright} · 화사하게 +{DEFAULT_TONE.vivid})</button>
         </div>}
         {slot.source&&<details className="slot-retouch"><summary>1차 보정 설정{slot.retouch?' · 이 컷만 따로':' · 기본 설정'}</summary>
           <label className="check"><input type="checkbox" aria-label={`${slot.id} 개별 설정 사용`} checked={Boolean(slot.retouch)} onChange={e=>onPatch(slot.id,{retouch:e.target.checked?{...retouchDefault}:null})}/>이 컷만 따로 설정하기</label>
