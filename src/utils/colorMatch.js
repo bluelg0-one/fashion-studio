@@ -20,32 +20,37 @@ export function labToRgb(L,a,b) {
   return [c(3.2404542*X-1.5371385*Y-.4985314*Z),c(-.969266*X+1.8760108*Y+.041556*Z),c(.0556434*X-.2040259*Y+1.0572252*Z)];
 }
 
-// 대표 색: 불투명 픽셀을 Lab 칸으로 나눠 가장 많은 칸(과 주변 칸)의 평균.
-// 마네킹·흰 배경처럼 매우 밝고 무채색인 픽셀은 옷이 흰색이 아닌 한 제외합니다.
+// 대표 색 = 옷 픽셀의 '잘라낸 평균'(위·아래 20%를 버린 평균). (예전: 가장 많은 색 한 칸 → 니트처럼 올 사이 밝은 곳·그늘이 반반인
+// 원단에서 컷마다 밝은 칸/그늘 칸을 번갈아 골라 색감 통일이 오히려 차이를 키웠습니다. 보고서 001 참고)
+// - 마네킹·흰 배경처럼 매우 밝은 무채색, 받침대·옷걸이처럼 아주 어두운 무채색은 옷이 그 색이 아닌 한 뺍니다.
+// - 1차 값에서 많이 먼 픽셀(금색 꼭지 등)을 한 번 더 빼고 다시 계산합니다.
+// 잘라낸 평균: 위·아래 20%씩 버리고 평균(중앙값은 밝은 올·그늘이 반반이면 둘 중 하나로 튀므로)
+const median=a=>{const s=Float64Array.from(a).sort(),cut=Math.floor(s.length*.2);let t=0;for(let i=cut;i<s.length-cut;i++)t+=s[i];return t/Math.max(1,s.length-2*cut);};
+const centerOf=list=>[0,1,2].map(k=>median(list.map(l=>l[k])));
 export function dominantLab({data,width,height}) {
   const step=Math.max(1,Math.floor(Math.sqrt(width*height/250000)));
-  const bins=new Map(),samples=[];
+  const samples=[];
   for(let y=0;y<height;y+=step)for(let x=0;x<width;x+=step){
     const i=(y*width+x)*4;if(data[i+3]<200)continue;
-    const lab=rgbToLab(data[i],data[i+1],data[i+2]);samples.push(lab);
+    samples.push(rgbToLab(data[i],data[i+1],data[i+2]));
   }
   if(samples.length<50)throw new Error('색을 계산할 옷 영역이 부족합니다. 누끼·보정된 사진인지 확인하세요.');
-  const neutralBright=l=>l[0]>86&&Math.hypot(l[1],l[2])<7;
-  const colored=samples.filter(l=>!neutralBright(l));
-  const pool=colored.length>=samples.length*.15?colored:samples;
-  const key=l=>`${Math.floor(l[0]/8)},${Math.floor(l[1]/6)},${Math.floor(l[2]/6)}`;
-  for(const l of pool){const k=key(l);bins.set(k,(bins.get(k)||0)+1);}
-  let best=null,count=-1;for(const [k,n] of bins)if(n>count){best=k;count=n;}
-  const [bl,ba,bb]=best.split(',').map(Number);let sum=[0,0,0],n=0;
-  for(const l of pool){
-    if(Math.abs(Math.floor(l[0]/8)-bl)<=1&&Math.abs(Math.floor(l[1]/6)-ba)<=1&&Math.abs(Math.floor(l[2]/6)-bb)<=1){sum[0]+=l[0];sum[1]+=l[1];sum[2]+=l[2];n++;}
-  }
-  return {L:sum[0]/n,a:sum[1]/n,b:sum[2]/n,share:n/pool.length};
+  const chroma=l=>Math.hypot(l[1],l[2]);
+  const neutralBright=l=>l[0]>86&&chroma(l)<7,neutralDark=l=>l[0]<14&&chroma(l)<6;
+  const kept=samples.filter(l=>!neutralBright(l)&&!neutralDark(l));
+  const pool=kept.length>=samples.length*.15?kept:samples;
+  let c=centerOf(pool);
+  const near=pool.filter(l=>Math.hypot(l[0]-c[0],l[1]-c[1],l[2]-c[2])<25);
+  if(near.length>=pool.length*.3)c=centerOf(near);
+  return {L:c[0],a:c[1],b:c[2],share:(near.length>=pool.length*.3?near.length:pool.length)/samples.length};
 }
 
 export const MAX_SHIFT={L:14,ab:12};
+// 기준과 이미 충분히 비슷하면(ΔE 3 이하) 건드리지 않습니다(불필요한 보정·실물과 달라짐 방지).
+export const SAME_ENOUGH=3;
 export function colorShift(from,to,strength=1) {
   const k=Math.max(0,Math.min(1,strength)),clip=(v,m)=>Math.max(-m,Math.min(m,v));
+  if(Math.hypot(to.L-from.L,to.a-from.a,to.b-from.b)<=SAME_ENOUGH)return {L:0,a:0,b:0};
   return {L:clip((to.L-from.L)*k,MAX_SHIFT.L),a:clip((to.a-from.a)*k,MAX_SHIFT.ab),b:clip((to.b-from.b)*k,MAX_SHIFT.ab)};
 }
 
