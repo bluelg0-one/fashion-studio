@@ -114,6 +114,31 @@ async function urlToDataUrl(url) {
   return dataUrl
 }
 
+// ── 비용 표시 · 같은 요청 재사용 ────────────────────────────────
+// FASHN 장당 단가는 공식 문서를 이 작업 환경에서 열어 확인하지 못했으므로 금액을 적지 않습니다.
+// 단가를 확인하면 여기 문구만 바꾸면 됩니다(출처를 함께 적어 주세요).
+const FASHN_COST_LABEL = 'FASHN 크레딧 차감(단가 미확인)'
+const CACHE_KEY = 'fashion-studio:modelcut-cache'
+const CACHE_TTL_MS = 70 * 60 * 60 * 1000   // FASHN 결과 주소는 약 3일(72시간) 뒤 만료 → 70시간까지만 재사용
+
+async function requestKey(request) {
+  const text = JSON.stringify([request.provider, request.model_name, request.inputs])
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('')
+}
+function loadCache() {
+  try {
+    const all = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}')
+    const now = Date.now()
+    return Object.fromEntries(Object.entries(all).filter(([, v]) => v && now - v.at < CACHE_TTL_MS && Array.isArray(v.outputs)))
+  } catch { return {} }
+}
+function cachedOutputs(key) { return loadCache()[key]?.outputs || null }
+function rememberOutputs(key, outputs) {
+  if (!key || !outputs?.length) return
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ...loadCache(), [key]: { outputs, at: Date.now() } })) } catch { /* 저장 공간 부족 시 재사용만 안 됨 */ }
+}
+
 function loadModels() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { return [] }
 }
@@ -144,6 +169,14 @@ const btn = (primary, disabled) => ({
 // ─────────────────────────────────────────────────────────────
 export default function ModelCutStudio({ active = true }) {
   const [provider, setProvider] = useState('fashn')
+  // 서버에 키가 있는지만 확인 (과금 없음). null = 확인 중
+  const [config, setConfig] = useState(null)
+  useEffect(() => {
+    if (!active || config) return
+    api({ action: 'config' }).then(setConfig).catch(() => setConfig({ fashn: false, styleroom: false, unknown: true }))
+  }, [active, config])
+  const fashnReady = config?.fashn === true
+  const [compare, setCompare] = useState(null)
 
   // 의류
   const [garment, setGarment] = useState(null)
@@ -208,6 +241,7 @@ export default function ModelCutStudio({ active = true }) {
   // ── 모델 후보 생성 (FASHN model-create, 2장 동시)
   const createCandidates = async () => {
     if (provider !== 'fashn') { alert('모델 만들기는 현재 FASHN으로만 가능합니다.'); return }
+    if (!confirm(`AI 모델 후보 2장을 만듭니다.\n${FASHN_COST_LABEL} · 2장 분량\n계속할까요?`)) return
     setCreating(true)
     setCandidates([])
     const desc = describeModel(attrs)
@@ -261,7 +295,7 @@ export default function ModelCutStudio({ active = true }) {
       activeRef.current++
       updateJob(job.id, { status: 'running', startedAt: Date.now() })
       runAndWait(job.request, () => {})
-        .then(output => updateJob(job.id, { status: 'completed', outputs: output || [] }))
+        .then(output => { rememberOutputs(job.key, output); updateJob(job.id, { status: 'completed', outputs: output || [] }) })
         .catch(err => updateJob(job.id, { status: 'failed', error: err.message }))
         .finally(() => { activeRef.current--; pump() })
     }
@@ -280,7 +314,7 @@ export default function ModelCutStudio({ active = true }) {
     }
 
     const batchId = Date.now()
-    const newJobs = SCENES.filter(s => sceneIds.includes(s.id)).map((scene, i) => {
+    const built = SCENES.filter(s => sceneIds.includes(s.id)).map((scene, i) => {
       const parts = [selectedModel?.desc, scene.prompt, extraPrompt.trim()].filter(Boolean)
       const inputs = {
         product_image: product,
@@ -296,18 +330,46 @@ export default function ModelCutStudio({ active = true }) {
         batchId,
         scene,
         garmentName: garment.name,
+        garmentUrl: garment.url,
         modelName: selectedModel?.name || '랜덤 모델',
         status: 'queued',
         outputs: [],
         request: { provider, model_name: 'product-to-model', inputs },
       }
     })
-    setJobs(prev => [...newJobs, ...prev])
-    queueRef.current.push(...newJobs)
+    // 같은 옷·모델·장면·설정이면 다시 호출하지 않고 저장된 결과를 씁니다(중복 과금 방지).
+    for (const job of built) job.key = await requestKey(job.request)
+    const busyKeys = new Set(jobs.filter(j => j.status === 'queued' || j.status === 'running').map(j => j.key))
+    const reused = [], fresh = [], skipped = []
+    for (const job of built) {
+      const outputs = cachedOutputs(job.key)
+      if (outputs) reused.push({ ...job, status: 'completed', outputs, reused: true })
+      else if (busyKeys.has(job.key)) skipped.push(job)
+      else fresh.push(job)
+    }
+    const freshImages = fresh.length * perScene
+    if (fresh.length) {
+      const lines = [
+        `FASHN으로 모델컷 ${freshImages}장을 새로 만듭니다 (장면 ${fresh.length}개 × ${perScene}장).`,
+        `${FASHN_COST_LABEL} · ${freshImages}장 분량`,
+        selectedModel ? `얼굴 고정(${selectedModel.name}) 사용: 장당 크레딧이 추가로 차감됩니다.` : '얼굴 고정 없음(랜덤 모델).',
+        background ? '배경 참고 사진 사용.' : '',
+        reused.length ? `같은 설정으로 이미 만든 ${reused.length}개 장면은 저장된 결과를 다시 씁니다(추가 비용 없음).` : '',
+        skipped.length ? `지금 만들고 있는 같은 장면 ${skipped.length}개는 건너뜁니다.` : '',
+        '계속할까요?',
+      ].filter(Boolean)
+      if (!confirm(lines.join('\n'))) return
+    } else if (!reused.length) {
+      alert('같은 설정의 작업이 이미 진행 중입니다.'); return
+    }
+    setJobs(prev => [...reused, ...fresh, ...prev])
+    queueRef.current.push(...fresh)
     pump()
   }
 
   const retryJob = (job) => {
+    const outputs = job.key && cachedOutputs(job.key)
+    if (outputs) { updateJob(job.id, { status: 'completed', error: null, outputs, reused: true }); return }
     updateJob(job.id, { status: 'queued', error: null, outputs: [] })
     queueRef.current.push(job)
     pump()
@@ -335,8 +397,8 @@ export default function ModelCutStudio({ active = true }) {
           <div style={title}>⚙️ 생성 엔진</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {[
-              { id: 'fashn', label: 'FASHN', desc: '연결됨' },
-              { id: 'styleroom', label: '스타일룸', desc: '기업 API 계약 필요' },
+              { id: 'fashn', label: 'FASHN', desc: !config ? '연결 확인 중…' : config.unknown ? '연결 상태 확인 실패' : config.fashn ? '키 설정됨 · 유료' : '키 없음 (서버 설정 필요)' },
+              { id: 'styleroom', label: '스타일룸', desc: config?.styleroom ? '키 있음 · 연동 코드 없음' : '기업 API 계약 필요' },
             ].map(p => (
               <div key={p.id} onClick={() => setProvider(p.id)}
                 style={{ padding: '10px 8px', borderRadius: 10, textAlign: 'center', cursor: 'pointer', border: `2px solid ${provider === p.id ? C.ink : C.line}`, background: provider === p.id ? C.ink : '#fff' }}>
@@ -385,7 +447,7 @@ export default function ModelCutStudio({ active = true }) {
             ) : (
               <div style={{ fontSize: 11, color: C.sub }}>📤 의류 사진 업로드 (누끼컷 추천)</div>
             )}
-            <input ref={garmentFileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleGarmentUpload(e.target.files[0])} />
+            <input ref={garmentFileRef} aria-label="모델컷 의류 사진 선택" type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleGarmentUpload(e.target.files[0])} />
           </div>
         </div>
 
@@ -429,8 +491,8 @@ export default function ModelCutStudio({ active = true }) {
                   </div>
                 </div>
               ))}
-              <button style={{ ...btn(true, creating), width: '100%', marginTop: 4 }} disabled={creating} onClick={createCandidates}>
-                {creating ? '⏳ 모델 후보 생성 중... (30초~1분)' : '🎨 모델 후보 2명 생성'}
+              <button style={{ ...btn(true, creating), width: '100%', marginTop: 4 }} disabled={creating || (provider === 'fashn' && !fashnReady)} onClick={createCandidates}>
+                {creating ? '⏳ 모델 후보 생성 중... (30초~1분)' : `🎨 모델 후보 2명 생성 · ${FASHN_COST_LABEL}`}
               </button>
               {candidates.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
@@ -493,10 +555,16 @@ export default function ModelCutStudio({ active = true }) {
           </div>
         </div>
 
-        <button onClick={handleGenerate}
-          style={{ padding: '14px 0', borderRadius: 10, border: 'none', background: C.ink, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
-          📸 모델컷 {totalImages}장 생성
+        <button onClick={handleGenerate} disabled={provider === 'fashn' && !fashnReady}
+          style={{ padding: '14px 0', borderRadius: 10, border: 'none', background: provider === 'fashn' && !fashnReady ? '#ccc' : C.ink, color: '#fff', fontSize: 14, fontWeight: 700, cursor: provider === 'fashn' && !fashnReady ? 'not-allowed' : 'pointer' }}>
+          📸 FASHN 유료 · {totalImages}장 생성
         </button>
+        <div style={{ fontSize: 10, color: '#9b1c3a', textAlign: 'center', marginTop: -6 }}>
+          {FASHN_COST_LABEL}{selectedModel ? ' · 얼굴 고정은 장당 크레딧 추가' : ''} · 같은 설정은 다시 누르면 저장된 결과 재사용
+        </div>
+        {provider === 'fashn' && config && !fashnReady && (
+          <div style={{ fontSize: 11, color: '#9b5a00', textAlign: 'center' }}>서버에 FASHN_API_KEY가 없어 생성할 수 없습니다. Vercel 환경변수에 추가해 주세요.</div>
+        )}
         <div style={{ fontSize: 10, color: C.sub, textAlign: 'center', marginTop: -6 }}>
           {runningCount > 0 ? `진행 중 ${runningCount}개 작업 — 기다리는 동안 다른 옷도 추가할 수 있어요` : '생성 중에도 다른 옷을 계속 추가할 수 있어요'}
         </div>
@@ -518,7 +586,7 @@ export default function ModelCutStudio({ active = true }) {
               {jobs.map(job => (
                 job.status === 'completed' && job.outputs.length > 0
                   ? job.outputs.map((url, k) => (
-                    <ResultCard key={job.id + k} job={job} url={url}
+                    <ResultCard key={job.id + k} job={job} url={url} onCompare={() => setCompare({ job, url })}
                       onDownload={() => downloadResult(url, `모델컷_${job.scene.label}_${job.id}_${k + 1}.jpg`)}
                       onSaveModel={() => saveAsModel(url, '', `${job.scene.label} 모델`)}
                       saving={savingModel === url} />
@@ -538,18 +606,50 @@ export default function ModelCutStudio({ active = true }) {
           </div>
         )}
       </div>
+      {compare && <CompareView job={compare.job} url={compare.url} onClose={() => setCompare(null)} />}
     </div>
   )
 }
 
-function ResultCard({ job, url, onDownload, onSaveModel, saving }) {
+// 생성 결과를 원본 의류 사진과 나란히 보기 (색·무늬·핏이 원본과 같은지 확인용)
+function CompareView({ job, url, onClose }) {
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  const box = { flex: '1 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }
+  const img = { width: '100%', maxHeight: '72vh', objectFit: 'contain', background: '#fff', borderRadius: 8, border: `1px solid ${C.line}` }
+  return (
+    <div role="dialog" aria-label="원본과 비교" onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#f7f7f7', borderRadius: 12, padding: 16, width: 'min(1100px, 100%)', maxHeight: '100%', overflow: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>원본과 비교 · {job.scene.label}</div>
+          <button style={btn(false, false)} onClick={onClose}>닫기</button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <figure style={{ ...box, margin: 0 }}><img src={job.garmentUrl} alt="원본 의류 사진" style={img} /><figcaption style={{ fontSize: 11, color: C.sub }}>원본 · {job.garmentName}</figcaption></figure>
+          <figure style={{ ...box, margin: 0 }}><img src={url} alt="AI 생성 모델컷" style={img} /><figcaption style={{ fontSize: 11, color: C.sub }}>AI 생성 결과 (실제 착용 사진 아님)</figcaption></figure>
+        </div>
+        <div style={{ fontSize: 11, color: '#9b1c3a', marginTop: 10 }}>색·무늬·소재감·핏·하자가 원본과 다르면 판매 사진으로 쓰지 마세요.</div>
+      </div>
+    </div>
+  )
+}
+
+function ResultCard({ job, url, onDownload, onSaveModel, onCompare, saving }) {
   return (
     <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.line}`, overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
       <img src={url} alt={job.scene.label} onClick={() => window.open(url, '_blank')}
         style={{ width: '100%', aspectRatio: '3 / 4', objectFit: 'cover', display: 'block', cursor: 'zoom-in' }} />
       <div style={{ padding: '10px 12px' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: C.ink }}>{job.scene.emoji} {job.scene.label}</div>
+        {job.reused && <div style={{ display: 'inline-block', margin: '3px 0 2px', fontSize: 10, fontWeight: 600, color: '#1e6b3a', background: '#e7f6ec', borderRadius: 8, padding: '1px 8px', whiteSpace: 'nowrap' }}>저장된 결과 재사용 · 추가 비용 없음</div>}
         <div style={{ fontSize: 10, color: C.sub, marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.modelName} · {job.garmentName}</div>
+        <button style={{ ...btn(false, false), width: '100%', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }} onClick={onCompare}>
+          <img src={job.garmentUrl} alt="" style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: 4 }} /> 원본과 나란히 보기
+        </button>
         <div style={{ display: 'flex', gap: 6 }}>
           <button style={{ ...btn(true, false), flex: 1 }} onClick={onDownload}>⬇️ 다운로드</button>
           <button style={{ ...btn(false, saving), flex: 1 }} disabled={saving} onClick={onSaveModel} title="이 컷의 얼굴을 내 모델로 저장">
