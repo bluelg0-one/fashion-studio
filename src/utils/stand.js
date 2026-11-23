@@ -27,20 +27,25 @@ export function removeStand({data,width,height},opts={}) {
   for(const start of runs(data,width,y0).filter(r=>r.r-r.l+1<=maxW)){
     const track=[{y:y0,...start}];
     for(let y=y0-1;y>=0;y--){
-      const prev=track[track.length-1],base=track.slice(0,Math.min(track.length,20));
-      const ml=median(base.map(t=>t.l)),mr=median(base.map(t=>t.r)),mw=mr-ml+1;
+      // 기준 = 바로 아래 20줄(줄마다 갱신) → 살짝 기울어 찍힌 기둥도 따라감. 폭은 처음 20줄 기준으로 고정(점점 넓어지는 소매는 멈춤).
+      const prev=track[track.length-1],base=track.slice(-20),first=track.slice(0,20);
+      const ml=median(base.map(t=>t.l)),mr=median(base.map(t=>t.r)),w0=median(first.map(t=>t.r-t.l+1));
       const next=runs(data,width,y).find(r=>r.r>=prev.l-2&&r.l<=prev.r+2);
       if(!next)break;
-      // 테두리가 처음 구간에서 벗어나면(옷·마네킹과 만나는 곳) 멈춤
-      const tol=Math.max(3,Math.round(mw*.12));
-      if(Math.abs(next.l-ml)>tol||Math.abs(next.r-mr)>tol)break;
+      // 테두리가 바로 아래에서 갑자기 벗어나거나 폭이 달라지면(옷·마네킹과 만나는 곳) 멈춤
+      const tol=Math.max(3,Math.round(w0*.12));
+      if(Math.abs(next.l-ml)>tol||Math.abs(next.r-mr)>tol||Math.abs(next.r-next.l+1-w0)>tol)break;
       track.push({y,...next});
     }
     if(track.length<minLen)continue;
     const ws=track.map(t=>t.r-t.l+1),mw=median(ws);
     if(mw>maxW)continue;
-    const cs=track.map(t=>(t.l+t.r)/2);
-    if(Math.abs(cs[0]-cs[cs.length-1])>2+track.length*.02)continue;
+    // 곧은지: 가운데 점들을 직선에 맞춰, 기울기(최대 약 8°)와 직선에서 벗어난 정도를 봅니다.
+    const cs=track.map(t=>(t.l+t.r)/2),ys=track.map(t=>t.y),n0=cs.length;
+    const my=ys.reduce((p,v)=>p+v,0)/n0,mc=cs.reduce((p,v)=>p+v,0)/n0;
+    let sxy=0,sxx=0;for(let k=0;k<n0;k++){sxy+=(ys[k]-my)*(cs[k]-mc);sxx+=(ys[k]-my)**2;}
+    const slope=sxx?sxy/sxx:0,off=Math.max(...cs.map((c,k)=>Math.abs(c-(mc+slope*(ys[k]-my)))));
+    if(Math.abs(slope)>.14||off>Math.max(3,mw*.15))continue;
     // 색: 무채색(검정·회색·은색). 가운데 세로줄 픽셀로 판단.
     let chroma=0,n=0,L=0;
     for(const t of track){const x=Math.round((t.l+t.r)/2),i=(t.y*width+x)*4;chroma+=Math.max(data[i],data[i+1],data[i+2])-Math.min(data[i],data[i+1],data[i+2]);L+=lum(data,i);n++;}

@@ -54,11 +54,24 @@ export async function inspectImage(src,side=1024) {
   return {image:c.toDataURL('image/jpeg',.9),width:c.width,height:c.height};
 }
 
+// 붓 칠하기 표시: points(0~1000 비율)를 잇는 굵은 선. r = 붓 반지름(사진 폭의 1000분율).
+export function strokePath(ctx,r,width,height,grow=1) {
+  const pts=r.points||[];ctx.beginPath();ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=Math.max(4,2*r.r/1000*width*grow);
+  pts.forEach((p,k)=>{const x=p.x/1000*width,y=p.y/1000*height;if(k)ctx.lineTo(x,y);else ctx.moveTo(x,y);});
+  if(pts.length===1)ctx.lineTo(pts[0].x/1000*width+.01,pts[0].y/1000*height);
+}
+// 붓 자국의 바깥 상자(목록·호환용)
+export function strokeBox(points,r,aspect) {
+  const rx=r,ry=r*aspect;let x0=1000,y0=1000,x1=0,y1=0;
+  for(const p of points){x0=Math.min(x0,p.x-rx);y0=Math.min(y0,p.y-ry);x1=Math.max(x1,p.x+rx);y1=Math.max(y1,p.y+ry);}
+  const c=v=>Math.max(0,Math.min(1000,Math.round(v)));return {x0:c(x0),y0:c(y0),x1:c(x1),y1:c(y1)};
+}
 // 영역(0~1000 비율)을 실제 픽셀 마스크로. 테두리까지 덮도록 조금 넓혀 타원으로 칠합니다.
 export function maskFromRegions(width,height,regions,pad=.25) {
   const c=document.createElement('canvas');c.width=width;c.height=height;
   const ctx=c.getContext('2d');ctx.fillStyle='#000';ctx.fillRect(0,0,width,height);ctx.fillStyle='#fff';
   for(const r of regions){
+    if(r.shape==='stroke'){strokePath(ctx,r,width,height,1+pad*.4);ctx.strokeStyle='#fff';ctx.stroke();continue;}
     const x0=r.x0/1000*width,x1=r.x1/1000*width,y0=r.y0/1000*height,y1=r.y1/1000*height;
     const rx=Math.max(6,(x1-x0)/2*(1+pad)),ry=Math.max(6,(y1-y0)/2*(1+pad));
     ctx.beginPath();ctx.ellipse((x0+x1)/2,(y0+y1)/2,rx,ry,0,0,Math.PI*2);ctx.fill();
@@ -72,7 +85,8 @@ export async function markedPreview(src,regions,selected) {
   ctx.globalCompositeOperation='destination-over';ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.globalCompositeOperation='source-over';
   regions.forEach((r,i)=>{
     const on=selected.includes(i),x=r.x0/1000*w,y=r.y0/1000*h,bw=(r.x1-r.x0)/1000*w,bh=(r.y1-r.y0)/1000*h;
-    ctx.strokeStyle=on?'#e0245e':'#9aa3af';ctx.lineWidth=lw;ctx.setLineDash(on?[]:[lw*3,lw*2]);ctx.strokeRect(x,y,bw,bh);
+    if(r.shape==='stroke'){strokePath(ctx,r,w,h);ctx.strokeStyle=on?'rgba(224,36,94,.45)':'rgba(154,163,175,.45)';ctx.stroke();}
+    else {ctx.strokeStyle=on?'#e0245e':'#9aa3af';ctx.lineWidth=lw;ctx.setLineDash(on?[]:[lw*3,lw*2]);ctx.strokeRect(x,y,bw,bh);}
     const fs=Math.max(14,Math.round(Math.max(w,h)/45));ctx.font=`bold ${fs}px sans-serif`;ctx.setLineDash([]);
     ctx.fillStyle=on?'#e0245e':'#6b7280';ctx.fillRect(x,Math.max(0,y-fs-6),fs*1.4,fs+6);ctx.fillStyle='#fff';ctx.fillText(String(i+1),x+fs*.3,Math.max(fs,y-4));
   });

@@ -20,3 +20,16 @@ test('shift moves the target dominant color onto the reference and is capped',()
  assert.deepEqual(colorShift({L:50,a:0,b:0},{L:60,a:4,b:-4},.5),{L:5,a:2,b:-2});
 });
 test('too few garment pixels is reported',()=>{assert.throws(()=>dominantLab(img(5,5,()=>[0,0,0,0])),/옷 영역/);});
+test('니트(밝은 올·그늘이 반반)는 비율이 조금 달라도 대표 색이 거의 같고, 비슷하면 건드리지 않는다',()=>{
+ // 같은 분홍 니트: 밝은 올(200,120,140)과 그늘(150,80,98)이 줄무늬로. A는 밝은 쪽 52%, B는 48%.
+ const knit=share=>img(100,100,(x,y)=>((x*7+y*3)%100)<share*100?[200,120,140,255]:[150,80,98,255]);
+ const a=dominantLab(knit(.52)),b=dominantLab(knit(.48));
+ const dE=Math.hypot(a.L-b.L,a.a-b.a,a.b-b.b);
+ assert.ok(dE<8,`대표 색 차이 ${dE.toFixed(1)}`);
+ assert.deepEqual(colorShift({L:50,a:30,b:5},{L:51.5,a:31,b:6},1),{L:0,a:0,b:0},'ΔE 3 이하는 그대로');
+});
+test('금색 꼭지·검은 기둥이 조금 섞여도 옷 색을 고른다',()=>{
+ const im=img(100,100,(x,y)=>y<8?[200,160,60,255]:x<4?[10,10,10,255]:[190,95,115,255]);
+ const d=dominantLab(im),k=rgbToLab(190,95,115);
+ assert.ok(Math.hypot(d.L-k[0],d.a-k[1],d.b-k[2])<1.5,JSON.stringify(d));
+});
