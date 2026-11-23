@@ -7,6 +7,8 @@ try{
  let edits=0,analyses=0;
  await page.route('**/api/studio?*',r=>{const action=new URL(r.request().url()).searchParams.get('action');if(action==='edit'||action==='retouch'){edits++;return r.fulfill({json:{image:fixture}});}if(action==='analyze'){analyses++;return analyses===1?r.fulfill({status:429,json:{error:'테스트 일시 제한'}}):r.fulfill({json:{headline:'재시도 결과',description:'보존됨',points:[]}});}return r.fulfill({json:{configured:true,openai:true,photoroom:true}});});
  await page.reload();
+ // 새로고침 직후 상품 불러오기가 끝날 때까지 기다림(불러오기가 먼저 넣은 사진을 덮어쓰는 시간차 방지, 006과 같은 방식)
+ await page.waitForFunction(()=>{const n=document.querySelector('[aria-label="상품 이름"]'),e=document.querySelector('.studio-editor');return Boolean(n?.value)&&e&&!e.disabled;});
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'retry.png',mimeType:'image/png',buffer:Buffer.from(fixture.split(',')[1],'base64')});
  await page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();

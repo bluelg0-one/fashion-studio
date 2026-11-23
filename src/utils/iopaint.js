@@ -54,6 +54,15 @@ export async function inspectImage(src,side=1024) {
   return {image:c.toDataURL('image/jpeg',.9),width:c.width,height:c.height};
 }
 
+// 타일 검사용 사진: 누끼의 일부(픽셀 범위 tile)를 흰 배경에 합성해 긴 변 side px로(원본의 1.5배보다 크게 키우지는 않음).
+export async function inspectTile(src,tile,side=1024) {
+  const im=await loadImage(src),s=Math.min(1.5,side/Math.max(tile.w,tile.h));
+  const c=document.createElement('canvas');c.width=Math.max(1,Math.round(tile.w*s));c.height=Math.max(1,Math.round(tile.h*s));
+  const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingQuality='high';
+  ctx.drawImage(im,tile.x,tile.y,tile.w,tile.h,0,0,c.width,c.height);
+  return {image:c.toDataURL('image/jpeg',.9),width:c.width,height:c.height};
+}
+
 // 붓 칠하기 표시: points(0~1000 비율)를 잇는 굵은 선. r = 붓 반지름(사진 폭의 1000분율).
 export function strokePath(ctx,r,width,height,grow=1) {
   const pts=r.points||[];ctx.beginPath();ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=Math.max(4,2*r.r/1000*width*grow);

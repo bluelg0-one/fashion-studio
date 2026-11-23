@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const cutout='data:image/png;base64,'+fs.readFileSync(process.env.CUTOUT_PATH).toString('base64');
 const [x0,y0,x1,y1]=(process.env.STAIN||'465,172,508,196').split(',').map(Number);
+import {applyTone} from '../src/utils/matte.js';
+import {DEFAULT_TONE} from '../src/utils/retouchPresets.js';
+const toned=rgb=>{const d=new Uint8ClampedArray([...rgb.slice(0,3),255]);applyTone({data:d},DEFAULT_TONE);return [...d.slice(0,3)];};
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',headless:true,args:['--no-sandbox']});
 try{
  const page=await browser.newPage({viewport:{width:1400,height:1000}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
@@ -20,6 +23,8 @@ try{
  await page.locator('[data-slot="hero"]').getByRole('button',{name:'이 사진 누끼·보정',exact:true}).click();await idle();
  const panel=page.locator('[data-slot="hero"] .defect-panel');
 
+ // 이 검사는 사진 전체를 한 번 보내는 ‘보통’ 기준(모의 상자 그대로). 타일 나누기(적극·최대)는 studio-defects-tiles.mjs가 확인합니다.
+ await page.getByLabel('hero 찾기 민감도').selectOption('normal');
  await panel.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(await panel.locator('.defect-list li').count(),2);
  assert.ok(await page.getByLabel('hero 수정 1').isChecked(),'확신 높은 곳은 기본 선택');assert.ok(!(await page.getByLabel('hero 수정 2').isChecked()),'애매한 곳은 기본 해제');
@@ -40,10 +45,11 @@ try{
  const dist=(p,q)=>Math.hypot(p[0]-q[0],p[1]-q[1],p[2]-q[2]);
  console.log('pixels',JSON.stringify(res));
  assert.ok(dist(res.stainBefore,res.ref)>25,'원래 얼룩은 주변과 다른 색');
- assert.ok(dist(res.stainAfter,res.ref)<15,`지운 뒤 주변 색과 비슷 (${dist(res.stainAfter,res.ref).toFixed(1)})`);
+ // 결과에는 1차 기본 색감(밝기·화사하게)이 들어가 있으므로, 원본 주변 색에 같은 계산을 한 색과 비교합니다.
+ assert.ok(dist(res.stainAfter,toned(res.ref))<15,`지운 뒤 주변 색과 비슷 (${dist(res.stainAfter,toned(res.ref)).toFixed(1)})`);
  assert.deepEqual(res.corner.slice(0,3),[255,255,255],'흰 배경 유지');
  await page.getByLabel('hero 이전으로 되돌리기').click();await idle();
  assert.equal(calls.filter(c=>c==='defects').length,1);
  assert.deepEqual(errors,[]);
- console.log(`PASS: Claude marks (mock) → real IOPaint erased the stain in ${secs}s (diff to surroundings ${dist(res.stainBefore,res.ref).toFixed(0)} → ${dist(res.stainAfter,res.ref).toFixed(0)}), white background kept, undo works.`);
+ console.log(`PASS: Claude marks (mock) → real IOPaint erased the stain in ${secs}s (diff to surroundings ${dist(res.stainBefore,res.ref).toFixed(0)} → ${dist(res.stainAfter,toned(res.ref)).toFixed(0)} (기본 색감 적용 기준)), white background kept, undo works.`);
 }finally{await browser.close();}

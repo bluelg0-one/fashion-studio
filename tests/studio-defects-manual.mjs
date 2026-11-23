@@ -38,6 +38,8 @@ try{
  await page.mouse.click(...pt(.2,.2));
  assert.equal(await panel.locator('.defect-list li').count(),1);
  // 2) Claude 자동 찾기 → Claude 1곳 + 직접 1곳 유지
+ // 이 검사는 사진 전체를 한 번 보내는 ‘보통’ 기준(모의 상자 그대로). 타일 나누기(적극·최대)는 studio-defects-tiles.mjs가 확인합니다.
+ await page.getByLabel('hero 찾기 민감도').selectOption('normal');
  await panel.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(await panel.locator('.defect-list li').count(),2);
  assert.match(await panel.locator('.defect-list li').nth(0).innerText(),/얼룩 · 목 얼룩/);
@@ -53,7 +55,7 @@ try{
  assert.ok(mask,'IOPaint 요청');
  const m=await page.evaluate(async src=>{const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src;});const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const g=c.getContext('2d');g.drawImage(im,0,0);const at=(fx,fy)=>g.getImageData(Math.round(fx*c.width),Math.round(fy*c.height),1,1).data[0];return {inside:at(.45,.53),outside:at(.2,.2),below:at(.45,.7)};},mask);
  assert.deepEqual(m,{inside:255,outside:0,below:0},JSON.stringify(m));
- assert.match(await page.locator('[role=status]').innerText(),/IOPaint로 1곳을 지웠습니다/);
+ assert.match(await page.locator('[role=status]').innerText(),/IOPaint로 1곳( \(작은 상자 \d+개로 나눔\))?을 지웠습니다/);
  assert.deepEqual(errors,[]);
  console.log('PASS: manual boxes without Claude, merge with Claude results (manual kept), delete, mask matches the drawn box.');
 }finally{await browser.close();}

@@ -1,6 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
-import {Cost} from './Cost.jsx';
+import {Cost, CostN} from './Cost.jsx';
+import {DEFECT_LEVELS, callsFor} from '../utils/defectTiles.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
+import {DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {DEFECT_LABEL, strokeBox} from '../utils/iopaint.js';
 import {labCss} from '../utils/colorMatch.js';
 import {applyBrush} from '../utils/matte.js';
@@ -37,11 +39,12 @@ function MatteEditor({slot,onApply,onCancel}) {
   useEffect(()=>{(async()=>{
     const m=await imageCanvas(slot.matte),c=canvas.current;c.width=m.width;c.height=m.height;overlay.current.width=m.width;overlay.current.height=m.height;
     work.current=m.getContext('2d').getImageData(0,0,m.width,m.height);
-    const s=slot.source?await imageCanvas(slot.source):null;
+    // 누끼는 바로 세운 사진(workSource)으로 땄으므로 되살리기도 같은 사진에서 가져옵니다.
+    const s=slot.source?await imageCanvas(slot.workSource||slot.source):null;
     const ok=Boolean(s&&s.width===m.width&&s.height===m.height);setAligned(ok);if(!ok)setTool('erase');
     src.current=ok?s.getContext('2d').getImageData(0,0,s.width,s.height):null;
     c.getContext('2d').putImageData(work.current,0,0);setReady(true);
-  })();},[slot.matte]);
+  })();},[slot.matte,slot.workSource]);
   const at=e=>{const r=canvas.current.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*canvas.current.width,y:(e.clientY-r.top)/r.height*canvas.current.height};};
   const radius=()=>Math.max(2,canvas.current.width*size/100);
   const paint=p=>{const o=overlay.current.getContext('2d');o.fillStyle=tool==='restore'?'rgba(30,140,70,.35)':'rgba(224,36,94,.35)';o.beginPath();o.arc(p.x,p.y,radius(),0,Math.PI*2);o.fill();};
@@ -74,7 +77,23 @@ function MatteEditor({slot,onApply,onCancel}) {
 
 // ---- 2차 보정: 얼룩·구김 (Claude 표시 + 직접 표시 → IOPaint) ----
 const MANUAL_TYPES=['stain','wrinkle','lint','thread','mannequin_mark','other'];
-function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
+// 수평 맞추기: 0.1° 슬라이더, 자동 다시 계산, 0°로. 원본 미리보기는 고른 각도로 돌려 격자와 함께 보여 줍니다.
+function LevelPanel({slot,draft,setDraft,onLevel}) {
+  const level=slot.level||{angle:0,auto:null,confidence:null};
+  const commit=v=>{const a=Math.round(Number(v)*10)/10;if(a!==(level.angle||0))onLevel(slot.id,a);};
+  return <div className="level-tools" aria-label={`${slot.id} 수평 맞추기`}>
+    <label>수평 · {draft>0?'+':''}{Number(draft).toFixed(1)}°{level.manual?' (직접)':level.auto!=null?' (자동)':''}
+      <input type="range" aria-label={`${slot.id} 수평 각도`} min="-10" max="10" step="0.1" value={draft} onChange={e=>setDraft(Number(e.target.value))} onPointerUp={e=>commit(e.currentTarget.value)} onKeyUp={e=>commit(e.currentTarget.value)}/></label>
+    <div className="btn-row">
+      <button type="button" onClick={()=>onLevel(slot.id,'auto')}>자동 수평 다시 계산</button>
+      <button type="button" disabled={!level.angle} onClick={()=>onLevel(slot.id,0)}>0°로</button>
+      <Cost k="browser"/>
+    </div>
+    {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.auto===0&&level.confidence!=null&&level.confidence<.25?' — 곧은 선이 부족해 돌리지 않았습니다':''}</p>}
+  </div>;
+}
+function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive',split:true},setOpts=()=>{}}) {
+  const engine2=opts.engine2||'iopaint',iopOff=!iop?.ok,usePR=engine2==='photoroom'||iopOff;
   const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
   const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null),[tool,setTool]=useState('box'),[brush,setBrush]=useState(25);
   const box=useRef(null),paint=useRef(null),pts=useRef(null);
@@ -112,7 +131,19 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
     </div>
     {slot.cutout&&<>
       <div className="btn-row">
-        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><Cost k="claudeDefects"/></span>
+        <label className="engine2">2차 보정 엔진<select aria-label={`${slot.id} 2차 보정 엔진`} value={engine2} onChange={e=>setOpts({engine2:e.target.value})}>
+          <option value="iopaint">무료 IOPaint (기본 · 내 PC)</option>
+          <option value="photoroom">유료 Photoroom ($0.10/장)</option>
+        </select></label>
+        {usePR&&<div className="photoroom2" aria-label={`${slot.id} Photoroom 2차 보정`}>
+          {engine2==='iopaint'&&iopOff&&<p className="review-note">무료 IOPaint에 연결할 수 없어 유료 Photoroom으로 대신 처리합니다(누를 때만 과금 · $0.10/장).</p>}
+          <label className="check"><input type="checkbox" aria-label={`${slot.id} 얼룩 AI 지우기`} checked={Boolean(opts.stainAI)} onChange={e=>setOpts({stainAI:e.target.checked})}/>얼룩도 AI로 지우기 (기본 꺼짐)</label>
+          {opts.stainAI&&<p className="review-note">Photoroom은 위치를 지정해 지우는 기능이 없어(공식 문서에서 찾지 못함) 글 지시(Edit With AI)로 지웁니다. 생성형이라 니트 결·무늬가 바뀔 수 있고 결과가 1K(1024px)로 줄어듭니다. 1차와 꼭 비교하세요.</p>}
+          <span className="btn-with-cost"><button type="button" className="primary" onClick={()=>onPhotoroom2(slot.id)}>Photoroom으로 2차 보정 (구김 전체 펴기{opts.stainAI?' + 얼룩':''})</button><Cost k="photoroom"/></span>
+          <p className="slot-note">구김은 AI Ironing이 옷 전체를 한 번에 펴므로 Claude 위치 찾기는 필요 없습니다(비용 절약). 같은 사진·같은 설정은 저장된 결과를 다시 씁니다.</p>
+        </div>}
+        {!usePR&&<><label className="defect-level">찾기 민감도<select aria-label={`${slot.id} 찾기 민감도`} value={opts.level} onChange={e=>setOpts({level:e.target.value})}>{Object.entries(DEFECT_LEVELS).map(([k,v])=><option key={k} value={k}>{v.label}{k==='aggressive'?' (기본)':''} · {callsFor(k)}회</option>)}</select></label>
+        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><CostN k="claudeDefects" n={callsFor(opts.level)}/></span></>}
         <span className="btn-with-cost"><button type="button" className={draw?'primary':''} aria-pressed={draw} onClick={startManual}>✏️ 직접 표시하기{draw?' (켜짐)':''}</button><Cost k="browser"/></span>
       </div>
       {draw&&<div className="btn-row draw-tools"><label>표시 종류<select aria-label={`${slot.id} 직접 표시 종류`} value={kind} onChange={e=>setKind(e.target.value)}>{MANUAL_TYPES.map(t=><option key={t} value={t}>{DEFECT_LABEL[t]}</option>)}</select></label>
@@ -123,6 +154,7 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
         {regions.length?<ul className="defect-list">{regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} {r.manual?<small>(직접)</small>:<small>({Math.round(r.confidence*100)}%)</small>}</label><button type="button" className="subtle tiny" aria-label={`${slot.id} 표시 ${i+1} 삭제`} onClick={()=>remove(i)}>✕</button></li>)}</ul>
           :<p className="slot-note">{draw?'사진 위에서 끌어서 표시하세요.':'표시된 곳이 없습니다.'}</p>}
         <div className="btn-row">
+          <label className="check"><input type="checkbox" aria-label={`${slot.id} 넓은 상자 잘게 나누기`} checked={opts.split!==false} onChange={e=>setOpts({split:e.target.checked})}/>넓은 상자는 작은 상자로 나눠 한 번에 지우기 (기본 · 비교해 보니 구김이 더 잘 지워짐)</label>
           <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>{setDraw(false);onInpaint(slot.id);}}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
           <button type="button" className="subtle" onClick={()=>{setDraw(false);onPatch(slot.id,{defects:null});}}>표시 모두 지우기</button>
         </div>
@@ -133,8 +165,10 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
 }
 
 // ---- 컷 한 줄: 원본 → 1차 보정 → 2차 보정 → 최종 (PC는 가로 4칸, 모바일은 세로) ----
-export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide}) {
+export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide,onLevel,defectOpts,setDefectOpts,onPhotoroom2}) {
   const [editing,setEditing]=useState(false);
+  const [tilt,setTilt]=useState(slot.level?.angle||0);
+  useEffect(()=>setTilt(slot.level?.angle||0),[slot.level?.angle]);
   const tone=slot.tone||{bright:0,vivid:0},[draft,setDraft]=useState(tone);
   useEffect(()=>setDraft(slot.tone||{bright:0,vivid:0}),[slot.tone]);
   useEffect(()=>{if(!slot.matte)setEditing(false);},[slot.matte]);
@@ -156,8 +190,9 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
       <div className="cut-col">
         <h4>원본</h4>
         <div className="cut-img source-zone" tabIndex={busy?-1:0} onPaste={busy?undefined:paste} aria-label={`${name} 이미지 붙여넣기`}>
-          {slot.source?<img src={slot.source} alt={`${name} 원본`}/>:<p>사진을 선택하거나<br/>여기를 클릭한 뒤 Ctrl+V</p>}
+          {slot.source?<div className="level-view"><img src={slot.source} alt={`${name} 원본`} style={tilt?{transform:`rotate(${tilt}deg)`}:undefined}/>{onLevel&&<div className="level-grid" aria-hidden="true"/>}</div>:<p>사진을 선택하거나<br/>여기를 클릭한 뒤 Ctrl+V</p>}
         </div>
+        {slot.source&&onLevel&&<LevelPanel slot={slot} draft={tilt} setDraft={setTilt} onLevel={onLevel}/>}
         <div className="btn-row">
           <label className="file-button">사진 {slot.source?'교체':'선택'}<input aria-label={`${slot.id} 사진 선택`} type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>{const file=e.target.files?.[0];if(file)onUpload(slot.id,file);e.target.value='';}}/></label>
           {slot.source&&<button type="button" className="subtle" onClick={()=>onRemove(slot.id)}>사진 삭제</button>}
@@ -174,6 +209,8 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
           <label>밝기 · {draft.bright>0?'+':''}{draft.bright}<input type="range" aria-label={`${slot.id} 밝기`} min="-30" max="30" value={draft.bright} onChange={e=>setDraft({...draft,bright:Number(e.target.value)})}/></label>
           <label>화사하게 · {draft.vivid>0?'+':''}{draft.vivid}<input type="range" aria-label={`${slot.id} 화사하게`} min="-20" max="40" value={draft.vivid} onChange={e=>setDraft({...draft,vivid:Number(e.target.value)})}/></label>
           <button type="button" disabled={!toneChanged} onClick={()=>onTone(slot.id,draft)}>색상 보정 적용</button><Cost k="browser"/>
+          <button type="button" disabled={!tone.bright&&!tone.vivid} onClick={()=>onTone(slot.id,{bright:0,vivid:0})}>색감 보정 끄기</button>
+          <button type="button" disabled={tone.bright===DEFAULT_TONE.bright&&tone.vivid===DEFAULT_TONE.vivid} onClick={()=>onTone(slot.id,{...DEFAULT_TONE})}>기본값으로 (밝기 +{DEFAULT_TONE.bright} · 화사하게 +{DEFAULT_TONE.vivid})</button>
         </div>}
         {slot.source&&<details className="slot-retouch"><summary>1차 보정 설정{slot.retouch?' · 이 컷만 따로':' · 기본 설정'}</summary>
           <label className="check"><input type="checkbox" aria-label={`${slot.id} 개별 설정 사용`} checked={Boolean(slot.retouch)} onChange={e=>onPatch(slot.id,{retouch:e.target.checked?{...retouchDefault}:null})}/>이 컷만 따로 설정하기</label>
@@ -182,7 +219,7 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
       </div>
       <div className="cut-col">
         <h4>2차 보정 <small>얼룩 · 구김</small></h4>
-        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint}/>
+        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint} onPhotoroom2={onPhotoroom2} opts={defectOpts} setOpts={setDefectOpts}/>
         <ColorRefCheck slot={slot} stage="stage2" colorRef={colorRef} onColorRef={onColorRef} has={Boolean(slot.stage2)}/>
       </div>
       <div className="cut-col">

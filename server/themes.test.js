@@ -39,9 +39,9 @@ test('themed HTML escapes text, links only Google Fonts, and marks the theme',()
 // 휴대폰 가독성: 860px PNG가 폭 390px로 줄어든 상태 기준(×0.4535). 본문 14px·메모 12px 이상, 명암비 4.5:1 이상.
 const lum=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4);return .2126*c[0]+.7152*c[1]+.0722*c[2];};
 const ratio=(a,b)=>{const [x,y]=[lum(a),lum(b)].sort((p,q)=>q-p);return (x+.05)/(y+.05);};
-test('soft and minimal are readable on a phone: size and contrast',()=>{
+test('soft, minimal and magazine are readable on a phone: size and contrast',()=>{
  const phone=390/860;
- for(const id of ['soft','minimal']){
+ for(const id of ['soft','minimal','magazine']){
   const t=THEMES[id],bgs=[t.bg,t.card,t.accentSoft].filter(Boolean);
   assert.ok(t.body.size*phone>=14,`${id} 본문 ${t.body.size*phone}px`);
   for(const k of ['caption','note','product'])assert.ok(t[k].size*phone>=12,`${id} ${k}`);
@@ -56,19 +56,17 @@ test('theme text wraps at spaces, not in the middle of a word; only over-long wo
  assert.deepEqual(wrap(ctx,'아주아주아주긴낱말입니다아주아주아주긴낱말 다음',8),['아주아주아주긴낱','말입니다아주아주','아주긴낱말 다음']);
  assert.deepEqual(wrap(ctx,'a\n\nb',5),['a','','b']);
 });
-test('size guide text is larger only in soft and minimal (about 12px on a phone); basic and Shopee guides are unchanged',async()=>{
+test('size guide text is larger in soft, minimal and magazine (about 12px on a phone); basic and Shopee guides are unchanged',async()=>{
  const {guideSvg}=await import('../src/utils/studioDocument.js');
  const blocks=documentBlocks({slots:withPhotos(['hero']),fitEnabled:false,texts,garment:'long-pants',rows:[newSizeRow()]});
  const guideSrc=id=>themeUnits(blocks,THEMES[id]).find(u=>u.type==='guide').src;
  const svg=src=>decodeURIComponent(src.split(',')[1]);
- for(const id of ['soft','minimal']){
+ for(const id of ['soft','minimal','magazine']){
   const s=svg(guideSrc(id));assert.ok(s.includes('font-size="24"'),id);assert.ok(!s.includes('font-size="13"'),id);
   // 860px 문서에서 그림이 그려지는 폭(카드·여백 제외) → 폰 390px에서 보이는 글자 크기
   const t=THEMES[id],avail=860-t.pad*2-(t.photo.card?t.photo.card.pad*2:0),scale=Math.min(avail/640,620/456,1.6);
   assert.ok(24*scale*390/860>=11,`${id} ${(24*scale*390/860).toFixed(1)}px`);
  }
- assert.ok(svg(guideSrc('magazine')).includes('font-size="13"'));
- assert.equal(guideSrc('magazine'),blocks.find(b=>b.role==='guide').src);
  for(const g of GARMENTS_ALL)for(const lang of ['ko','en']){const s=guideSvg(g,lang);assert.ok(s.includes('font-size="13"')&&!s.includes('font-size="24"'));assert.match(s,/height="420"/);}
 });
 const GARMENTS_ALL=['long-top','short-top','vest','dress','long-pants','short-pants'];
