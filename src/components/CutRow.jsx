@@ -92,7 +92,8 @@ function LevelPanel({slot,draft,setDraft,onLevel}) {
     {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.auto===0&&level.confidence!=null&&level.confidence<.25?' — 곧은 선이 부족해 돌리지 않았습니다':''}</p>}
   </div>;
 }
-function DefectPanel({slot,iop,onPatch,onFind,onInpaint,opts={level:'aggressive',split:true},setOpts=()=>{}}) {
+function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive',split:true},setOpts=()=>{}}) {
+  const engine2=opts.engine2||'iopaint',iopOff=!iop?.ok,usePR=engine2==='photoroom'||iopOff;
   const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
   const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null),[tool,setTool]=useState('box'),[brush,setBrush]=useState(25);
   const box=useRef(null),paint=useRef(null),pts=useRef(null);
@@ -130,8 +131,19 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint,opts={level:'aggressive'
     </div>
     {slot.cutout&&<>
       <div className="btn-row">
-        <label className="defect-level">찾기 민감도<select aria-label={`${slot.id} 찾기 민감도`} value={opts.level} onChange={e=>setOpts({level:e.target.value})}>{Object.entries(DEFECT_LEVELS).map(([k,v])=><option key={k} value={k}>{v.label}{k==='aggressive'?' (기본)':''} · {callsFor(k)}회</option>)}</select></label>
-        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><CostN k="claudeDefects" n={callsFor(opts.level)}/></span>
+        <label className="engine2">2차 보정 엔진<select aria-label={`${slot.id} 2차 보정 엔진`} value={engine2} onChange={e=>setOpts({engine2:e.target.value})}>
+          <option value="iopaint">무료 IOPaint (기본 · 내 PC)</option>
+          <option value="photoroom">유료 Photoroom ($0.10/장)</option>
+        </select></label>
+        {usePR&&<div className="photoroom2" aria-label={`${slot.id} Photoroom 2차 보정`}>
+          {engine2==='iopaint'&&iopOff&&<p className="review-note">무료 IOPaint에 연결할 수 없어 유료 Photoroom으로 대신 처리합니다(누를 때만 과금 · $0.10/장).</p>}
+          <label className="check"><input type="checkbox" aria-label={`${slot.id} 얼룩 AI 지우기`} checked={Boolean(opts.stainAI)} onChange={e=>setOpts({stainAI:e.target.checked})}/>얼룩도 AI로 지우기 (기본 꺼짐)</label>
+          {opts.stainAI&&<p className="review-note">Photoroom은 위치를 지정해 지우는 기능이 없어(공식 문서에서 찾지 못함) 글 지시(Edit With AI)로 지웁니다. 생성형이라 니트 결·무늬가 바뀔 수 있고 결과가 1K(1024px)로 줄어듭니다. 1차와 꼭 비교하세요.</p>}
+          <span className="btn-with-cost"><button type="button" className="primary" onClick={()=>onPhotoroom2(slot.id)}>Photoroom으로 2차 보정 (구김 전체 펴기{opts.stainAI?' + 얼룩':''})</button><Cost k="photoroom"/></span>
+          <p className="slot-note">구김은 AI Ironing이 옷 전체를 한 번에 펴므로 Claude 위치 찾기는 필요 없습니다(비용 절약). 같은 사진·같은 설정은 저장된 결과를 다시 씁니다.</p>
+        </div>}
+        {!usePR&&<><label className="defect-level">찾기 민감도<select aria-label={`${slot.id} 찾기 민감도`} value={opts.level} onChange={e=>setOpts({level:e.target.value})}>{Object.entries(DEFECT_LEVELS).map(([k,v])=><option key={k} value={k}>{v.label}{k==='aggressive'?' (기본)':''} · {callsFor(k)}회</option>)}</select></label>
+        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><CostN k="claudeDefects" n={callsFor(opts.level)}/></span></>}
         <span className="btn-with-cost"><button type="button" className={draw?'primary':''} aria-pressed={draw} onClick={startManual}>✏️ 직접 표시하기{draw?' (켜짐)':''}</button><Cost k="browser"/></span>
       </div>
       {draw&&<div className="btn-row draw-tools"><label>표시 종류<select aria-label={`${slot.id} 직접 표시 종류`} value={kind} onChange={e=>setKind(e.target.value)}>{MANUAL_TYPES.map(t=><option key={t} value={t}>{DEFECT_LABEL[t]}</option>)}</select></label>
@@ -153,7 +165,7 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint,opts={level:'aggressive'
 }
 
 // ---- 컷 한 줄: 원본 → 1차 보정 → 2차 보정 → 최종 (PC는 가로 4칸, 모바일은 세로) ----
-export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide,onLevel,defectOpts,setDefectOpts}) {
+export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide,onLevel,defectOpts,setDefectOpts,onPhotoroom2}) {
   const [editing,setEditing]=useState(false);
   const [tilt,setTilt]=useState(slot.level?.angle||0);
   useEffect(()=>setTilt(slot.level?.angle||0),[slot.level?.angle]);
@@ -207,7 +219,7 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
       </div>
       <div className="cut-col">
         <h4>2차 보정 <small>얼룩 · 구김</small></h4>
-        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint} opts={defectOpts} setOpts={setDefectOpts}/>
+        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint} onPhotoroom2={onPhotoroom2} opts={defectOpts} setOpts={setDefectOpts}/>
         <ColorRefCheck slot={slot} stage="stage2" colorRef={colorRef} onColorRef={onColorRef} has={Boolean(slot.stage2)}/>
       </div>
       <div className="cut-col">

@@ -33,6 +33,25 @@ async function openaiEdit(env,request,blob,prompt) {
   if(!data.data?.[0]?.b64_json)throw fail('OpenAI 보정 결과가 비어 있습니다.',502);
   return `data:image/png;base64,${data.data[0].b64_json}`;
 }
+// ---- 2차 보정 유료 대체(Photoroom) ----
+// 공식 문서(docs.photoroom.com, 2026-11-23 확인): 영역(마스크·상자)을 지정해 지우는 기능은 찾지 못함(미확인).
+// - 구김: AI Ironing(ironing.mode=ai.auto, 머리글 pr-ironing-model-version: v2)은 위치 지정 없이 옷 전체를 폅니다. 2K까지.
+// - 얼룩: Edit With AI(글 지시)만 가능. 생성형이라 질감이 바뀔 수 있고 결과가 1K로 줄어 기본은 꺼짐.
+// - 요금: 호출 1번 $0.10, 옵션 수와 무관 → 다림질과 얼룩 지시를 한 번에 요청합니다. 같은 입력도 다시 과금되므로 재사용은 화면에서 합니다.
+// - 입력은 1차 누끼(투명 PNG): keepExistingAlphaChannel=auto로 기존 투명도를 그대로 누끼로 쓰고, 원본 크기·위치를 유지합니다.
+export const STAIN_PROMPT='Remove only small stains, spots, dust, lint and loose threads from the garment. Keep the exact same garment: do not change its color, pattern, knit texture, seams, buttons, shape or fit. Keep the transparent background.';
+async function retouch2(body,env,request) {
+  if(!env.PHOTOROOM_API_KEY)throw fail('현재 실행 환경에 PHOTOROOM_API_KEY가 연결되지 않았습니다.',503);
+  const match=typeof body.image==='string'&&body.image.match(/^data:image\/(png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if(!match||body.image.length>MAX)throw fail('8MB 이하의 투명 PNG·WebP(1차 결과)를 사용하세요.',400);
+  const o=body.options||{},iron=o.iron!==false,stains=Boolean(o.stains);
+  if(!iron&&!stains)throw fail('구김 펴기나 얼룩 지우기 중 하나 이상을 고르세요.',400);
+  const fields={'export.format':'webp',removeBackground:'true',keepExistingAlphaChannel:'auto',referenceBox:'originalImage',outputSize:'originalImage'},headers={};
+  if(iron){fields['ironing.mode']='ai.auto';headers['pr-ironing-model-version']='v2';}
+  if(stains){fields['editWithAI.mode']='ai.auto';fields['editWithAI.prompt']=STAIN_PROMPT;}
+  const blob=await photoroom(env,request,new Blob([Buffer.from(match[2],'base64')],{type:`image/${match[1]}`}),fields,headers);
+  return {image:await toDataUrl(blob),...(stains?{lowResolution:true}:{}),ops:{iron,stains}};
+}
 // Photoroom은 호출 1번당 요금이 같으므로(옵션 수와 무관) 누끼·정렬·다림질·AI 편집을 한 번에 요청합니다.
 // 문서: docs.photoroom.com/image-editing-api-plus-plan (edit-with-ai, ai-ironing, positioning, ai-relight)
 async function retouch(body,env,request) {
@@ -102,6 +121,7 @@ export async function studio(action, body, env = process.env, request = fetch) {
   if (action === 'classify') return classifyPhotos(body,env);
   if (action === 'defects') return findDefects(body,env);
   if (action === 'retouch') return retouch(body,env,request);
+  if (action === 'retouch2') return retouch2(body,env,request);
   if (action === 'credits') {
     // 남은 Photoroom 이미지 수 조회 (과금 없음).
     if(!env.PHOTOROOM_API_KEY)throw fail('현재 실행 환경에 PHOTOROOM_API_KEY가 연결되지 않았습니다.',503);

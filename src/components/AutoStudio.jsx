@@ -41,7 +41,7 @@ const MAX_VERSIONS=6;
 // Claude 분류 결과(컷 종류) → 칸. 기타 디테일은 원단 및 디테일 → 디테일2·3 → 포인트1·2 순서로 빈 칸에.
 const SHOT_SLOT={front:'hero',frontZoom:'frontZoom',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
 const DETAIL_ORDER=['fabric','detail2','detail3','point1','point2'];
-const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut'];
+const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
 const entryOf=slot=>{const v=(slot.versions||[null])[slot.vIndex??0];return typeof v==='string'?{matte:null,stage1:v,stage2:null}:v||null;};
 const entryFields=e=>e?{matte:e.matte||null,stage1:e.stage1||null,stage2:e.stage2||null,cutout:e.stage2||e.stage1||null,status:'done'}:{matte:null,stage1:null,stage2:null,cutout:null,status:'raw'};
@@ -64,7 +64,7 @@ export default function AutoStudio() {
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram),[docTheme,setDocTheme]=useState('basic');
   // 수정할 곳 찾기 설정(이 브라우저에 기억): 민감도 · 넓은 상자 잘게 나누기
-  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,split:true,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,split:true};}});
+  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false};}});
   const setDefectOpts=patchOpts=>setDefectOptsState(cur=>{const next={...cur,...patchOpts};try{localStorage.setItem('fashion-studio-defects',JSON.stringify(next));}catch{}return next;});
   const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState(''),[localSavedAt,setLocalSavedAt]=useState(0);
@@ -426,6 +426,33 @@ export default function AutoStudio() {
       setStep(`${slot.label} · IOPaint로 ${label}을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
     });
   }
+  // ---- 2차 보정 유료 대체: Photoroom (구김 = AI Ironing으로 옷 전체, 얼룩 = Edit With AI 글 지시, 기본 꺼짐) ----
+  // 무료 IOPaint를 끄거나(엔진 선택) 사장님 PC의 IOPaint에 접속할 수 없을 때 씁니다. 버튼을 눌러야만 실행(자동 과금 없음).
+  // 호출 1번에 다림질+얼룩 지시를 함께 보내 장당 $0.10. 같은 1차 결과·같은 설정은 저장된 결과를 다시 씁니다(새로고침 후에도).
+  async function photoroomStage2For(id) {
+    await task(async()=>{
+      const slot=slots[id];if(!slot?.cutout)throw new Error('먼저 ‘이 사진 누끼·보정’으로 1차 보정을 해 주세요.');
+      const ops={iron:true,stains:Boolean(defectOpts.stainAI)};
+      // 입력은 항상 이 버전의 1차 결과(2차를 이미 했어도 1차에서 다시 시작) → 같은 입력이면 같은 결과로 보고 재사용합니다.
+      const e=entryOf(slot)||{stage1:slot.cutout},input=e.stage1||slot.cutout;
+      const key='pr2:'+JSON.stringify(ops)+input;
+      let image=cache.current.get(key)||(slot.raw2?.key===key?slot.raw2.image:null),reused=Boolean(image);
+      if(!image){
+        const status=await api('status');setReady(status);
+        if(!status.photoroom)throw new Error('서버에 Photoroom API 키(PHOTOROOM_API_KEY)가 연결되지 않았습니다.');
+        const fallback=defectOpts.engine2!=='photoroom';
+        setStep(`${slot.label} · ${fallback?'IOPaint에 연결할 수 없어 ':''}Photoroom으로 2차 보정 중 (구김 펴기${ops.stains?' + 얼룩 AI 지우기':''}, $0.10/장)`);
+        const res=await api('retouch2',{image:input,options:ops});
+        // 혹시 흰 배경(불투명)으로 오면 가장자리의 흰색만 투명으로 되살립니다.
+        const c=await imageCanvas(res.image),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+        if(isOpaque(px)&&alphaFromWhite(px))ctx.putImageData(px,0,0);
+        image=c.toDataURL('image/png');cache.current.set(key,image);
+      }
+      const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:input,stage2:image}),defects:null,raw2:{key,image}}});
+      setSlots(next);refreshCredits();
+      setStep(`${slot.label} · Photoroom 2차 보정 완료 (${ops.stains?'구김 펴기 + 얼룩 AI 지우기 · 결과 1K로 줄어듦':'구김 펴기(옷 전체)'}${reused?' · 저장된 결과 재사용·추가 비용 없음':' · $0.10'}). 1차와 나란히 비교하고, 마음에 안 들면 ‘이전으로’(무료)를 누르세요.`);
+    });
+  }
   // 같은 사진에서 다시 찾으면 표시 미리보기를 새로 그립니다.
   useEffect(()=>{(async()=>{for(const s of Object.values(slots))if(s.defects&&!s.defects.preview&&s.cutout){const preview=await markedPreview(s.cutout,s.defects.regions,s.defects.selected);setSlots(cur=>cur[s.id]?.defects===s.defects?{...cur,[s.id]:{...cur[s.id],defects:{...s.defects,preview}}}:cur);}})();},[slots]);
   function moveSlot(from,to) {
@@ -504,7 +531,7 @@ export default function AutoStudio() {
   function removePhoto(id) {
     setPreview(null);
     setSlots(current=>{
-      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
+      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,raw2:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
       return next;
     });
   }
@@ -536,7 +563,7 @@ export default function AutoStudio() {
     const title=texts.headline||'의류 상세페이지';
     downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,defectOpts,setDefectOpts,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
+  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
   const visible=s=>s.id==='hero'||Boolean(s.source)||Boolean(s.shown);
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));
