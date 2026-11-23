@@ -3,6 +3,7 @@ import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
+import {estimateCanvasTilt, rotateCanvas, borderColor} from '../utils/level.js';
 import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../utils/retouchPresets.js';
@@ -39,7 +40,7 @@ const MAX_VERSIONS=6;
 // Claude 분류 결과(컷 종류) → 칸. 기타 디테일은 원단 및 디테일 → 디테일2·3 → 포인트1·2 순서로 빈 칸에.
 const SHOT_SLOT={front:'hero',frontZoom:'frontZoom',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
 const DETAIL_ORDER=['fabric','detail2','detail3','point1','point2'];
-const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown'];
+const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
 const entryOf=slot=>{const v=(slot.versions||[null])[slot.vIndex??0];return typeof v==='string'?{matte:null,stage1:v,stage2:null}:v||null;};
 const entryFields=e=>e?{matte:e.matte||null,stage1:e.stage1||null,stage2:e.stage2||null,cutout:e.stage2||e.stage1||null,status:'done'}:{matte:null,stage1:null,stage2:null,cutout:null,status:'raw'};
@@ -135,10 +136,40 @@ export default function AutoStudio() {
       setProducts(await listProducts());setStep('상품을 삭제했습니다.');
     });
   }
+  // ---- 자동 수평 (브라우저 계산, 무료) ----
+  // 원본은 그대로 두고, 바로 세운 사본(workSource)으로 누끼를 땁니다. 돌리며 생긴 모서리는 벽 색으로 채워 누끼 때 배경으로 지워집니다.
+  async function levelSource(source,angle) {
+    if(!angle)return null;
+    const c=await imageCanvas(source),fill=borderColor(c.getContext('2d').getImageData(0,0,c.width,c.height));
+    const r=rotateCanvas(c,angle,fill);
+    return source.startsWith('data:image/png')?r.toDataURL('image/png'):r.toDataURL('image/jpeg',.95);
+  }
+  // 새 사진을 넣을 때: 자동 수평이 켜져 있으면 기울기를 재고, 신뢰도가 낮으면 0°(돌리지 않음).
+  async function initialLevel(source,options) {
+    if(options?.autoLevel===false)return {level:{angle:0,auto:null,confidence:null,manual:false},workSource:null};
+    const est=estimateCanvasTilt(await imageCanvas(source));
+    return {level:{angle:est.angle,auto:est.angle,confidence:est.confidence,manual:false},workSource:await levelSource(source,est.angle)};
+  }
+  // 수평 바꾸기: 'auto'(다시 계산) · 숫자(직접 각도). 이미 누끼를 딴 사진은 바로 다시 처리합니다
+  // (Photoroom은 저장된 결과를 차이만큼 돌려 쓰므로 다시 과금하지 않음).
+  async function levelFor(id,value) {
+    const slot=slots[id];if(!slot?.source)return;
+    let next=null;
+    await task(async()=>{
+      let level;
+      if(value==='auto'){const est=estimateCanvasTilt(await imageCanvas(slot.source));level={angle:est.angle,auto:est.angle,confidence:est.confidence,manual:false};}
+      else level={...(slot.level||{auto:null,confidence:null}),angle:Math.max(-10,Math.min(10,Math.round(Number(value)*10)/10)),manual:true};
+      const workSource=await levelSource(slot.source,level.angle);
+      next={...slots,[id]:{...slot,level,workSource}};setSlots(next);
+      setStep(`${slot.label} · 수평 ${level.angle>0?'+':''}${level.angle}°${value==='auto'?` (자동${level.confidence!=null?`, 신뢰도 ${Math.round(level.confidence*100)}%`:''}${level.angle===0&&level.confidence!=null&&level.confidence<.25?' — 확실하지 않아 돌리지 않음':''})`:''}`);
+    });
+    if(next&&slot.stage1)await processPhotos(id,next);
+  }
   async function upload(id,file) {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
-      patch(id,{source,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
+      const lv=await initialLevel(source,slots[id]?.retouch||retouch);
+      patch(id,{source,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
@@ -153,8 +184,8 @@ export default function AutoStudio() {
     return c.toDataURL('image/png');
   }
   // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
-  async function engineMatte(source,warnings,options,saved) {
-    const cut=await engineCut(source,warnings,options,saved);
+  async function engineMatte(source,warnings,options,saved,angle=0,work=null) {
+    const cut=await engineCut(source,warnings,options,saved,angle,work);
     return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null};
   }
   // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
@@ -164,10 +195,12 @@ export default function AutoStudio() {
     const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
     if(removeStand(px))ctx.putImageData(px,0,0);
   }
-  async function engineCut(source,warnings,options,saved) {
+  // angle·work: 자동 수평으로 바로 세운 원본(work)과 그 각도. 누끼는 바로 세운 사진으로 땁니다.
+  async function engineCut(source,warnings,options,saved,angle=0,work=null) {
+    const input=angle&&work?work:source;
     if(options.cutout==='birefnet'){
-      const rawKey='birefnet:'+source;
-      if(!cache.current.has(rawKey))cache.current.set(rawKey,await removeBackground(source));
+      const rawKey='birefnet:'+input;
+      if(!cache.current.has(rawKey))cache.current.set(rawKey,await removeBackground(input));
       const c=await imageCanvas(cache.current.get(rawKey));
       standCleanup(c,options);
       cutoutBounds(c.getContext('2d').getImageData(0,0,c.width,c.height));
@@ -176,16 +209,18 @@ export default function AutoStudio() {
     // Photoroom: 중앙 정렬은 브라우저에서 하므로 원본 위치 그대로 받습니다(직접 수정 붓이 원본과 맞도록).
     // 정리 옵션(POST_OPTIONS)은 요청에서 빼서, 바꿔도 같은 요청 = 같은 결과(재과금 없음)로 봅니다.
     const req={...options,center:false};for(const k of POST_OPTIONS)delete req[k];
+    // 재과금 기준은 ‘원본 사진 + 요청 설정’입니다. 수평 각도만 바꾸면 저장된 결과를 각도 차이만큼 돌려 씁니다(무료).
     const key='photoroom:'+JSON.stringify(req)+source;
-    let raw=cache.current.get(key)||(saved?.key===key?saved.image:null);
-    if(!raw){
-      const response=await api('retouch',{image:source,options:req});
-      if(response.warning)warnings.push(response.warning);
-      else cache.current.set(key,response.image);
-      raw=response.image;
-      if(response.warning)return {url:await photoroomCleanup(raw,options)};
+    let hit=cache.current.get(key)||(saved?.key===key?{image:saved.image,angle:saved.angle||0}:null);
+    if(!hit){
+      const response=await api('retouch',{image:input,options:req});
+      if(response.warning){warnings.push(response.warning);return {url:await photoroomCleanup(response.image,options)};}
+      hit={image:response.image,angle:input===source?0:angle};cache.current.set(key,hit);
     }
-    return {url:await photoroomCleanup(raw,options),raw:{key,image:raw}};
+    let raw=hit.image;
+    const delta=Math.round((angle-(hit.angle||0))*100)/100;
+    if(delta)raw=rotateCanvas(await imageCanvas(raw),delta,null).toDataURL('image/png');
+    return {url:await photoroomCleanup(raw,options),raw:{key,image:hit.image,angle:hit.angle||0}};
   }
   // Photoroom 결과 정리(무료): 흰 배경으로 왔으면 가장자리 흰색을 투명으로 되살리고, 받침대 기둥을 지웁니다.
   // 고스트 마네킹·플랫레이·배경 유지는 모양이 다른 결과라 건드리지 않습니다.
@@ -220,17 +255,17 @@ export default function AutoStudio() {
     }
     return next;
   }
-  async function processPhotos(onlyId) {
+  async function processPhotos(onlyId,base) {
     await task(async()=>{
       const status=await api('status');setReady(status);
-      let current={...slots};const warnings=[];
+      let current={...(base||slots)};const warnings=[];
       const pending=Object.values(current).filter(slot=>slot.source&&(onlyId?slot.id===onlyId:slot.enabled&&(slot.id!=='fit'||fitEnabled)&&slot.status!=='done'));
       const engines=new Set(pending.map(slot=>cutoutCost(slot.retouch||retouch)));
       if(engines.has('photoroom')&&!status.photoroom)throw new Error('서버에 Photoroom API 키(PHOTOROOM_API_KEY)가 연결되지 않았습니다. Vercel 환경변수에 등록한 뒤 다시 배포하거나, 배경 지우기 엔진을 BiRefNet(무료)으로 바꾸세요.');
       if(engines.has('birefnet'))setBir(await checkBirefnet());
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
-        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut);
+        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource);
         const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id});
         const prev=entryOf(slot);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
@@ -396,7 +431,7 @@ export default function AutoStudio() {
           if((!id||next[id].source)&&['fabric','detail'].includes(item.shot))id=DETAIL_ORDER.find(k=>!next[k].source);
           if(!id||next[id].source){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
           if(id==='fit')fit=true;
-          next[id]={...next[id],source:p.full,image:whitePhoto(await imageCanvas(p.full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
+          next[id]={...next[id],source:p.full,...await initialLevel(p.full,retouch),image:whitePhoto(await imageCanvas(p.full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
         }
         built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
       }
@@ -439,7 +474,7 @@ export default function AutoStudio() {
   function removePhoto(id) {
     setPreview(null);
     setSlots(current=>{
-      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
+      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
       return next;
     });
   }
@@ -471,7 +506,7 @@ export default function AutoStudio() {
     const title=texts.headline||'의류 상세페이지';
     downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
+  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
   const visible=s=>s.id==='hero'||Boolean(s.source)||Boolean(s.shown);
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));

@@ -25,6 +25,7 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
     <div className="post-clean" aria-label={`${prefix}누끼 뒤 정리`}>
       <h4>누끼 뒤 정리 <Cost k="browser"/></h4>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 맞추기`} checked={value.autoLevel!==false} onChange={e=>set({autoLevel:e.target.checked})}/>사진을 넣을 때 자동 수평 맞추기 (기울어진 사진 바로 세우기, 누끼 전 적용)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>
