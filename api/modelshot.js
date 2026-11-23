@@ -87,6 +87,11 @@ export default async function handler(req, res) {
   try {
     const { action, provider = 'fashn' } = req.body || {}
 
+    // 키가 설정돼 있는지만 알려 줌 (FASHN을 호출하지 않으므로 과금 없음, 키 값은 절대 응답에 넣지 않음)
+    if (action === 'config') {
+      return res.status(200).json({ fashn: Boolean(fashnKey()), styleroom: Boolean(process.env.STYLEROOM_API_KEY) })
+    }
+
     if (action === 'fetch') {
       const r = await fetchAsDataUrl(req.body.url)
       return res.status(r.status).json(r.body)
