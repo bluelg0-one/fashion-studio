@@ -18,6 +18,10 @@ try{
  const slot=id=>page.locator(`[data-slot="${id}"]`);
  const file={name:'fixture.png',mimeType:'image/png',buffer:Buffer.from(fixture.split(',')[1],'base64')};
  const idle=()=>page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
+ // 새로고침 직후에는 앱이 저장된 상품을 불러온 뒤에 편집 잠금을 풉니다. 첫 화면이 그려진 순간에는 잠금이 아직 걸리지 않아
+ // idle()만으로는 불러오기 전에 통과할 수 있으므로, 상품 이름이 채워지고(불러오기 완료) 잠금이 풀릴 때까지 기다립니다.
+ const loaded=()=>page.waitForFunction(()=>{const name=document.querySelector('[aria-label="상품 이름"]'),editor=document.querySelector('.studio-editor');return Boolean(name?.value)&&editor&&!editor.disabled;});
+ await loaded();
  const download=async(name)=>{const pending=page.waitForEvent('download');await page.getByRole('button',{name,exact:true}).first().click();const d=await pending;assert.equal(await d.failure(),null);return fs.readFile(await d.path());};
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles(file);await idle();
  await page.getByLabel('상품 정보',{exact:true}).fill('확인된 정보 <면 추정 금지>');

@@ -14,7 +14,7 @@ import DrivePanel from './DrivePanel.jsx';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
-import {THEME_LIST, themeOf, renderThemed, themedHtml} from '../utils/detailThemes.js';
+import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME} from '../utils/detailThemes.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
@@ -99,7 +99,7 @@ export default function AutoStudio() {
     try {
       const list=await listProducts();
       if(list.length)await applyProduct(await getProduct(list[0].id));
-      else {const product={id:newProductId(),name:'상품 1',data:null};await saveProduct({...product,data:{}});await applyProduct(product);}
+      else {const product={id:newProductId(),name:'상품 1',data:{docTheme:NEW_PRODUCT_THEME}};await saveProduct(product);await applyProduct(product);}
       setProducts(await listProducts());
       setStep('');
     } catch(e){setSaveState('error');setStep('');setError(`상품 저장소를 쓸 수 없습니다 (${e.message}). 작업은 이 화면에서만 유지됩니다.`);}
@@ -119,7 +119,7 @@ export default function AutoStudio() {
   async function addProduct() {
     await task(async()=>{
       await saveNow();
-      const product={id:newProductId(),name:`상품 ${products.length+1}`,data:{}};
+      const product={id:newProductId(),name:`상품 ${products.length+1}`,data:{docTheme:NEW_PRODUCT_THEME}};
       await saveProduct(product);await applyProduct(product);setProducts(await listProducts());
       setStep('새 상품을 만들었습니다. 사진을 넣어 시작하세요.');
     });
@@ -130,7 +130,7 @@ export default function AutoStudio() {
       clearTimeout(saveTimer.current);await deleteProduct(productId);
       const list=await listProducts();
       if(list.length)await applyProduct(await getProduct(list[0].id));
-      else {const product={id:newProductId(),name:'상품 1',data:{}};await saveProduct(product);await applyProduct(product);}
+      else {const product={id:newProductId(),name:'상품 1',data:{docTheme:NEW_PRODUCT_THEME}};await saveProduct(product);await applyProduct(product);}
       setProducts(await listProducts());setStep('상품을 삭제했습니다.');
     });
   }
@@ -379,7 +379,7 @@ export default function AutoStudio() {
           if(id==='fit')fit=true;
           next[id]={...next[id],source:p.full,image:whitePhoto(await imageCanvas(p.full),null,0),status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
         }
-        built.push({name:g.description,data:{slots:next,fitEnabled:fit}});
+        built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
       }
       const currentEmpty=!Object.values(slots).some(s=>s.source);
       let first=null;

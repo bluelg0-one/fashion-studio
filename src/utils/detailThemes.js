@@ -5,6 +5,7 @@
 //   Noto Serif KR, Noto Sans KR, Cormorant Garamond, Gowun Batang, Gowun Dodum, Playfair Display
 // 글꼴을 받지 못하면(인터넷 끊김 등) 시스템 기본 글꼴로 그리고, 화면에 그 사실을 알립니다.
 import {loadImage} from './studioImages.js';
+import {guideUrl} from './studioDocument.js';
 
 const SERIF_KR='"Noto Serif KR", "Nanum Myeongjo", serif', SANS_KR='"Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
 
@@ -13,22 +14,22 @@ export const THEMES={
   minimal:{
     id:'minimal',label:'미니멀 화이트',desc:'넓은 여백, 얇은 세리프 제목, 무채색. 차분하고 고급스럽게.',
     google:'family=Noto+Serif+KR:wght@300;500&family=Noto+Sans+KR:wght@300;400&family=Cormorant+Garamond:ital,wght@1,400',
-    fonts:{title:{family:SERIF_KR,weight:300},body:{family:SANS_KR,weight:300},en:{family:`"Cormorant Garamond", ${SERIF_KR}`,weight:400,style:'italic'},head:{family:SANS_KR,weight:400}},
-    bg:'#ffffff',text:'#2b2b2b',soft:'#5a5a5a',muted:'#9a9a9a',line:'#e6e6e6',accent:'#2b2b2b',
-    pad:96,gap:44,align:'center',radius:0,
+    fonts:{title:{family:SERIF_KR,weight:300},body:{family:SANS_KR,weight:400},en:{family:`"Cormorant Garamond", ${SERIF_KR}`,weight:400,style:'italic'},head:{family:SANS_KR,weight:400}},
+    bg:'#ffffff',text:'#2b2b2b',soft:'#444444',muted:'#6b6b6b',line:'#e6e6e6',accent:'#2b2b2b',
+    pad:72,gap:44,align:'center',radius:0,
     hero:{bleed:false,maxH:1100,top:56},photo:{maxH:1000,card:null},
-    headline:{font:'title',size:34,lh:1.55,ls:2},body:{size:18,lh:1.95},product:{size:15,lh:1.8},caption:{size:16,lh:1.8},note:{size:14,lh:1.8},
-    tag:{size:13,ls:4,upper:true},section:{style:'rule',size:42},table:{style:'lines',size:16},pairs:false,
+    headline:{font:'title',size:46,lh:1.45,ls:2},body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
+    tag:{size:26,ls:3,upper:true},section:{style:'rule',size:56},table:{style:'lines',size:28},bigGuide:true,pairs:false,
   },
   soft:{
     id:'soft',label:'소프트 무드',desc:'따뜻한 베이지 바탕, 둥근 카드, 부드러운 포인트 색.',
     google:'family=Gowun+Batang:wght@400;700&family=Gowun+Dodum',
     fonts:{title:{family:`"Gowun Batang", ${SERIF_KR}`,weight:700},body:{family:`"Gowun Dodum", ${SANS_KR}`,weight:400},en:{family:`"Gowun Batang", ${SERIF_KR}`,weight:700},head:{family:`"Gowun Batang", ${SERIF_KR}`,weight:700}},
-    bg:'#f6efe7',text:'#4a3f38',soft:'#6e5f55',muted:'#a08b7c',line:'#eadccf',accent:'#c4927a',accentSoft:'#f4e4d8',card:'#ffffff',
+    bg:'#f6efe7',text:'#4a3f38',soft:'#5c4d43',muted:'#765f50',line:'#eadccf',accent:'#a45f66',accentSoft:'#f4e4d8',card:'#ffffff',
     pad:44,gap:30,align:'center',radius:28,
     hero:{bleed:false,maxH:1100,top:8},photo:{maxH:1000,card:{pad:20}},
-    headline:{font:'title',size:32,lh:1.5,ls:0},body:{size:18,lh:1.9},product:{size:15,lh:1.8},caption:{size:16,lh:1.8},note:{size:14,lh:1.8},
-    tag:{size:15,ls:1,upper:false},section:{style:'pill',size:21},table:{style:'card',size:16},pairs:false,
+    headline:{font:'title',size:44,lh:1.45,ls:0},body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
+    tag:{size:28,ls:1,upper:false},section:{style:'pill',size:32},table:{style:'card',size:28},bigGuide:true,pairs:false,
   },
   magazine:{
     id:'magazine',label:'매거진',desc:'꽉 찬 대표 사진, 굵은 영문 제목, 디테일은 두 장씩 편집 배치.',
@@ -41,7 +42,10 @@ export const THEMES={
     tag:{size:12,ls:3,upper:true},section:{style:'big',size:76},table:{style:'bold',size:16},pairs:true,
   },
 };
-export const THEME_LIST=Object.values(THEMES);
+// 목록 순서: 사장님이 고른 소프트 무드를 맨 앞에. 새로 만드는 상품은 소프트 무드로 시작합니다.
+// (테마 정보가 없는 예전 상품은 themeOf()가 '기본'으로 열어 이미 만든 상세페이지가 바뀌지 않습니다.)
+export const THEME_LIST=['soft','minimal','magazine','basic'].map(id=>THEMES[id]);
+export const NEW_PRODUCT_THEME='soft';
 export const themeOf=id=>THEMES[id]||THEMES.basic;
 
 // ── 글꼴 받기 ───────────────────────────────────────────────
@@ -87,7 +91,8 @@ export function themeUnits(blocks,theme) {
     }
     if(role==='hero')units.push({type:'hero',src:b.src,alt:b.label});
     else if(role==='photo'||role==='detail')units.push({type:'photo',src:b.src,alt:b.label});
-    else if(role==='guide')units.push({type:'guide',src:b.src,alt:b.label});
+    // 소프트·미니멀은 그림 안 글자를 키운 치수 그림을 씁니다(폰에서 약 12px).
+    else if(role==='guide')units.push({type:'guide',src:theme.bigGuide&&b.garment?guideUrl(b.garment,'ko',{big:true}):b.src,alt:b.label});
     else if(role==='table')units.push({type:'table',headers:b.headers,rows:b.rows});
     else units.push({type:role,value:b.value});
   }
@@ -96,9 +101,19 @@ export function themeUnits(blocks,theme) {
 
 // ── 캔버스(미리보기·PNG) ────────────────────────────────────
 const WIDTH=860;
-function wrap(ctx,value,width) {
-  const lines=[];
-  for(const part of String(value).split('\n')){let line='';for(const ch of part){if(line&&ctx.measureText(line+ch).width>width){lines.push(line);line='';}line+=ch;}lines.push(line);}
+// 줄바꿈: 띄어쓰기 단위로 넘기고(낱말 중간에서 끊지 않음), 한 줄보다 긴 낱말만 글자 단위로 끊습니다.
+export function wrap(ctx,value,width) {
+  const lines=[],fits=t=>ctx.measureText(t).width<=width;
+  for(const part of String(value).split('\n')){
+    let line='';
+    for(const word of part.split(/(?<= )/)){
+      if(fits(line+word.trimEnd())){line+=word;continue;}
+      if(line){lines.push(line.trimEnd());line='';}
+      if(fits(word.trimEnd())){line=word;continue;}
+      for(const ch of word){if(line&&!fits(line+ch)){lines.push(line);line='';}line+=ch;}
+    }
+    lines.push(line.trimEnd());
+  }
   return lines;
 }
 const setFont=(ctx,f,size,ls=0)=>{ctx.font=fontString(f,size);if('letterSpacing' in ctx)ctx.letterSpacing=`${ls}px`;};
@@ -177,7 +192,7 @@ async function layoutUnit(ctx,t,u) {
   switch(u.type){
     case 'hero':return photoUnit(t,u.src,{bleed:t.hero.bleed,maxH:t.hero.maxH,card:t.photo.card});
     case 'photo':{const p=await photoUnit(t,u.src,{maxH:t.photo.maxH,card:t.photo.card});if(!u.label)return p;const l=textUnit(ctx,t,{value:u.label,font:'body',size:t.tag.size,lh:1.6,ls:t.tag.ls,color:t.muted,upper:t.tag.upper});return {height:p.height+12+l.height,draw:(c,y)=>{p.draw(c,y);l.draw(c,y+p.height+12);}};}
-    case 'guide':return photoUnit(t,u.src,{maxH:420,card:t.photo.card});
+    case 'guide':return photoUnit(t,u.src,{maxH:t.bigGuide?620:420,card:t.photo.card});
     case 'pair':return pairUnit(ctx,t,u.items);
     case 'section':return sectionUnit(ctx,t,u);
     case 'table':return tableUnit(ctx,t,u);
@@ -214,6 +229,8 @@ export async function renderThemed(blocks,themeId) {
 
 // ── HTML ────────────────────────────────────────────────────
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// HTML 글자 크기: 860px 폭에서는 PNG와 같은 px, 더 좁은 화면(휴대폰)에서는 PNG가 줄어드는 비율과 똑같이 줄어듭니다.
+const fs=size=>`min(${size}px,${(size/8.6).toFixed(2)}vw)`;
 const css=f=>`font-family:${f.family.replace(/"/g,"'")};font-weight:${f.weight};font-style:${f.style||'normal'}`;
 
 export function themedHtml(blocks,title,themeId) {
@@ -227,25 +244,25 @@ img{display:block;max-width:100%;margin:0 auto}
 .hero{margin:${t.hero.top}px ${t.hero.bleed?`-${t.pad}px`:'0'} ${t.gap}px}${t.hero.bleed?`.hero img{width:100%;max-height:none}main{padding-top:0}`:''}
 .hero img,.photo img{max-height:${t.photo.maxH}px;object-fit:contain${t.radius&&!card?`;border-radius:${t.radius}px`:''}}
 ${card?`.hero,.photo,.guide{background:${t.card};border-radius:${t.radius}px;padding:${card.pad}px}`:''}
-.guide img{max-height:420px}
-.headline{${css(F.title)};font-size:${t.headline.size}px;line-height:${t.headline.lh};letter-spacing:${t.headline.ls}px;color:${t.text}}
-.body{font-size:${t.body.size}px;line-height:${t.body.lh};color:${t.soft}}
-.product{font-size:${t.product.size}px;line-height:${t.product.lh};color:${t.muted}}
-.caption{font-size:${t.caption.size}px;line-height:${t.caption.lh};color:${t.soft}}
-.note{font-size:${t.note.size}px;line-height:${t.note.lh};color:${t.muted}}
-.label{font-size:${t.tag.size}px;letter-spacing:${t.tag.ls}px;color:${t.muted};margin:0 0 14px;${t.tag.upper?'text-transform:uppercase':''}}
+.guide img{max-height:${t.bigGuide?620:420}px${t.bigGuide?';width:100%':''}}
+.headline{${css(F.title)};font-size:${fs(t.headline.size)};line-height:${t.headline.lh};letter-spacing:${t.headline.ls}px;color:${t.text}}
+.body{font-size:${fs(t.body.size)};line-height:${t.body.lh};color:${t.soft}}
+.product{font-size:${fs(t.product.size)};line-height:${t.product.lh};color:${t.muted}}
+.caption{font-size:${fs(t.caption.size)};line-height:${t.caption.lh};color:${t.soft}}
+.note{font-size:${fs(t.note.size)};line-height:${t.note.lh};color:${t.muted}}
+.label{font-size:${fs(t.tag.size)};letter-spacing:${t.tag.ls}px;color:${t.muted};margin:0 0 14px;${t.tag.upper?'text-transform:uppercase':''}}
 .photo .label{margin:12px 0 0}
 .section{margin-top:${t.gap*2.2}px;margin-bottom:${t.gap*.9}px}
-${st.style==='rule'?`.section h2{${css(F.en)};font-size:${st.size}px;line-height:1.3;margin:0}.section:after{content:'';display:block;width:36px;height:1px;background:${t.text};margin:18px auto 0}`:''}
-${st.style==='pill'?`.section h2{display:inline-block;${css(F.title)};font-size:${st.size}px;letter-spacing:1px;background:${t.accent};color:#fff;border-radius:999px;padding:13px 32px;margin:0}`:''}
-${st.style==='big'?`.section .num{${css(F.num)};font-size:22px;color:${t.muted}}.section h2{${css(F.en)};font-size:${st.size}px;line-height:1.08;letter-spacing:-1px;margin:6px 0 0;padding-bottom:14px;border-bottom:4px solid ${t.line}}`:''}
+${st.style==='rule'?`.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.3;margin:0}.section:after{content:'';display:block;width:36px;height:1px;background:${t.text};margin:18px auto 0}`:''}
+${st.style==='pill'?`.section h2{display:inline-block;${css(F.title)};font-size:${fs(st.size)};letter-spacing:1px;background:${t.accent};color:#fff;border-radius:999px;padding:13px 32px;margin:0}`:''}
+${st.style==='big'?`.section .num{${css(F.num)};font-size:${fs(22)};color:${t.muted}}.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.08;letter-spacing:-1px;margin:6px 0 0;padding-bottom:14px;border-bottom:4px solid ${t.line}}`:''}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;text-align:left}.pair figure{margin:0}.pair img{width:100%;height:auto;max-height:560px;object-fit:contain;background:#fff}.pair figcaption{margin-top:12px}
-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${tb.size}px}
+table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${fs(tb.size)}}
 td,th{padding:13px 6px;text-align:center;overflow-wrap:anywhere;color:${t.soft}}th{color:${t.text};${css(F.head)}}
 ${tb.style==='lines'?`table{border-top:1px solid ${t.text}}th{border-bottom:1px solid ${t.text}}td{border-bottom:1px solid ${t.line}}`:''}
 ${tb.style==='card'?`.tablewrap{background:${t.card};border-radius:${t.radius}px;padding:20px}th{background:${t.accentSoft}}th:first-child{border-radius:14px 0 0 14px}th:last-child{border-radius:0 14px 14px 0}tr+tr td{border-top:1px solid ${t.line}}`:''}
 ${tb.style==='bold'?`th{background:${t.text};color:#fff}td{border-bottom:1px solid #dddddd}`:''}
-@media(max-width:600px){main{padding-left:20px;padding-right:20px}${t.hero.bleed?'.hero{margin-left:-20px;margin-right:-20px}':''}.section h2{font-size:${Math.round(st.size*.62)}px}}`;
+@media(max-width:600px){main{padding-left:20px;padding-right:20px}${t.hero.bleed?'.hero{margin-left:-20px;margin-right:-20px}':''}}`;
   const label=v=>`<p class="label">${esc(v)}</p>`;
   const html=units.map(u=>{
     switch(u.type){

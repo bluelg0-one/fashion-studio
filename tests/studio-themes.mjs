@@ -28,8 +28,8 @@ async function open(blockFonts=false) {
 try{
  const {context,page,idle,download,step,errors,paid}=await open();
  const pick=page.getByLabel('상세페이지 디자인 테마');
- assert.equal(await pick.inputValue(),'basic','새 상품의 기본 테마는 기본');
- assert.deepEqual(await pick.locator('option').allTextContents(),['기본','미니멀 화이트','소프트 무드','매거진']);
+ assert.equal(await pick.inputValue(),'soft','새 상품은 소프트 무드로 시작');
+ assert.deepEqual(await pick.locator('option').allTextContents(),['소프트 무드','미니멀 화이트','매거진','기본']);
  const png={},html={};
  for(const id of ['basic','minimal','soft','magazine']){
   await pick.selectOption(id);
@@ -58,6 +58,14 @@ try{
  assert.equal(await page.getByLabel('상세페이지 디자인 테마').inputValue(),'soft');
  // 테마 글꼴이 PNG에 실제로 들어가는지 확인: 매거진 제목 글꼴 사용 여부
  assert.ok(await page.evaluate(()=>document.fonts.check('900 76px "Playfair Display"')&&document.fonts.check('700 44px "Noto Serif KR"','소프트')));
+ // 테마 정보가 없는 예전 상품은 '기본'으로 열림(이미 만든 상세페이지가 바뀌지 않음)
+ await page.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('fashion-studio',1);r.onsuccess=()=>{const tx=r.result.transaction('products','readwrite');tx.objectStore('products').put({id:'p-legacy',name:'예전 상품',data:{texts:{headline:'예전 상품'}},updatedAt:Date.now()+1e9});tx.oncomplete=()=>{r.result.close();resolve();};tx.onerror=()=>reject(tx.error);};r.onerror=()=>reject(r.error);}));
+ await page.reload();await idle();
+ assert.equal(await page.getByLabel('상품 이름').inputValue(),'예전 상품');
+ assert.equal(await page.getByLabel('상세페이지 디자인 테마').inputValue(),'basic','예전 상품은 기본');
+ // 새 상품 버튼으로 만든 상품은 소프트 무드
+ await page.getByRole('button',{name:/새 상품/}).first().click();await idle();
+ assert.equal(await page.getByLabel('상세페이지 디자인 테마').inputValue(),'soft','새 상품은 소프트 무드');
  assert.deepEqual(paid,[]);assert.deepEqual(errors,[]);
  await context.close();
  // 글꼴을 막으면: 시스템 글꼴로 그려 결과가 달라지고, 화면에 안내
@@ -67,5 +75,5 @@ try{
  assert.match(await blocked.step(),/기본 글꼴로 그렸습니다/);
  assert.notEqual(hash(fallback),hash(png.magazine),'글꼴이 있을 때와 없을 때 PNG가 다름 = 글꼴이 실제로 들어감');
  await blocked.context.close();
- console.log(`PASS: 4 themes (basic unchanged), preview = PNG per theme, HTML same theme + Google Fonts link, order/table kept, magazine pairs, theme saved per product, fonts embedded in PNG (blocked fonts → different PNG + notice), 0 API calls.`);
+ console.log(`PASS: soft first & default for new products, legacy products stay basic, 4 themes (basic unchanged), preview = PNG per theme, HTML same theme + Google Fonts link, order/table kept, magazine pairs, theme saved per product, fonts embedded in PNG (blocked fonts → different PNG + notice), 0 API calls.`);
 }finally{await browser.close();}
