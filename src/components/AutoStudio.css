@@ -40,3 +40,5 @@
 .instagram-photos img{display:block;width:100%;aspect-ratio:4/5;object-fit:contain;background:#fff;border:1px solid #dce2e9;border-radius:6px}
 .instagram-photos.cover img{object-fit:cover}
 .instagram-actions{display:flex;flex-wrap:wrap;gap:8px}
+.channel-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin:10px 0}.channel-item{border:1px solid #dce2e9;border-radius:10px;padding:10px 12px;background:#fafbfc;font-size:13px}.channel-item ul{margin:6px 0 4px;padding-left:18px;color:#3d4757}.channel-item .slot-note{margin:4px 0 0}
+.spec-badge{display:inline-block;white-space:nowrap;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:4px}.spec-unverified{background:#fff3cd;color:#7a5b00}.spec-search{background:#eef2fb;color:#233d78}.spec-official{background:#e7f6ec;color:#1e6b3a}.spec-own{background:#f1f1f4;color:#555}
