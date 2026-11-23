@@ -5,6 +5,7 @@
 //   Noto Serif KR, Noto Sans KR, Cormorant Garamond, Gowun Batang, Gowun Dodum, Playfair Display
 // 글꼴을 받지 못하면(인터넷 끊김 등) 시스템 기본 글꼴로 그리고, 화면에 그 사실을 알립니다.
 import {loadImage} from './studioImages.js';
+import {guideUrl} from './studioDocument.js';
 
 const SERIF_KR='"Noto Serif KR", "Nanum Myeongjo", serif', SANS_KR='"Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
 
@@ -18,7 +19,7 @@ export const THEMES={
     pad:72,gap:44,align:'center',radius:0,
     hero:{bleed:false,maxH:1100,top:56},photo:{maxH:1000,card:null},
     headline:{font:'title',size:46,lh:1.45,ls:2},body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
-    tag:{size:26,ls:3,upper:true},section:{style:'rule',size:56},table:{style:'lines',size:28},pairs:false,
+    tag:{size:26,ls:3,upper:true},section:{style:'rule',size:56},table:{style:'lines',size:28},bigGuide:true,pairs:false,
   },
   soft:{
     id:'soft',label:'소프트 무드',desc:'따뜻한 베이지 바탕, 둥근 카드, 부드러운 포인트 색.',
@@ -28,7 +29,7 @@ export const THEMES={
     pad:44,gap:30,align:'center',radius:28,
     hero:{bleed:false,maxH:1100,top:8},photo:{maxH:1000,card:{pad:20}},
     headline:{font:'title',size:44,lh:1.45,ls:0},body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
-    tag:{size:28,ls:1,upper:false},section:{style:'pill',size:32},table:{style:'card',size:28},pairs:false,
+    tag:{size:28,ls:1,upper:false},section:{style:'pill',size:32},table:{style:'card',size:28},bigGuide:true,pairs:false,
   },
   magazine:{
     id:'magazine',label:'매거진',desc:'꽉 찬 대표 사진, 굵은 영문 제목, 디테일은 두 장씩 편집 배치.',
@@ -90,7 +91,8 @@ export function themeUnits(blocks,theme) {
     }
     if(role==='hero')units.push({type:'hero',src:b.src,alt:b.label});
     else if(role==='photo'||role==='detail')units.push({type:'photo',src:b.src,alt:b.label});
-    else if(role==='guide')units.push({type:'guide',src:b.src,alt:b.label});
+    // 소프트·미니멀은 그림 안 글자를 키운 치수 그림을 씁니다(폰에서 약 12px).
+    else if(role==='guide')units.push({type:'guide',src:theme.bigGuide&&b.garment?guideUrl(b.garment,'ko',{big:true}):b.src,alt:b.label});
     else if(role==='table')units.push({type:'table',headers:b.headers,rows:b.rows});
     else units.push({type:role,value:b.value});
   }
@@ -190,7 +192,7 @@ async function layoutUnit(ctx,t,u) {
   switch(u.type){
     case 'hero':return photoUnit(t,u.src,{bleed:t.hero.bleed,maxH:t.hero.maxH,card:t.photo.card});
     case 'photo':{const p=await photoUnit(t,u.src,{maxH:t.photo.maxH,card:t.photo.card});if(!u.label)return p;const l=textUnit(ctx,t,{value:u.label,font:'body',size:t.tag.size,lh:1.6,ls:t.tag.ls,color:t.muted,upper:t.tag.upper});return {height:p.height+12+l.height,draw:(c,y)=>{p.draw(c,y);l.draw(c,y+p.height+12);}};}
-    case 'guide':return photoUnit(t,u.src,{maxH:420,card:t.photo.card});
+    case 'guide':return photoUnit(t,u.src,{maxH:t.bigGuide?620:420,card:t.photo.card});
     case 'pair':return pairUnit(ctx,t,u.items);
     case 'section':return sectionUnit(ctx,t,u);
     case 'table':return tableUnit(ctx,t,u);
@@ -242,7 +244,7 @@ img{display:block;max-width:100%;margin:0 auto}
 .hero{margin:${t.hero.top}px ${t.hero.bleed?`-${t.pad}px`:'0'} ${t.gap}px}${t.hero.bleed?`.hero img{width:100%;max-height:none}main{padding-top:0}`:''}
 .hero img,.photo img{max-height:${t.photo.maxH}px;object-fit:contain${t.radius&&!card?`;border-radius:${t.radius}px`:''}}
 ${card?`.hero,.photo,.guide{background:${t.card};border-radius:${t.radius}px;padding:${card.pad}px}`:''}
-.guide img{max-height:420px}
+.guide img{max-height:${t.bigGuide?620:420}px${t.bigGuide?';width:100%':''}}
 .headline{${css(F.title)};font-size:${fs(t.headline.size)};line-height:${t.headline.lh};letter-spacing:${t.headline.ls}px;color:${t.text}}
 .body{font-size:${fs(t.body.size)};line-height:${t.body.lh};color:${t.soft}}
 .product{font-size:${fs(t.product.size)};line-height:${t.product.lh};color:${t.muted}}

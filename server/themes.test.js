@@ -56,3 +56,19 @@ test('theme text wraps at spaces, not in the middle of a word; only over-long wo
  assert.deepEqual(wrap(ctx,'아주아주아주긴낱말입니다아주아주아주긴낱말 다음',8),['아주아주아주긴낱','말입니다아주아주','아주긴낱말 다음']);
  assert.deepEqual(wrap(ctx,'a\n\nb',5),['a','','b']);
 });
+test('size guide text is larger only in soft and minimal (about 12px on a phone); basic and Shopee guides are unchanged',async()=>{
+ const {guideSvg}=await import('../src/utils/studioDocument.js');
+ const blocks=documentBlocks({slots:withPhotos(['hero']),fitEnabled:false,texts,garment:'long-pants',rows:[newSizeRow()]});
+ const guideSrc=id=>themeUnits(blocks,THEMES[id]).find(u=>u.type==='guide').src;
+ const svg=src=>decodeURIComponent(src.split(',')[1]);
+ for(const id of ['soft','minimal']){
+  const s=svg(guideSrc(id));assert.ok(s.includes('font-size="24"'),id);assert.ok(!s.includes('font-size="13"'),id);
+  // 860px 문서에서 그림이 그려지는 폭(카드·여백 제외) → 폰 390px에서 보이는 글자 크기
+  const t=THEMES[id],avail=860-t.pad*2-(t.photo.card?t.photo.card.pad*2:0),scale=Math.min(avail/640,620/456,1.6);
+  assert.ok(24*scale*390/860>=11,`${id} ${(24*scale*390/860).toFixed(1)}px`);
+ }
+ assert.ok(svg(guideSrc('magazine')).includes('font-size="13"'));
+ assert.equal(guideSrc('magazine'),blocks.find(b=>b.role==='guide').src);
+ for(const g of GARMENTS_ALL)for(const lang of ['ko','en']){const s=guideSvg(g,lang);assert.ok(s.includes('font-size="13"')&&!s.includes('font-size="24"'));assert.match(s,/height="420"/);}
+});
+const GARMENTS_ALL=['long-top','short-top','vest','dress','long-pants','short-pants'];
