@@ -46,3 +46,18 @@ test('기둥이 없는 사진은 그대로',()=>{
   const img=canvas();garment(img);const before=img.data.slice();
   assert.equal(removeStand(img),null);assert.deepEqual(img.data,before);
 });
+
+test('살짝 기울어 찍힌 기둥도 끝까지 지운다 (진단 001 하단 컷)',()=>{
+ const img=canvas();garment(img);
+ // 아래(799)에서 위(600)로 갈수록 왼쪽으로 9px 기울어진 기둥
+ for(let y=600;y<800;y++){const x0=Math.round(286-(799-y)*0.045);rect(img,x0,y,x0+16,y,[10,10,12]);}
+ const res=removeStand(img);
+ assert.ok(res,'기둥을 찾음');
+ for(let y=650;y<800;y+=10){const x=Math.round(294-(799-y)*0.045);assert.equal(alpha(img,x,y),0,`기둥 y=${y}`);}
+ assert.equal(alpha(img,294,500),255,'옷은 그대로');
+});
+test('너무 비스듬한 막대(약 8° 넘음)는 기둥으로 보지 않는다',()=>{
+ const img=canvas();garment(img);
+ for(let y=650;y<800;y++){const x0=Math.round(260+(799-y)*0.3);rect(img,x0,y,x0+14,y,[10,10,12]);}
+ assert.equal(removeStand(img),null);
+});
