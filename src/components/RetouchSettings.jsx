@@ -23,6 +23,16 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
         {bir&&!bir.ok&&<p className="review-note">BiRefNet이 꺼져 있습니다. 위쪽 ‘사용 도구·비용’ 안내대로 바탕화면의 IOPaint Start를 실행하세요. 예전에 설치했다면 설치 파일을 한 번 더 실행해야 합니다.</p>}
         {bir?.ok&&!bir.ready&&<p className="review-note">BiRefNet 모델 준비 중입니다(처음 한 번 약 450MB 내려받기).</p>}</>
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
+    <div className="post-clean" aria-label={`${prefix}누끼 뒤 정리`}>
+      <h4>누끼 뒤 정리 <Cost k="browser"/></h4>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>
+      <label>옷걸이<select aria-label={`${prefix}옷걸이`} value={value.hangerMode||'keep'} onChange={e=>set({hangerMode:e.target.value})}>
+        <option value="keep">남기기 (반투명해진 고리만 선명하게)</option>
+        <option value="remove">지우기</option>
+      </select></label>
+      <p className="slot-note">옷 색으로 마네킹·옷걸이를 구분합니다. 흰색·회색·검정 옷은 구분할 수 없어 마네킹·옷걸이 지우기를 건너뜁니다.</p>
+    </div>
     {value.cutout!=='birefnet'&&<details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
       <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
