@@ -18,13 +18,14 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
     <label className="check"><input type="checkbox" checked readOnly disabled/>배경 누끼 (항상 적용 · 흰 배경으로 출력)</label>
     <label className="check"><input type="checkbox" aria-label={`${prefix}중앙 정렬`} checked={value.center} onChange={e=>set({center:e.target.checked})}/>옷을 사진 중앙에 정렬</label>
     {value.cutout==='birefnet'
-      ?<><label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 · 무료</label>
+      ?<>
         <p className="slot-note">BiRefNet은 사장님 PC에서 돌아가 비용이 없습니다(IOPaint Start로 함께 켜짐). 사진 1장에 30초 안팎(PC 성능에 따라 다름), 처리 중 메모리 약 4GB를 씁니다. 받침대 기둥은 자동으로 지웁니다. 다른 물건이 남거나 테두리가 마음에 안 들면 이 사진만 Photoroom으로 바꿔 다시 하세요.</p>
         {bir&&!bir.ok&&<p className="review-note">BiRefNet이 꺼져 있습니다. 위쪽 ‘사용 도구·비용’ 안내대로 바탕화면의 IOPaint Start를 실행하세요. 예전에 설치했다면 설치 파일을 한 번 더 실행해야 합니다.</p>}
         {bir?.ok&&!bir.ready&&<p className="review-note">BiRefNet 모델 준비 중입니다(처음 한 번 약 450MB 내려받기).</p>}</>
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
     <div className="post-clean" aria-label={`${prefix}누끼 뒤 정리`}>
       <h4>누끼 뒤 정리 <Cost k="browser"/></h4>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>
       <label>옷걸이<select aria-label={`${prefix}옷걸이`} value={value.hangerMode||'keep'} onChange={e=>set({hangerMode:e.target.value})}>

@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
+import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch} from '../utils/retouchPresets.js';
@@ -151,32 +152,50 @@ export default function AutoStudio() {
     ctx.putImageData(px,0,0);
     return c.toDataURL('image/png');
   }
-  async function engineMatte(source,warnings,options) {
-    return cleanMatte(await engineCut(source,warnings,options),options);
+  // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
+  async function engineMatte(source,warnings,options,saved) {
+    const cut=await engineCut(source,warnings,options,saved);
+    return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null};
   }
-  async function engineCut(source,warnings,options) {
+  // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
+  // 사진 아래에서 올라오는 좁고 곧은 무채색 기둥만 지웁니다(stand.js).
+  function standCleanup(c,options) {
+    if(options.removeStand===false)return;
+    const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+    if(removeStand(px))ctx.putImageData(px,0,0);
+  }
+  async function engineCut(source,warnings,options,saved) {
     if(options.cutout==='birefnet'){
       const rawKey='birefnet:'+source;
       if(!cache.current.has(rawKey))cache.current.set(rawKey,await removeBackground(source));
       const c=await imageCanvas(cache.current.get(rawKey));
-      if(options.removeStand!==false){
-        // BiRefNet은 받침대 기둥을 옷의 일부로 남기므로, 사진 아래에서 올라오는 좁고 곧은 기둥만 지웁니다.
-        const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
-        if(removeStand(px))ctx.putImageData(px,0,0);
-      }
+      standCleanup(c,options);
       cutoutBounds(c.getContext('2d').getImageData(0,0,c.width,c.height));
-      return c.toDataURL('image/png');
+      return {url:c.toDataURL('image/png')};
     }
     // Photoroom: 중앙 정렬은 브라우저에서 하므로 원본 위치 그대로 받습니다(직접 수정 붓이 원본과 맞도록).
+    // 정리 옵션(POST_OPTIONS)은 요청에서 빼서, 바꿔도 같은 요청 = 같은 결과(재과금 없음)로 봅니다.
     const req={...options,center:false};for(const k of POST_OPTIONS)delete req[k];
     const key='photoroom:'+JSON.stringify(req)+source;
-    if(cache.current.has(key))return cache.current.get(key);
-    const response=await api('retouch',{image:source,options:req});
-    const canvas=await imageCanvas(response.image);
-    cutoutBounds(canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height));
-    if(response.warning)warnings.push(response.warning);
-    else cache.current.set(key,response.image);
-    return response.image;
+    let raw=cache.current.get(key)||(saved?.key===key?saved.image:null);
+    if(!raw){
+      const response=await api('retouch',{image:source,options:req});
+      if(response.warning)warnings.push(response.warning);
+      else cache.current.set(key,response.image);
+      raw=response.image;
+      if(response.warning)return {url:await photoroomCleanup(raw,options)};
+    }
+    return {url:await photoroomCleanup(raw,options),raw:{key,image:raw}};
+  }
+  // Photoroom 결과 정리(무료): 흰 배경으로 왔으면 가장자리 흰색을 투명으로 되살리고, 받침대 기둥을 지웁니다.
+  // 고스트 마네킹·플랫레이·배경 유지는 모양이 다른 결과라 건드리지 않습니다.
+  async function photoroomCleanup(url,options) {
+    const c=await imageCanvas(url),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+    if(options.removeBackground===false||options.mannequin==='ghost'||options.mannequin==='flatlay'){cutoutBounds(px);return url;}
+    if(isOpaque(px)&&alphaFromWhite(px))ctx.putImageData(px,0,0);
+    standCleanup(c,options);
+    cutoutBounds(ctx.getImageData(0,0,c.width,c.height));
+    return c.toDataURL('image/png');
   }
   // 1차 결과 = 누끼 + 색상 보정(밝기·화사함) + 기준 색감 맞춤(다른 컷이 기준일 때) + 중앙 정렬
   async function buildStage1(matte,{options,tone,slotId,ref=colorRef}) {
@@ -211,11 +230,11 @@ export default function AutoStudio() {
       if(engines.has('birefnet'))setBir(await checkBirefnet());
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
-        const options=slot.retouch||retouch,matte=await engineMatte(slot.source,warnings,options);
+        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut);
         const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id});
         const prev=entryOf(slot);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
-        current={...current,[slot.id]:prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null}};
+        current={...current,[slot.id]:{...(prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null}),rawCut:raw||slot.rawCut||null}};
         current=await refreshImages(current);
         setSlots(current);
       }
