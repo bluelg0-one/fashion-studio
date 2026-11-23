@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {Cost} from './Cost.jsx';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
-import {DEFECT_LABEL} from '../utils/iopaint.js';
+import {DEFECT_LABEL, strokeBox} from '../utils/iopaint.js';
 import {labCss} from '../utils/colorMatch.js';
 import {applyBrush} from '../utils/matte.js';
 import {imageCanvas} from '../utils/studioImages.js';
@@ -76,8 +76,8 @@ function MatteEditor({slot,onApply,onCancel}) {
 const MANUAL_TYPES=['stain','wrinkle','lint','thread','mannequin_mark','other'];
 function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
   const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
-  const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null);
-  const box=useRef(null);
+  const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null),[tool,setTool]=useState('box'),[brush,setBrush]=useState(25);
+  const box=useRef(null),paint=useRef(null),pts=useRef(null);
   const save=(nextRegions,nextSel)=>onPatch(slot.id,{defects:{...(d||{}),regions:nextRegions,selected:nextSel,preview:null}});
   const toggle=i=>save(regions,sel.includes(i)?sel.filter(x=>x!==i):[...sel,i].sort((a,b)=>a-b));
   const remove=i=>save(regions.filter((_,k)=>k!==i),sel.filter(x=>x!==i).map(x=>x>i?x-1:x));
@@ -86,9 +86,16 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
     setDraw(v=>!v);
   }
   const at=e=>{const r=box.current.getBoundingClientRect();const c=v=>Math.max(0,Math.min(1000,Math.round(v)));return {x:c((e.clientX-r.left)/r.width*1000),y:c((e.clientY-r.top)/r.height*1000)};};
-  const down=e=>{if(!draw)return;e.preventDefault();e.currentTarget.setPointerCapture?.(e.pointerId);const p=at(e);setDrag({a:p,b:p});};
-  const move=e=>{if(drag)setDrag({...drag,b:at(e)});};
+  // 붓: 칠하는 동안 겹쳐 그린 자국을 보여 주고, 손을 떼면 하나의 표시로 저장
+  const dot=p=>{const c=paint.current,r=box.current.getBoundingClientRect();if(c.width!==Math.round(r.width)){c.width=Math.round(r.width);c.height=Math.round(r.height);}
+    const g=c.getContext('2d');g.fillStyle='rgba(224,36,94,.4)';g.beginPath();g.arc(p.x/1000*c.width,p.y/1000*c.height,brush/1000*c.width,0,Math.PI*2);g.fill();};
+  const down=e=>{if(!draw)return;e.preventDefault();e.currentTarget.setPointerCapture?.(e.pointerId);const p=at(e);
+    if(tool==='brush'){pts.current=[p];dot(p);return;}setDrag({a:p,b:p});};
+  const move=e=>{if(pts.current){const p=at(e),l=pts.current[pts.current.length-1];if(Math.hypot(p.x-l.x,p.y-l.y)>=brush/3){pts.current.push(p);dot(p);}return;}if(drag)setDrag({...drag,b:at(e)});};
   const up=e=>{
+    if(pts.current){const points=pts.current;pts.current=null;const c=paint.current;c.getContext('2d').clearRect(0,0,c.width,c.height);
+      const r=box.current.getBoundingClientRect(),bb=strokeBox(points,brush,r.width/r.height);
+      save([...regions,{type:kind,shape:'stroke',points,r:brush,...bb,confidence:1,note:'직접 칠함',manual:true}],[...sel,regions.length]);return;}
     if(!drag)return;const b=at(e),r={x0:Math.min(drag.a.x,b.x),y0:Math.min(drag.a.y,b.y),x1:Math.max(drag.a.x,b.x),y1:Math.max(drag.a.y,b.y)};setDrag(null);
     if(r.x1-r.x0<4||r.y1-r.y0<4)return;
     save([...regions,{type:kind,...r,confidence:1,note:'직접 표시',manual:true}],[...sel,regions.length]);
@@ -100,6 +107,7 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
       {shown?<div className="defect-box" ref={box} data-testid={`${slot.id}-defect-stage`} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>setDrag(null)}>
         <img className={d?.preview?'defect-preview':'stage2-img'} src={shown} alt={`${slot.label} 2차 보정`} draggable={false}/>
         {live&&<div className="defect-drag" style={live}/>}
+        <canvas ref={paint} className="defect-paint"/>
       </div>:<p className="empty-stage">1차 보정 후 사용할 수 있습니다</p>}
     </div>
     {slot.cutout&&<>
@@ -108,7 +116,9 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
         <span className="btn-with-cost"><button type="button" className={draw?'primary':''} aria-pressed={draw} onClick={startManual}>✏️ 직접 표시하기{draw?' (켜짐)':''}</button><Cost k="browser"/></span>
       </div>
       {draw&&<div className="btn-row draw-tools"><label>표시 종류<select aria-label={`${slot.id} 직접 표시 종류`} value={kind} onChange={e=>setKind(e.target.value)}>{MANUAL_TYPES.map(t=><option key={t} value={t}>{DEFECT_LABEL[t]}</option>)}</select></label>
-        <p className="slot-note">사진 위에서 지울 곳을 <b>끌어서 상자</b>로 표시하세요. 다 했으면 ‘직접 표시하기’를 다시 눌러 끕니다.</p></div>}
+        <label>표시 방법<select aria-label={`${slot.id} 표시 방법`} value={tool} onChange={e=>setTool(e.target.value)}><option value="box">상자</option><option value="brush">붓으로 칠하기 (넓은 구김)</option></select></label>
+        {tool==='brush'&&<label>붓 크기 · {Math.round(brush/10)}%<input type="range" aria-label={`${slot.id} 표시 붓 크기`} min="8" max="80" value={brush} onChange={e=>setBrush(Number(e.target.value))}/></label>}
+        <p className="slot-note">{tool==='brush'?<>구김이 지나가는 길을 따라 <b>붓으로 칠하세요</b>. 손을 떼면 하나의 표시가 됩니다.</>:<>사진 위에서 지울 곳을 <b>끌어서 상자</b>로 표시하세요.</>} 다 했으면 ‘직접 표시하기’를 다시 눌러 끕니다.</p></div>}
       {d&&<>
         {regions.length?<ul className="defect-list">{regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} {r.manual?<small>(직접)</small>:<small>({Math.round(r.confidence*100)}%)</small>}</label><button type="button" className="subtle tiny" aria-label={`${slot.id} 표시 ${i+1} 삭제`} onClick={()=>remove(i)}>✕</button></li>)}</ul>
           :<p className="slot-note">{draw?'사진 위에서 끌어서 표시하세요.':'표시된 곳이 없습니다.'}</p>}
