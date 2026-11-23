@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
-import {Cost} from './Cost.jsx';
+import {Cost, CostN} from './Cost.jsx';
+import {DEFECT_LEVELS, callsFor} from '../utils/defectTiles.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {DEFECT_LABEL, strokeBox} from '../utils/iopaint.js';
@@ -91,7 +92,7 @@ function LevelPanel({slot,draft,setDraft,onLevel}) {
     {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.auto===0&&level.confidence!=null&&level.confidence<.25?' — 곧은 선이 부족해 돌리지 않았습니다':''}</p>}
   </div>;
 }
-function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
+function DefectPanel({slot,iop,onPatch,onFind,onInpaint,opts={level:'aggressive',split:true},setOpts=()=>{}}) {
   const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
   const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null),[tool,setTool]=useState('box'),[brush,setBrush]=useState(25);
   const box=useRef(null),paint=useRef(null),pts=useRef(null);
@@ -129,7 +130,8 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
     </div>
     {slot.cutout&&<>
       <div className="btn-row">
-        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><Cost k="claudeDefects"/></span>
+        <label className="defect-level">찾기 민감도<select aria-label={`${slot.id} 찾기 민감도`} value={opts.level} onChange={e=>setOpts({level:e.target.value})}>{Object.entries(DEFECT_LEVELS).map(([k,v])=><option key={k} value={k}>{v.label}{k==='aggressive'?' (기본)':''} · {callsFor(k)}회</option>)}</select></label>
+        <span className="btn-with-cost"><button type="button" onClick={()=>onFind(slot.id)}>🤖 수정할 곳 자동 찾기</button><CostN k="claudeDefects" n={callsFor(opts.level)}/></span>
         <span className="btn-with-cost"><button type="button" className={draw?'primary':''} aria-pressed={draw} onClick={startManual}>✏️ 직접 표시하기{draw?' (켜짐)':''}</button><Cost k="browser"/></span>
       </div>
       {draw&&<div className="btn-row draw-tools"><label>표시 종류<select aria-label={`${slot.id} 직접 표시 종류`} value={kind} onChange={e=>setKind(e.target.value)}>{MANUAL_TYPES.map(t=><option key={t} value={t}>{DEFECT_LABEL[t]}</option>)}</select></label>
@@ -140,6 +142,7 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
         {regions.length?<ul className="defect-list">{regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} {r.manual?<small>(직접)</small>:<small>({Math.round(r.confidence*100)}%)</small>}</label><button type="button" className="subtle tiny" aria-label={`${slot.id} 표시 ${i+1} 삭제`} onClick={()=>remove(i)}>✕</button></li>)}</ul>
           :<p className="slot-note">{draw?'사진 위에서 끌어서 표시하세요.':'표시된 곳이 없습니다.'}</p>}
         <div className="btn-row">
+          <label className="check"><input type="checkbox" aria-label={`${slot.id} 넓은 상자 잘게 나누기`} checked={opts.split!==false} onChange={e=>setOpts({split:e.target.checked})}/>넓은 상자는 작은 상자로 나눠 한 번에 지우기 (기본 · 비교해 보니 구김이 더 잘 지워짐)</label>
           <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>{setDraw(false);onInpaint(slot.id);}}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
           <button type="button" className="subtle" onClick={()=>{setDraw(false);onPatch(slot.id,{defects:null});}}>표시 모두 지우기</button>
         </div>
@@ -150,7 +153,7 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint}) {
 }
 
 // ---- 컷 한 줄: 원본 → 1차 보정 → 2차 보정 → 최종 (PC는 가로 4칸, 모바일은 세로) ----
-export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide,onLevel}) {
+export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,onRemove,onVersion,onSave,retouchDefault,status,bir,colorRef,onColorRef,slotList,onMove,iop,onFindDefects,onInpaint,onHide,onLevel,defectOpts,setDefectOpts}) {
   const [editing,setEditing]=useState(false);
   const [tilt,setTilt]=useState(slot.level?.angle||0);
   useEffect(()=>setTilt(slot.level?.angle||0),[slot.level?.angle]);
@@ -204,7 +207,7 @@ export function CutRow({slot,busy,onUpload,onPatch,onProcess,onMatteEdit,onTone,
       </div>
       <div className="cut-col">
         <h4>2차 보정 <small>얼룩 · 구김</small></h4>
-        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint}/>
+        <DefectPanel slot={slot} iop={iop} onPatch={onPatch} onFind={onFindDefects} onInpaint={onInpaint} opts={defectOpts} setOpts={setDefectOpts}/>
         <ColorRefCheck slot={slot} stage="stage2" colorRef={colorRef} onColorRef={onColorRef} has={Boolean(slot.stage2)}/>
       </div>
       <div className="cut-col">

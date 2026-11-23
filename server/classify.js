@@ -90,21 +90,39 @@ const Defects=z.object({regions:z.array(z.object({
   confidence:z.number(),
   note:z.string(),
 }))});
-const DEFECT_INSTRUCTIONS=`This is a clothing product photo (usually on a mannequin, background may already be removed to white). Find small, local flaws that should be erased with an inpainting tool so the product looks clean:
+// 민감도: normal(예전과 같은 문장) / aggressive(기본) / max. 적극 이상은 넓은 구김·접힌 자국·눌린 주름·생활 구김을 적극적으로 표시합니다.
+// 타일(tile=true)은 옷 일부를 확대한 사진이라는 것을 알려 주고, 좌표는 그 확대 사진 기준으로 받습니다.
+const DEFECT_LIMIT={normal:12,aggressive:20,max:25};
+const DEFECT_EAGER=`
+Be thorough: the shop owner found that many real creases were missed. Actively mark every accidental crease on the garment, including:
+- broad, soft wrinkles across the body or sleeves, not only small sharp dents
+- fold lines and storage creases (straight lines left by folding the garment)
+- pressed or crushed wrinkles (flattened marks from hangers, packing or the mannequin)
+- everyday wear creases at elbows, waist, hem and around the mannequin's shoulders
+For a long or wide crease, cover it with one or more boxes along its full length.
+Still never mark knit ribbing, cable or waffle patterns, seams and stitching, designed pleats, gathers, darts or tucks, buttons, zippers, pockets, labels, prints, logos or the fabric's own texture.`;
+const DEFECT_MAX_EXTRA=`
+When in doubt about whether a soft crease is accidental, mark it with a lower confidence (0.3-0.5) instead of leaving it out; the owner reviews every box before anything is erased.`;
+function defectInstructions({level='normal',tile=false,W,H}) {
+  const eager=level==='aggressive'||level==='max';
+  return `This is a clothing product photo (usually on a mannequin, background may already be removed to white).${tile?' It is a zoomed-in part of the garment so that small and wide creases are easier to see.':''} Find ${eager?'':'small, '}local flaws that should be erased with an inpainting tool so the product looks clean:
 - stain: spots, smudges or discoloration on the garment or mannequin
 - wrinkle: accidental creases, dents or crumpled spots in the fabric (NOT designed folds, pleats, gathers, ribbing, seams or the natural drape around the body)
 - lint: dust, fluff or hair
 - thread: loose threads
 - mannequin_mark: marks, tape or damage on the mannequin
 - wall_mark: leftover wall/background marks
-Never mark prints, logos, buttons, labels the shop wants visible, stitching, pockets or texture of the fabric itself. Prefer missing a doubtful spot over marking a real design element.
-Coordinates: the image is ${'{W}'}x${'{H}'} pixels; give each region as a tight box in a 0-1000 scale of width (x) and height (y), with x0<x1 and y0<y1. Keep boxes as small as possible while fully covering the flaw. At most 12 regions. note: one short Korean phrase describing the flaw. Return an empty list if the photo is clean.`;
+Never mark prints, logos, buttons, labels the shop wants visible, stitching, pockets or texture of the fabric itself.${eager?'':' Prefer missing a doubtful spot over marking a real design element.'}${eager?DEFECT_EAGER:''}${level==='max'?DEFECT_MAX_EXTRA:''}
+Coordinates: the image is ${W||'?'}x${H||'?'} pixels; give each region as a tight box in a 0-1000 scale of width (x) and height (y), with x0<x1 and y0<y1. Keep boxes as small as possible while fully covering the flaw. At most ${DEFECT_LIMIT[level]||12} regions. note: one short Korean phrase describing the flaw. Return an empty list if the photo is clean.`;
+}
+export const DEFECT_INSTRUCTIONS=defectInstructions({level:'normal',W:'{W}',H:'{H}'});
+export {defectInstructions};
 
 export async function findDefects(body,env=process.env,client) {
   if(!env.ANTHROPIC_API_KEY&&!client)throw fail('현재 실행 환경에 ANTHROPIC_API_KEY가 연결되지 않았습니다.',503);
   const m=typeof body.image==='string'&&body.image.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
   if(!m||body.image.length>2500000)throw fail('검사할 사진 형식이 올바르지 않습니다.',400);
-  const W=Number(body.width)||0,H=Number(body.height)||0;
+  const W=Number(body.width)||0,H=Number(body.height)||0,level=DEFECT_LIMIT[body.level]?body.level:'normal';
   const anthropic=client||new Anthropic({apiKey:env.ANTHROPIC_API_KEY,timeout:120000,maxRetries:1});
   let response;
   try {
@@ -114,7 +132,7 @@ export async function findDefects(body,env=process.env,client) {
       betas:['server-side-fallback-2026-07-01'],fallbacks:'default',
       messages:[{role:'user',content:[
         {type:'image',source:{type:'base64',media_type:`image/${m[1]}`,data:m[2]}},
-        {type:'text',text:DEFECT_INSTRUCTIONS.replace('{W}',W||'?').replace('{H}',H||'?')},
+        {type:'text',text:defectInstructions({level,tile:Boolean(body.tile),W,H})},
       ]}],
     });
   } catch(e) {
@@ -128,6 +146,6 @@ export async function findDefects(body,env=process.env,client) {
   if(!response.parsed_output)throw fail('검사 결과를 읽지 못했습니다. 다시 시도하세요.',502);
   const clamp=v=>Math.max(0,Math.min(1000,v));
   const regions=response.parsed_output.regions.map(r=>({...r,x0:clamp(Math.min(r.x0,r.x1)),x1:clamp(Math.max(r.x0,r.x1)),y0:clamp(Math.min(r.y0,r.y1)),y1:clamp(Math.max(r.y0,r.y1)),confidence:Math.max(0,Math.min(1,r.confidence))}))
-    .filter(r=>r.x1-r.x0>=2&&r.y1-r.y0>=2).slice(0,12);
-  return {regions,model:response.model};
+    .filter(r=>r.x1-r.x0>=2&&r.y1-r.y0>=2).slice(0,DEFECT_LIMIT[level]);
+  return {regions,model:response.model,level};
 }

@@ -10,7 +10,8 @@ import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../u
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
-import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
+import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, inspectTile, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
+import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions, splitRegions} from '../utils/defectTiles.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import DrivePanel from './DrivePanel.jsx';
 import ShopeePanel from './ShopeePanel.jsx';
@@ -62,6 +63,9 @@ export default function AutoStudio() {
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram),[docTheme,setDocTheme]=useState('basic');
+  // 수정할 곳 찾기 설정(이 브라우저에 기억): 민감도 · 넓은 상자 잘게 나누기
+  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,split:true,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,split:true};}});
+  const setDefectOpts=patchOpts=>setDefectOptsState(cur=>{const next={...cur,...patchOpts};try{localStorage.setItem('fashion-studio-defects',JSON.stringify(next));}catch{}return next;});
   const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState(''),[localSavedAt,setLocalSavedAt]=useState(0);
   const skipSave=useRef(true),saveTimer=useRef(null);
@@ -368,32 +372,58 @@ export default function AutoStudio() {
     });
   }
   // ---- 얼룩·구김: Claude가 표시 → IOPaint가 지움 ----
+  // 민감도별 호출: 보통 1회(사진 전체) · 적극 4회(옷 영역 2×2 타일) · 최대 9회(3×3). 같은 사진·같은 민감도는 다시 부르지 않습니다.
+  async function findRegions(cutout,level) {
+    const key='defects:'+level+':'+cutout;
+    if(cache.current.has(key))return {regions:cache.current.get(key),cached:true};
+    const n=(DEFECT_LEVELS[level]||DEFECT_LEVELS.normal).grid;
+    let regions;
+    if(n<=1)regions=(await api('defects',{...(await inspectImage(cutout)),level})).regions;
+    else {
+      const c=await imageCanvas(cutout),tiles=tileGrid(garmentBox(c.getContext('2d').getImageData(0,0,c.width,c.height)),n),all=[];
+      for(let i=0;i<tiles.length;i++){
+        setStep(`Claude가 수정할 곳을 찾는 중 · 타일 ${i+1}/${tiles.length}`);
+        const {regions:found}=await api('defects',{...(await inspectTile(cutout,tiles[i])),level,tile:true});
+        all.push(...found.map(r=>mapFromTile(r,tiles[i],c.width,c.height)));
+      }
+      regions=mergeRegions(all).slice(0,40);
+    }
+    cache.current.set(key,regions);
+    return {regions,cached:false};
+  }
   async function findDefectsFor(id) {
     await task(async()=>{
       const slot=slots[id];if(!slot?.cutout)throw new Error('먼저 ‘이 사진 누끼·보정’으로 배경을 지운 뒤 찾아 주세요.');
       const status=await api('status');setReady(status);
       if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');
-      setStep(`Claude가 ${slot.label}에서 얼룩·구김을 찾는 중`);
-      const shot=await inspectImage(slot.cutout);
-      const {regions:found}=await api('defects',shot);
+      const level=defectOpts.level||DEFAULT_DEFECT_LEVEL;
+      setStep(`Claude가 ${slot.label}에서 얼룩·구김을 찾는 중 (민감도: ${DEFECT_LEVELS[level].label})`);
+      const {regions:found,cached}=await findRegions(slot.cutout,level);
       // 사장님이 직접 표시한 곳은 그대로 두고, Claude가 찾은 곳만 새로 바꿉니다.
       const old=slot.defects||{regions:[],selected:[]},kept=old.regions.map((r,i)=>({r,on:old.selected.includes(i)})).filter(x=>x.r.manual);
       const regions=[...found,...kept.map(x=>x.r)];
-      const selected=[...found.map((r,i)=>r.confidence>=.5?i:-1).filter(i=>i>=0),...kept.map((x,k)=>x.on?found.length+k:-1).filter(i=>i>=0)];
+      // 적극·최대는 신뢰도가 낮은 표시(0.3 이상)도 미리 골라 둡니다(지우기 전에 사장님이 확인).
+      const minConf=level==='normal'?.5:.3;
+      const selected=[...found.map((r,i)=>r.confidence>=minConf?i:-1).filter(i=>i>=0),...kept.map((x,k)=>x.on?found.length+k:-1).filter(i=>i>=0)];
       const preview=await markedPreview(slot.cutout,regions,selected);
       patch(id,{defects:{regions,selected,preview}});
-      setStep(found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다. 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하세요.`);
+      setStep((found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다 (민감도 ${DEFECT_LEVELS[level].label}${cached?', 저장된 결과 재사용·추가 비용 없음':''}). 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하거나 민감도를 높여 보세요.`));
     });
   }
+  // 넓은 상자는 작은 상자(한 변 9%, 28% 겹침)로 나눠 한 마스크로 보냅니다(끄기 가능).
+  // LaMa로 비교한 결과(보고서 008): 큰 상자 1개보다 구김이 더 잘 지워지고 주변 손상이 적었습니다.
+  // 작은 상자를 한 곳씩 차례로 보내면 옆에 남은 구김을 따라 다시 그려 구김이 남아서 쓰지 않습니다.
   async function inpaintFor(id) {
     await task(async()=>{
       const slot=slots[id],d=slot.defects;if(!d?.selected?.length)return;
-      setStep(`내 PC의 IOPaint가 ${slot.label}의 ${d.selected.length}곳을 지우는 중`);
-      const result=await inpaint(slot.cutout,d.selected.map(i=>d.regions[i]),iopUrl);
+      const chosen=d.selected.map(i=>d.regions[i]),regions=defectOpts.split!==false?splitRegions(chosen):chosen;
+      const label=`${d.selected.length}곳${regions.length!==chosen.length?` (작은 상자 ${regions.length}개로 나눔)`:''}`;
+      setStep(`내 PC의 IOPaint가 ${slot.label}의 ${label}을 지우는 중`);
+      const result=await inpaint(slot.cutout,regions,iopUrl);
       const e=entryOf(slot)||{stage1:slot.cutout};
       const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:result}),defects:null}});
       setSlots(next);
-      setStep(`${slot.label} · IOPaint로 ${d.selected.length}곳을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
+      setStep(`${slot.label} · IOPaint로 ${label}을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
     });
   }
   // 같은 사진에서 다시 찾으면 표시 미리보기를 새로 그립니다.
@@ -506,7 +536,7 @@ export default function AutoStudio() {
     const title=texts.headline||'의류 상세페이지';
     downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
+  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,defectOpts,setDefectOpts,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
   const visible=s=>s.id==='hero'||Boolean(s.source)||Boolean(s.shown);
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));
