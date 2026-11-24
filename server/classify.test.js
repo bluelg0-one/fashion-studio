@@ -32,3 +32,15 @@ test('defect finder sends one image with size, clamps and filters boxes',async()
  assert.deepEqual([r.regions[2].x0,r.regions[2].y1,r.regions[2].confidence],[0,1000,1]);
  await assert.rejects(findDefects({image:'x'},{ANTHROPIC_API_KEY:'k'}),{status:400});
 });
+test('batched classification: earlier garments are sent as references R1.. and matches come back with the browser id (mock)',async()=>{
+ const client=fake({garments:[{id:'R1',description:'중복'},{id:'g1',description:'네이비 니트'}],photos:[{index:1,garment:'R1',shot:'back',confidence:.9,review:false,note:''},{index:2,garment:'g1',shot:'front',confidence:.9,review:false,note:''}]});
+ const r=await classifyPhotos({photos:[{id:'a',image:img},{id:'b',image:img}],references:[{id:'G-7',description:'핑크 후드 "니트"',image:img}]},{},client);
+ const c=client.calls[0].messages[0].content;
+ assert.equal(c[0].text,'Reference R1: "핑크 후드 \\"니트\\""');assert.equal(c[1].type,'image');assert.equal(c[2].text,'Photo 1');
+ assert.match(c.at(-1).text,/set its garment to that reference id/);
+ assert.deepEqual(r.garments,[{id:'g1',description:'네이비 니트'}],'참고 옷은 새 옷 목록에서 빠짐');
+ assert.deepEqual(r.photos.map(p=>[p.id,p.garment,Boolean(p.reference)]),[['a','G-7',true],['b','g1',false]]);
+ const plain=fake({garments:[],photos:[]});await classifyPhotos({photos:[{id:'a',image:img}]},{},plain);
+ assert.doesNotMatch(plain.calls[0].messages[0].content.at(-1).text,/Reference garments/,'참고 없으면 지시도 없음');
+ await assert.rejects(classifyPhotos({photos:[{id:'a',image:img}],references:Array.from({length:25},(_,i)=>({id:'G'+i,image:img}))},{},plain),{status:400});
+});
