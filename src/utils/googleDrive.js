@@ -201,6 +201,24 @@ export async function listFolderImages(folderId) {
 }
 export async function downloadFile(id) {return (await call(`${API}/files/${q(id)}?alt=media`)).blob();}
 
+// ---- 상품 폴더 안의 상세페이지·채널 묶음 파일(지시서 011) ----
+// 같은 종류(kind: detail-png / detail-html / channels-zip)는 상품마다 한 개. 내용이 같고 이름도 같으면 올리지 않습니다(바뀐 것만).
+// 초안 → 정식으로 바뀌면 이름만 바뀌어도 같은 파일을 고쳐 씁니다(‘상세페이지_초안.png’ → ‘상세페이지.png’).
+async function blobPrint(blob) {
+  const buf=await blob.arrayBuffer();
+  if(globalThis.crypto?.subtle){const h=new Uint8Array(await crypto.subtle.digest('SHA-256',buf));return [...h.slice(0,12)].map(b=>b.toString(16).padStart(2,'0')).join('');}
+  let h=2166136261;const a=new Uint8Array(buf);for(let i=0;i<a.length;i+=Math.max(1,Math.floor(a.length/8000))){h^=a[i];h=Math.imul(h,16777619);}return `${a.length}-${(h>>>0).toString(36)}`;
+}
+export async function uploadProductFile(folderId,product,{kind,name,blob}) {
+  const query=`'${esc(folderId)}' in parents and appProperties has { key='fashionStudio' and value='output' } and appProperties has { key='kind' and value='${esc(kind)}' } and trashed=false`;
+  const old=((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id,name,appProperties)')}&spaces=drive`)).json()).files||[])[0];
+  const fp=await blobPrint(blob);
+  if(old&&old.appProperties?.fp===fp&&old.name===name)return {id:old.id,kept:true};
+  const meta={name,mimeType:blob.type||'application/octet-stream',appProperties:{fashionStudio:'output',kind,productId:product.id,fp}};
+  if(!old)meta.parents=[folderId];
+  return {id:await uploadBlob(meta,blob,old?.id),kept:false};
+}
+
 // ---- 비용 기록 CSV: 작업 폴더 / 두손_앱_비용기록.csv ----
 // 드라이브에는 ‘덧붙이기’가 없어, 앱이 만든 이 파일(drive.file 권한 안)을 읽어 새 줄을 붙인 뒤 다시 올립니다.
 export const COST_CSV_NAME='두손_앱_비용기록.csv';
