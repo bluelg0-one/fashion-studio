@@ -44,7 +44,7 @@ export async function runSave(job,deps) {
       const draft=isDraft(product.data);
       const out=await build(product,{draft});
       const res=await store(product,{files:out.files,photos:out.photos,draft});
-      Object.assign(p,{status:'done',draft,notes:[...(out.notes||[]),...(draft?reviewCuts(product.data).map(c=>`확인 필요 컷: ${c.label} (${c.flags.join(', ')})`):[])],files:out.files.map(f=>f.name),photos:out.photos.length,where:res.where});
+      Object.assign(p,{status:'done',draft,notes:[...(out.notes||[]),...(res.note?[res.note]:[]),...(draft?reviewCuts(product.data).map(c=>`확인 필요 컷: ${c.label} (${c.flags.join(', ')})`):[])],files:out.files.map(f=>f.name),photos:out.photos.length,where:res.where});
     } catch(e) {
       if(e?.stopped)throw e;
       p.status='failed';p.error=String(e?.message||e).slice(0,200);

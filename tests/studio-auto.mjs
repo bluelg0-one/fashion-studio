@@ -93,6 +93,10 @@ try{
  const reviews=await panel.locator('.auto-summary .review-list').innerText();
  assert.match(reviews,/핑크 후드\s+후면\s+Claude가 수정할 곳을 찾지 못함\(0곳\)/);
  assert.match(reviews,/핑크 후드\s+측면\s+자동 수평 신뢰도 낮음\(10%\)/);
+ // 010 요약 뒤 자동으로 이어서: 완성본 저장 + 상세페이지(기본 켬, 드라이브 미연결 → 브라우저 보관). 확인 필요 컷이 있는 핑크 후드는 초안
+ await page.waitForFunction(()=>/저장됨 2/.test(document.querySelector('.save-progress .import-counts')?.innerText||''),null,{timeout:120000});await idle();
+ assert.match(await panel.locator('[data-save="pa"]').innerText(),/핑크 후드\s*초안[\s\S]*상세페이지_초안\.png/);
+ assert.match(await panel.locator('[data-save="pb"]').innerText(),/네이비 니트\s+저장됨 · 브라우저 보관\s+상세페이지\.png/);
  // 순서: 핑크 후드 정면 → 후면 → 측면 누끼, 그다음 네이비 니트
  const saved=await page.evaluate(async()=>{const db=await new Promise(r=>{const q=indexedDB.open('fashion-studio',1);q.onsuccess=()=>r(q.result);});
   const get=id=>new Promise(r=>{const q=db.transaction('products').objectStore('products').get(id);q.onsuccess=()=>r(q.result);});
