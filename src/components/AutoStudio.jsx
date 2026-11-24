@@ -21,6 +21,11 @@ import {markImported} from '../utils/importStore.js';
 import {runAuto, levelFlag, areaFlag, opaqueFraction, colorFlag, deltaE, regionsFlag} from '../utils/autoPipeline.js';
 import {claudeCost, PHOTOROOM} from '../utils/pricing.js';
 import AutoFixPanel from './AutoFixPanel.jsx';
+import {runSave, planSave, fileNames, sizeMissing, AUTO_CHANNELS} from '../utils/autoSave.js';
+import {putOutputs, flushOutbox, driveReady} from '../utils/outbox.js';
+import {channelPackage, channelPhotos} from '../utils/channelExport.js';
+import {printOf} from '../utils/googleDrive.js';
+import {shopeePhotos} from '../utils/shopeeExport.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
@@ -75,7 +80,7 @@ export default function AutoStudio() {
   const setDefectOpts=patchOpts=>setDefectOptsState(cur=>{const next={...cur,...patchOpts};try{localStorage.setItem('fashion-studio-defects',JSON.stringify(next));}catch{}return next;});
   const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState(''),[localSavedAt,setLocalSavedAt]=useState(0);
-  const skipSave=useRef(true),saveTimer=useRef(null);
+  const skipSave=useRef(true),saveTimer=useRef(null),dirty=useRef(false),latest=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
   const [autoRequest,setAutoRequest]=useState(null);
@@ -93,9 +98,10 @@ export default function AutoStudio() {
     finally {lock.current=false;setBusy(false);}
   }
   const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame});
+  latest.current={id:productId,name:productName,data:snapshot()};
   async function applyProduct(product) {
     const d=product?.data||{};
-    skipSave.current=true;
+    skipSave.current=true;dirty.current=false;clearTimeout(saveTimer.current);
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
     const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
@@ -103,10 +109,14 @@ export default function AutoStudio() {
     setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
-  async function saveNow(id=productId,name=productName,data=snapshot()) {
+  // 인자 없이 부르면 ‘화면의 최신 상태’를 저장하되, 저장 안 된 편집이 있을 때만 저장합니다.
+  // (자동 보정·완성본 저장처럼 오래 걸리는 작업 뒤에 예전 화면 상태로 덮어쓰지 않도록)
+  async function saveNow(id,name,data) {
+    if(id===undefined){if(!dirty.current)return;({id,name,data}=latest.current);}
     if(!id)return;
-    clearTimeout(saveTimer.current);
-    try {setSaveState('saving');await saveProduct({id,name,data});setSaveState('saved');setLocalSavedAt(Date.now());setProducts(await listProducts());}
+    clearTimeout(saveTimer.current);dirty.current=false;
+    // 편집 화면이 다루지 않는 값(예: 상세페이지 확인 detailApproved)은 저장된 값을 그대로 둡니다.
+    try {setSaveState('saving');const old=await getProduct(id);await saveProduct({id,name,data:{...(old?.data||{}),...data}});setSaveState('saved');setLocalSavedAt(Date.now());setProducts(await listProducts());}
     catch(e){setSaveState('error');setError(`자동 저장 실패: ${e.message} 작업은 화면에 남아 있으니 다운로드로 보관하세요.`);}
   }
   useEffect(()=>{(async()=>{
@@ -124,7 +134,7 @@ export default function AutoStudio() {
   useEffect(()=>{
     if(!productId)return;
     if(skipSave.current){skipSave.current=false;return;}
-    setSaveState('pending');clearTimeout(saveTimer.current);
+    dirty.current=true;setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
   },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame]);
@@ -607,7 +617,8 @@ export default function AutoStudio() {
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
       const next=await refreshImages(data.slots,{colorRef:colorRefNew,frame:{enabled:false,ratio:'3:4',margin:6,...data.frame}});
-      return {...product,data:{...data,slots:next,color:{ref:colorRefNew,strength:data.color?.strength??80}}};
+      // 새로 보정했으므로 상세페이지 확인(초안 해제)은 다시 받습니다.
+      return {...product,data:{...data,slots:next,color:{ref:colorRefNew,strength:data.color?.strength??80},detailApproved:false}};
     },
   };
   // 무료 엔진 연결 확인(시작 전·대기 중)
@@ -634,6 +645,67 @@ export default function AutoStudio() {
         if(productId){const p=await getProduct(productId);if(p)await applyProduct(p);}
       }
     });
+  }
+  // ---- 완성본 저장 + 상세페이지(011): 저장된 상품 데이터로 파일을 만들고 보관·올리기. 순서는 utils/autoSave.js ----
+  const saveDeps={
+    // 비어 있는 제목·설명만 채웁니다(옵션, 유료). 사진에 보이는 것과 입력된 사실만 쓰는 기존 지시문 그대로(소재·치수·세탁법 추측 금지).
+    writeCopy:async product=>{
+      const d=product.data,hero=d.slots?.hero;if(!hero?.source)return product;
+      const status=await api('status');setReady(status);
+      if(!status.openai)throw new Error('서버에 OpenAI 키가 없어 문구 자동 작성을 할 수 없습니다. ‘비어 있는 문구 자동 작성’을 끄고 다시 하세요.');
+      const texts={...defaultTexts(),...d.texts},copy=await api('analyze',{image:hero.source,product:texts.product});
+      logCost(openaiRow({feature:'openai_copy',product:product.name,cut:hero.label,model:copy.model,usage:copy.usage}));
+      return {...product,data:{...d,texts:{...texts,headline:texts.headline||copy.headline,description:texts.description||[copy.description,...copy.points].join('\n')}}};
+    },
+    build:async(product,{draft})=>{
+      const d=product.data,g=d.garment||'long-top',rows=(d.sizeRows||{})[g]||[newSizeRow()],texts={...defaultTexts(),...d.texts},theme=themeOf(d.docTheme||NEW_PRODUCT_THEME).id;
+      const s=migrateSlots(d.slots),fit=Boolean(d.fitEnabled);
+      if(!s.hero?.image)throw new Error('대표 정면샷이 없어 상세페이지를 만들 수 없습니다.');
+      const b=documentBlocks({slots:s,fitEnabled:fit,texts,garment:g,rows});
+      const png=theme==='basic'?await renderDocument(b):(await renderThemed(b,theme)).blob;
+      const title=texts.headline||product.name||'의류 상세페이지';
+      const html=new Blob([theme==='basic'?documentHtml(b,title):themedHtml(b,title,theme)],{type:'text/html;charset=utf-8'});
+      const zip=await channelPackage({name:product.name,slots:s,fitEnabled:fit,channelIds:AUTO_CHANNELS});
+      const n=fileNames(draft),notes=[];
+      if(sizeMissing(rows))notes.push('사이즈 입력 필요 (상세페이지 사이즈표는 ‘—’로 나감)');
+      if(!texts.headline.trim())notes.push('상품 제목이 비어 있음');
+      const photos=shopeePhotos(s,fit).filter(x=>x.cutout||x.stage1).map(x=>({slotId:x.id,label:x.label,image:x.image}));
+      // 만든 재료의 지문 → 다시 저장해도 재료가 같으면 드라이브에 다시 올리지 않습니다(ZIP은 날짜 때문에 바이트가 매번 달라짐).
+      const docFp=await printOf(JSON.stringify({b,theme,title})),zipFp=await printOf(JSON.stringify({name:product.name,channels:AUTO_CHANNELS,photos:channelPhotos(s,fit).map(x=>[x.id,x.image])}));
+      return {files:[{kind:'detail-png',name:n.png,blob:png,fp:'png-'+docFp},{kind:'detail-html',name:n.html,blob:html,fp:'html-'+docFp},{kind:'channels-zip',name:n.zip,blob:zip.blob,fp:'zip-'+zipFp}],photos,notes};
+    },
+    store:async(product,{files,photos,draft})=>{
+      await putOutputs({productId:product.id,name:product.name,draft,files,photos,at:Date.now()});
+      if(!driveReady())return {where:'browser'};
+      const r=await flushOutbox({only:[product.id],onStage:m=>setStep(`드라이브 저장 · ${m}`)});
+      if(r.errors?.length)return {where:'browser',note:`드라이브 올리기 실패(대기열에 남김): ${r.errors[0]}`};
+      return {where:r.uploaded?'drive':'browser'};
+    },
+  };
+  async function runSaveJob(job,{signal,onProgress,save,prepare}) {
+    await task(async()=>{
+      await saveNow();
+      if(prepare)job=await prepare();
+      try {
+        const c=await runSave(job,{loadProduct:getProduct,saveProduct,...saveDeps,save,signal,onProgress:(j,t)=>{setStep(`완성본 저장 · ${t}`);onProgress(j,t);}});
+        setStep(`완성본·상세페이지 저장 ${job.finished?'완료':'멈춤'} · 상품 ${c.done}개${c.drafts?` (초안 ${c.drafts})`:''}${c.failed?` · 실패 ${c.failed}`:''} · ${driveReady()?'구글 드라이브에 저장':'이 브라우저에 보관 — 드라이브를 연결하면 한꺼번에 올립니다'}`);
+      } catch(e) {
+        if(e.stopped){setStep(e.message);return;}
+        throw new Error(`완성본 저장이 멈췄습니다: ${e.message} ‘이어서 하기’를 누르면 남은 상품부터 이어서 합니다.`);
+      } finally {
+        setProducts(await listProducts());
+        if(productId){const p=await getProduct(productId);if(p)await applyProduct(p);}
+      }
+    });
+    return job;
+  }
+  // 초안 → 사장님 확인 → 정식으로 다시 저장(누르는 즉시 화면을 잠그고 처리)
+  async function approveDetail(id) {
+    return runSaveJob(null,{onProgress:()=>{},save:async()=>{},prepare:async()=>{
+      const p=await getProduct(id);if(!p)throw new Error('상품을 찾을 수 없습니다.');
+      const next={...p,data:{...p.data,detailApproved:true}};await saveProduct(next);
+      return planSave([next]);
+    }});
   }
   async function importFinished(firstId) {
     const list=await listProducts();setProducts(list);
@@ -736,7 +808,7 @@ export default function AutoStudio() {
       <DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)} onAutoFix={ids=>setAutoRequest({ids,at:Date.now()})}/>
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
-    <AutoFixPanel products={products} busy={busy} setStep={setStep} freeEngines={freeEngines} runAutoJob={runAutoJob} openProduct={id=>switchProduct(id)} request={autoRequest}/>
+    <AutoFixPanel products={products} busy={busy} setStep={setStep} freeEngines={freeEngines} runAutoJob={runAutoJob} runSaveJob={runSaveJob} approveDetail={approveDetail} openProduct={id=>switchProduct(id)} request={autoRequest}/>
     <DrivePanel clientId={ready?.googleClientId} productId={productId} localSavedAt={localSavedAt} busy={busy} task={task} setStep={setStep}
       flush={()=>saveNow()} onLoaded={async id=>{clearTimeout(saveTimer.current);await applyProduct(await getProduct(id));setProducts(await listProducts());}}/>
     <p className="session-note">‘사진 한꺼번에 올리기’: 여러 옷이 섞인 사진을 최대 24장까지 올리면 Claude가 같은 옷끼리 묶어 상품을 만들고 컷 종류별 칸에 넣습니다(분류 1회당 Claude API 요금 발생). 옷마다 첫 컷을 정면 전체로 찍으면 더 정확합니다. </p>

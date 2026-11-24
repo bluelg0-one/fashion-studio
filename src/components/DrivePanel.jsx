@@ -3,6 +3,7 @@ import {Cost} from './Cost.jsx';
 import {getProduct, saveProduct} from '../utils/productStore.js';
 import {signIn, signOut, hasToken, savedFolder, rememberFolder, listFolders, createFolder, checkFolder, listDriveProducts, uploadProduct, downloadProduct, uploadFinalPhotos} from '../utils/googleDrive.js';
 import {syncCostLog} from '../utils/costLog.js';
+import {flushOutbox} from '../utils/outbox.js';
 import {shopeePhotos} from '../utils/shopeeExport.js';
 
 // 드라이브에 JPG로 올릴 완성 사진: 상세페이지 순서, 보정을 마친 컷만
@@ -25,7 +26,8 @@ export default function DrivePanel({clientId,productId,localSavedAt,busy,task,se
   useEffect(()=>{if(productId)getProduct(productId).then(p=>setLocalUpdated(p?.updatedAt||0)).catch(()=>{});},[productId,localSavedAt,note]);
 
   // 연결되면(작업 폴더가 정해지면) 아직 올리지 않은 비용 기록을 ‘두손_앱_비용기록.csv’에 덧붙입니다.
-  useEffect(()=>{if(connected&&folder&&hasToken())syncCostLog(folder.id);},[connected,folder]);
+  // 완성본 대기열(011)도 연결되면 한꺼번에 올립니다.
+  useEffect(()=>{if(connected&&folder&&hasToken()){syncCostLog(folder.id);flushOutbox({onStage:m=>setNote(`☁️ 완성본 올리는 중: ${m}`)}).then(r=>{if(r.uploaded)setNote(`☁️ 기다리던 완성본 ${r.uploaded}개 상품을 드라이브에 올렸습니다${r.errors?.length?` · 실패 ${r.errors.length}`:''}`);}).catch(()=>{});}},[connected,folder]);
   async function connect() {
     await task(async()=>{
       setStep('구글 로그인 창에서 계정을 고르고 허용을 눌러 주세요');
