@@ -10,7 +10,7 @@ const usd=v=>`$${(Math.round(v*100)/100).toFixed(2)}`;
 const est=n=>{const e=classifyEstimate(n);return e.batches?`약 ${usd(e.range[0])}~${usd(e.range[1])} (Claude 분류 ${e.batches}번)`:'분류 비용 없음';};
 
 // deps: readThumb, classify, createProduct, onClassified — 화면 밖 흐름에 그대로 넘깁니다.
-export default function DriveImportPanel({ready,busy,task,setStep,deps,onFinished,openProduct}) {
+export default function DriveImportPanel({ready,busy,task,setStep,deps,onFinished,openProduct,onAutoFix=()=>{}}) {
   const [job,setJob]=useState(null),[plan,setPlan]=useState(null),[stage,setStage]=useState(''),[running,setRunning]=useState(false),[,tick]=useState(0);
   const ctrl=useRef(null);
   useEffect(()=>{loadJob().then(j=>{if(j)setJob(j);}).catch(()=>{});},[]);
@@ -73,6 +73,7 @@ export default function DriveImportPanel({ready,busy,task,setStep,deps,onFinishe
       {reviews.length>0&&<details className="review-list" open><summary>⚠ 확인 필요 {reviews.length}장</summary><table className="cost-table"><thead><tr><th>파일</th><th>옷</th><th>컷</th><th>이유</th><th/></tr></thead><tbody>
         {reviews.map(r=><tr key={r.id}><td>{r.name}</td><td>{r.garment}</td><td>{SHOT_LABEL[r.shot]||r.shot}</td><td>{r.note}</td><td><button type="button" className="subtle" disabled={busy} onClick={()=>openProduct(r.productId)}>상품 열기</button></td></tr>)}
       </tbody></table></details>}
+      {!unfinished&&!running&&Object.keys(job.products).length>0&&<div className="btn-row"><button type="button" className="primary" disabled={busy} onClick={()=>onAutoFix([...new Set(Object.values(job.products))])}>자동 보정 시작 (가져온 상품 {new Set(Object.values(job.products)).size}개)</button></div>}
       {!unfinished&&!running&&<p className="slot-note">끝난 가져오기입니다. <button type="button" className="subtle" disabled={busy} onClick={discard}>목록 닫기</button> <button type="button" className="subtle" disabled={busy} onClick={async()=>{if(window.confirm('이미 가져온 사진 기록을 지울까요? 같은 사진을 다시 가져오면 상품이 또 만들어집니다.')){await forgetImported();setStep('가져온 사진 기록을 지웠습니다.');}}}>가져온 기록 지우기</button></p>}
     </div>}
   </section>;

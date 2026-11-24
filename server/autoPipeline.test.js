@@ -100,3 +100,11 @@ test('quality flags: cutout area, low level confidence, large ΔE after color ma
  assert.equal(deltaE({L:50,a:0,b:0},{L:53,a:4,b:0}),5);assert.equal(colorFlag(5),null);assert.match(colorFlag(12.34),/ΔE 12\.3/);
  assert.match(regionsFlag(0),/0곳/);assert.match(regionsFlag(40),/상한\(40곳\)/);assert.equal(regionsFlag(7),null);
 });
+test('a cut finished by auto correction without a 2nd stage (0 boxes) counts as corrected next time',async()=>{
+ const p={id:'x',name:'x',data:{slots:{hero:slot('정면')}}},s=store([p]);
+ const steps={...mockSteps([]),stage2:async sl=>({slot:sl,flags:['Claude가 수정할 곳을 찾지 못함(0곳)'],cost:{claude:.02}})};
+ await runAuto(planAuto([p]),{...s,steps});
+ const saved=s.db.get('x');assert.ok(!saved.data.slots.hero.stage2);assert.ok(saved.data.slots.hero.auto.at);
+ assert.deepEqual(saved.data.slots.hero.auto.flags,['Claude가 수정할 곳을 찾지 못함(0곳)']);
+ assert.equal(planAuto([saved]).products[0].cuts[0].status,'skipped');
+});

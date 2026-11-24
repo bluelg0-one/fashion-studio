@@ -22,7 +22,8 @@ export function planAuto(products,{redo=false,paid=false,paidCap=0,now=Date.now(
     const slots=p.data?.slots||{},ids=Object.keys(slots).filter(k=>slots[k]?.source&&slots[k].enabled!==false);
     ids.sort((a,b)=>(b==='hero')-(a==='hero'));
     return {id:p.id,name:p.name||'이름 없는 상품',cuts:ids.map(k=>{
-      const s=slots[k],done=Boolean(s.stage2),half=Boolean(s.stage1);
+      // 이미 보정 = 2차 결과가 있거나, 자동 보정이 끝까지 확정한 컷(찾은 곳 0곳이라 2차가 없는 컷 포함 → Claude를 다시 부르지 않음)
+      const s=slots[k],done=Boolean(s.stage2||s.auto?.at),half=Boolean(s.stage1);
       return {slotId:k,label:s.label||k,status:!redo&&done?'skipped':'pending',step:!redo&&done?'done':!redo&&half?'color':'level',flags:[],error:null,seconds:0};
     })};
   });
@@ -110,18 +111,21 @@ export async function runAuto(job,deps) {
       };
       // ① 자동 수평 + 1차 (대표 정면 먼저)
       for(const cut of p.cuts){
-        await run(cut,'level',async()=>{if(!slots()[cut.slotId]?.source)throw new Error('사진이 없습니다.');await put(cut,await steps.level(slots()[cut.slotId]));});
-        await run(cut,'stage1',async()=>put(cut,await engine(cut,'birefnet',paid=>steps.stage1(slots()[cut.slotId],{paid}))));
+        await run(cut,'level',async()=>{if(!slots()[cut.slotId]?.source)throw new Error('사진이 없습니다.');await put(cut,await steps.level(slots()[cut.slotId],{product}));});
+        await run(cut,'stage1',async()=>put(cut,await engine(cut,'birefnet',paid=>steps.stage1(slots()[cut.slotId],{paid,product}))));
       }
       // ② 색감 통일: 대표 정면(없으면 1차가 끝난 첫 컷)의 옷 색 기준
       const refCut=p.cuts.find(c=>c.slotId==='hero'&&slots().hero?.stage1)||p.cuts.find(c=>slots()[c.slotId]?.stage1);
       const lab=refCut?await steps.refLab(slots()[refCut.slotId]):null;
-      for(const cut of p.cuts)await run(cut,'color',async()=>{if(cut===refCut||!lab)return;await put(cut,await steps.color(slots()[cut.slotId],lab));});
+      for(const cut of p.cuts)await run(cut,'color',async()=>{if(cut===refCut||!lab)return;await put(cut,await steps.color(slots()[cut.slotId],lab,{product}));});
       // ③ 2차
-      for(const cut of p.cuts)await run(cut,'stage2',async()=>put(cut,await engine(cut,'iopaint',paid=>steps.stage2(slots()[cut.slotId],{paid}))));
+      for(const cut of p.cuts)await run(cut,'stage2',async()=>put(cut,await engine(cut,'iopaint',paid=>steps.stage2(slots()[cut.slotId],{paid,product}))));
       // ④ 최종 확정: 상품 전체 이미지 다시 그리기(색감 기준 저장) → 컷 상태
       if(p.cuts.some(c=>todo(c)&&c.step==='final')){
-        product=await steps.final(product,refCut?{slotId:refCut.slotId,label:refCut.label,lab}:null);await saveProduct(product);
+        product=await steps.final(product,refCut?{slotId:refCut.slotId,label:refCut.label,lab}:null);
+        const fin=p.cuts.filter(c=>todo(c)&&c.step==='final'),at=now(),ss={...product.data.slots};
+        for(const c of fin)if(ss[c.slotId])ss[c.slotId]={...ss[c.slotId],auto:{at,flags:[...c.flags]}};
+        product={...product,data:{...product.data,slots:ss}};await saveProduct(product);
         for(const c of p.cuts)if(todo(c)&&c.step==='final'){c.step='done';c.status=c.flags.length?'review':'done';}
         clock();await save(job);
       }

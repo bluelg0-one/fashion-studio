@@ -31,15 +31,16 @@ export async function checkBirefnet(url=getBirefnetUrl()) {
     const h=await r.json();return {ok:true,ready:Boolean(h.ready),error:h.error||null};
   } catch {return {ok:false};}
 }
+const offline=m=>Object.assign(new Error(m),{offline:true});
 const BIREFNET_OFF='BiRefNet에 연결할 수 없습니다. 바탕화면의 ‘IOPaint Start’로 켰는지 확인하세요. 예전에 설치했다면 설치 파일(install-iopaint.bat)을 다시 받아 한 번 더 실행해야 BiRefNet이 추가됩니다.';
 export async function removeBackground(src,url=getBirefnetUrl()) {
   const h=await checkBirefnet(url);
-  if(!h.ok)throw new Error(BIREFNET_OFF);
+  if(!h.ok)throw offline(BIREFNET_OFF);
   if(h.error)throw new Error(`BiRefNet 모델을 불러오지 못했습니다: ${h.error.slice(0,200)}`);
-  if(!h.ready)throw new Error('BiRefNet 모델을 준비하는 중입니다(처음 한 번은 약 450MB를 내려받습니다). 검은 창에 “Ready”가 보이면 다시 누르세요.');
+  if(!h.ready)throw offline('BiRefNet 모델을 준비하는 중입니다(처음 한 번은 약 450MB를 내려받습니다). 검은 창에 “Ready”가 보이면 다시 누르세요.');
   let r;
   try {r=await fetch(`${base(url)}/remove`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image:src}),signal:AbortSignal.timeout(600000)});}
-  catch {throw new Error(BIREFNET_OFF);}
+  catch {throw offline(BIREFNET_OFF);}
   if(!r.ok){let msg='';try{msg=(await r.json()).error||'';}catch{}throw new Error(`BiRefNet 배경 지우기 실패 (${r.status}) ${msg}`.trim());}
   return toDataUrl(await r.blob());
 }
@@ -111,7 +112,7 @@ export async function inpaint(src,regions,url=getIopaintUrl()) {
   const body={image:c.toDataURL('image/png'),mask:maskFromRegions(c.width,c.height,regions)};
   let r;
   try {r=await fetch(`${base(url)}/api/v1/inpaint`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(180000)});}
-  catch {throw new Error(NOT_RUNNING);}
+  catch {throw Object.assign(new Error(NOT_RUNNING),{offline:true});}
   if(!r.ok)throw new Error(`IOPaint 처리 실패 (${r.status}).`);
   return toDataUrl(await r.blob());
 }

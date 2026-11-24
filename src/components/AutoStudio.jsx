@@ -18,6 +18,9 @@ import DriveImportPanel from './DriveImportPanel.jsx';
 import {assignSlots} from '../utils/driveImport.js';
 import {driveThumb, driveFull, refThumb} from '../utils/drivePhotos.js';
 import {markImported} from '../utils/importStore.js';
+import {runAuto, levelFlag, areaFlag, opaqueFraction, colorFlag, deltaE, regionsFlag} from '../utils/autoPipeline.js';
+import {claudeCost, PHOTOROOM} from '../utils/pricing.js';
+import AutoFixPanel from './AutoFixPanel.jsx';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
@@ -45,7 +48,7 @@ async function api(action,body) {
 }
 
 const MAX_VERSIONS=6;
-const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2'];
+const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2','auto'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
 const entryOf=slot=>{const v=(slot.versions||[null])[slot.vIndex??0];return typeof v==='string'?{matte:null,stage1:v,stage2:null}:v||null;};
 const entryFields=e=>e?{matte:e.matte||null,stage1:e.stage1||null,stage2:e.stage2||null,cutout:e.stage2||e.stage1||null,status:'done'}:{matte:null,stage1:null,stage2:null,cutout:null,status:'raw'};
@@ -75,7 +78,8 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef('');
+  const [autoRequest,setAutoRequest]=useState(null);
+  const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef(''),costProduct=useRef('');
   // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
   const logCost=row=>{addCost(row);};
   const rows=sizeRows[garment]||[newSizeRow()];
@@ -179,7 +183,7 @@ export default function AutoStudio() {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
       const lv=await initialLevel(source,slots[id]?.retouch||retouch);
-      patch(id,{source,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
+      patch(id,{source,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,auto:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
@@ -196,7 +200,7 @@ export default function AutoStudio() {
   // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
   async function engineMatte(source,warnings,options,saved,angle=0,work=null) {
     const cut=await engineCut(source,warnings,options,saved,angle,work);
-    return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null};
+    return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null,charged:Boolean(cut.charged)};
   }
   // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
   // 사진 아래에서 올라오는 좁고 곧은 무채색 기둥만 지웁니다(stand.js).
@@ -222,17 +226,18 @@ export default function AutoStudio() {
     // 재과금 기준은 ‘원본 사진 + 요청 설정’입니다. 수평 각도만 바꾸면 저장된 결과를 각도 차이만큼 돌려 씁니다(무료).
     const key='photoroom:'+JSON.stringify(req)+source;
     let hit=cache.current.get(key)||(saved?.key===key?{image:saved.image,angle:saved.angle||0}:null);
+    let charged=false;
     if(!hit){
-      const response=await api('retouch',{image:input,options:req});
-      logCost(photoroomRow({feature:'photoroom_cutout',product:productName,cut:costCut.current}));
-      if(response.openai)logCost(openaiRow({feature:'openai_edit',product:productName,cut:costCut.current,...response.openai}));
-      if(response.warning){warnings.push(response.warning);return {url:await photoroomCleanup(response.image,options)};}
+      const response=await api('retouch',{image:input,options:req});charged=true;
+      logCost(photoroomRow({feature:'photoroom_cutout',product:costProduct.current||productName,cut:costCut.current}));
+      if(response.openai)logCost(openaiRow({feature:'openai_edit',product:costProduct.current||productName,cut:costCut.current,...response.openai}));
+      if(response.warning){warnings.push(response.warning);return {url:await photoroomCleanup(response.image,options),charged:true};}
       hit={image:response.image,angle:input===source?0:angle};cache.current.set(key,hit);
-    } else logCost(photoroomRow({feature:'photoroom_cutout',product:productName,cut:costCut.current,cached:true}));
+    } else logCost(photoroomRow({feature:'photoroom_cutout',product:costProduct.current||productName,cut:costCut.current,cached:true}));
     let raw=hit.image;
     const delta=Math.round((angle-(hit.angle||0))*100)/100;
     if(delta)raw=rotateCanvas(await imageCanvas(raw),delta,null).toDataURL('image/png');
-    return {url:await photoroomCleanup(raw,options),raw:{key,image:hit.image,angle:hit.angle||0}};
+    return {url:await photoroomCleanup(raw,options),raw:{key,image:hit.image,angle:hit.angle||0},charged};
   }
   // Photoroom 결과 정리(무료): 흰 배경으로 왔으면 가장자리 흰색을 투명으로 되살리고, 받침대 기둥을 지웁니다.
   // 고스트 마네킹·플랫레이·배경 유지는 모양이 다른 결과라 건드리지 않습니다.
@@ -527,7 +532,7 @@ export default function AutoStudio() {
   async function placePhoto(next,slotId,item,full,extra={}) {
     let id=slotId;
     if(!id){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
-    next[id]={...next[id],source:full,...await initialLevel(full,retouch),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
+    next[id]={...next[id],source:full,...await initialLevel(full,retouch),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,auto:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
     return id;
   }
   // ---- 드라이브에서 가져오기(009): 화면 밖 흐름(driveImport.js)에 넘기는 함수들 ----
@@ -549,6 +554,87 @@ export default function AutoStudio() {
     classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',body);},
     onClassified:(result,batch)=>logCost(claudeRow({feature:'classify',product:'(드라이브 가져오기)',cut:`사진 ${batch.length}장`,responses:[result],photos:batch.length})),
   };
+  // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
+  // 누끼는 무료 BiRefNet(사장님 PC)으로 고정, 유료 대체(paid)일 때만 Photoroom. 나머지 설정은 그 상품·컷의 지금 기본값 그대로.
+  const autoOptions=(slot,data,paid)=>({...sanitizeRetouch({...DEFAULT_RETOUCH,...(data?.retouch||{}),...(slot.retouch||{})}),cutout:paid?'photoroom':'birefnet'});
+  const pixelsOf=async src=>{const c=await imageCanvas(src);return c.getContext('2d').getImageData(0,0,c.width,c.height);};
+  const autoSteps={
+    level:async(slot,{product})=>{
+      const options=autoOptions(slot,product.data,false);
+      const lv=slot.level?{level:slot.level,workSource:slot.workSource||null}:await initialLevel(slot.source,options);
+      const f=levelFlag(lv.level);
+      return {slot:{...slot,...lv},flags:f?[f]:[]};
+    },
+    stage1:async(slot,{paid,product})=>{
+      costProduct.current=product.name;costCut.current=slot.label;
+      const options=autoOptions(slot,product.data,paid),warnings=[];
+      const {matte,raw,charged}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource);
+      const stage1=await buildStage1(matte,{options,tone:slot.tone||DEFAULT_TONE,slotId:slot.id,ref:null});
+      const f=areaFlag(opaqueFraction(await pixelsOf(matte)));
+      return {slot:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null,rawCut:raw||slot.rawCut||null},
+        flags:[...(f?[f]:[]),...(paid?['무료 엔진이 꺼져 유료(Photoroom)로 누끼']:[]),...warnings],cost:charged?{paid:PHOTOROOM.perCall}:null};
+    },
+    refLab:async slot=>{const l=dominantLab(await pixelsOf(entryOf(slot)?.stage1||slot.cutout));return {L:l.L,a:l.a,b:l.b};},
+    color:async(slot,lab)=>{
+      const e=entryOf(slot)||{stage1:slot.cutout},{image}=await matchedCutout(e.stage1,lab);
+      const f=colorFlag(deltaE(dominantLab(await pixelsOf(image)),lab));
+      return {slot:withEntry(slot,{matte:e.matte||null,stage1:image,stage2:null}),flags:f?[f]:[]};
+    },
+    stage2:async(slot,{paid,product})=>{
+      const e=entryOf(slot)||{stage1:slot.cutout},input=e.stage1||slot.cutout,keep=r=>({...withEntry(slot,{matte:e.matte||null,stage1:input,stage2:r}),defects:null});
+      if(paid){
+        // 유료 대체: Photoroom 다림질(옷 전체, Claude 호출 없음, 얼룩 AI는 쓰지 않음)
+        const res=await api('retouch2',{image:input,options:{iron:true,stains:false}});
+        logCost(photoroomRow({feature:'photoroom_retouch2',product:product.name,cut:slot.label}));
+        const c=await imageCanvas(res.image),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
+        if(isOpaque(px)&&alphaFromWhite(px))ctx.putImageData(px,0,0);
+        return {slot:keep(c.toDataURL('image/png')),flags:['무료 엔진이 꺼져 유료(Photoroom 다림질)로 2차 보정 — 원본과 비교해 주세요'],cost:{paid:PHOTOROOM.perCall}};
+      }
+      // IOPaint가 꺼져 있으면 Claude를 부르기 전에 멈춥니다(대기).
+      const ok=await checkIopaint(iopUrl);setIop(ok);
+      if(!ok.ok)throw Object.assign(new Error('IOPaint에 연결할 수 없습니다.'),{offline:true});
+      const level='aggressive';let res;
+      try {res=await findRegions(input,level);}
+      catch(err){if(err.partial)logCost(claudeRow({feature:'defects',product:product.name,cut:slot.label,level,responses:err.partial,boxes:err.partial.reduce((a,r)=>a+r.regions.length,0)}));throw err;}
+      logCost(claudeRow({feature:'defects',product:product.name,cut:slot.label,level,responses:res.responses,boxes:res.regions.length,cached:res.cached}));
+      const costs=res.responses.map(r=>claudeCost(r.model,r.usage)),cost={claude:costs.reduce((a,v)=>a+(v||0),0),claudeUnknown:costs.filter(v=>v===null).length};
+      const f=regionsFlag(res.regions.length),flags=f?[f]:[];
+      const chosen=res.regions.filter(r=>r.confidence>=.3);
+      if(!chosen.length)return {slot:{...slot,defects:null},flags,cost};
+      const result=await inpaint(input,defectOpts.split!==false?splitRegions(chosen):chosen,iopUrl);
+      return {slot:keep(result),flags,cost};
+    },
+    final:async(product,ref)=>{
+      const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
+      const next=await refreshImages(data.slots,{colorRef:colorRefNew,frame:{enabled:false,ratio:'3:4',margin:6,...data.frame}});
+      return {...product,data:{...data,slots:next,color:{ref:colorRefNew,strength:data.color?.strength??80}}};
+    },
+  };
+  // 무료 엔진 연결 확인(시작 전·대기 중)
+  async function freeEngines() {
+    const [b,i]=await Promise.all([checkBirefnet(),checkIopaint(iopUrl)]);setBir(b);setIop(i);
+    return {birefnet:Boolean(b.ok&&b.ready&&!b.error),iopaint:Boolean(i.ok)};
+  }
+  async function runAutoJob(job,{signal,onProgress,save}) {
+    await task(async()=>{
+      await saveNow();
+      const status=await api('status');setReady(status);
+      if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않아 2차(수정할 곳 찾기)를 할 수 없습니다.');
+      if(job.options.paid&&!status.photoroom)throw new Error('유료 대체를 켰지만 서버에 Photoroom 키가 없습니다. 유료 대체를 끄고 시작하세요.');
+      try {
+        const r=await runAuto(job,{loadProduct:getProduct,saveProduct,steps:autoSteps,save,signal,
+          checkFree:async kind=>(await freeEngines())[kind],onProgress:(j,t)=>{setStep(`자동 보정 · ${t}`);onProgress(j,t);}});
+        setStep(`자동 보정 ${job.finished?'완료':'멈춤'} · 완료 ${r.done} · 확인 필요 ${r.review} · 실패 ${r.failed}${r.skipped?` · 건너뜀 ${r.skipped}`:''} · Claude 약 $${r.claude.toFixed(2)}${r.paid?` · 유료 $${r.paid.toFixed(2)}`:''} · ${Math.round(r.elapsed/60)}분`);
+      } catch(e) {
+        if(e.stopped){setStep(e.message);return;}
+        throw new Error(`자동 보정이 멈췄습니다: ${e.message}${e.capReached?'':' ‘이어서 하기’를 누르면 남은 것부터 이어서 합니다.'}`);
+      } finally {
+        costProduct.current='';refreshCredits();
+        setProducts(await listProducts());
+        if(productId){const p=await getProduct(productId);if(p)await applyProduct(p);}
+      }
+    });
+  }
   async function importFinished(firstId) {
     const list=await listProducts();setProducts(list);
     if(firstId&&list.some(p=>p.id===firstId)&&firstId!==productId){await saveNow();await applyProduct(await getProduct(firstId));}
@@ -579,7 +665,7 @@ export default function AutoStudio() {
   function removePhoto(id) {
     setPreview(null);
     setSlots(current=>{
-      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,raw2:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
+      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,raw2:null,auto:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
       return next;
     });
   }
@@ -647,9 +733,10 @@ export default function AutoStudio() {
       <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
       <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label><Cost k="claudeClassify"/>
       <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
-      <DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)}/>
+      <DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)} onAutoFix={ids=>setAutoRequest({ids,at:Date.now()})}/>
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
+    <AutoFixPanel products={products} busy={busy} setStep={setStep} freeEngines={freeEngines} runAutoJob={runAutoJob} openProduct={id=>switchProduct(id)} request={autoRequest}/>
     <DrivePanel clientId={ready?.googleClientId} productId={productId} localSavedAt={localSavedAt} busy={busy} task={task} setStep={setStep}
       flush={()=>saveNow()} onLoaded={async id=>{clearTimeout(saveTimer.current);await applyProduct(await getProduct(id));setProducts(await listProducts());}}/>
     <p className="session-note">‘사진 한꺼번에 올리기’: 여러 옷이 섞인 사진을 최대 24장까지 올리면 Claude가 같은 옷끼리 묶어 상품을 만들고 컷 종류별 칸에 넣습니다(분류 1회당 Claude API 요금 발생). 옷마다 첫 컷을 정면 전체로 찍으면 더 정확합니다. </p>
