@@ -46,7 +46,7 @@ export default function InstagramPanel({instagram,setInstagram,slots,fitEnabled,
       setStep('인스타그램 연결 확인 중');
       const result=await igApi('check',{password});
       setAccount(result);
-      setStep(`@${result.username} 계정에 연결돼 있습니다.`);
+      setStep(`@${result.username} 계정에 연결돼 있습니다.${result.host?` (${result.mode} · ${result.host}${result.idSource==="INSTAGRAM_USER_ID"?" · 계정 ID는 INSTAGRAM_USER_ID 사용":""}${result.forced?" · 호스트 직접 지정":""})`:""}`);
     });
   }
   async function publish() {
@@ -101,7 +101,7 @@ export default function InstagramPanel({instagram,setInstagram,slots,fitEnabled,
     {!status?<p className="slot-note">연결 상태를 확인하는 중…</p>:status.ready?<>
       <label>게시 비밀번호<input type="password" aria-label="인스타 게시 비밀번호" autoComplete="off" value={password} onChange={e=>savePassword(e.target.value)}/></label>
       <p className="slot-note">다른 사람이 이 주소로 게시하지 못하게 막는 비밀번호입니다. 이 브라우저에만 저장됩니다.</p>
-      {account&&<p className="slot-note">연결된 계정: @{account.username}{account.limit?` · 최근 24시간 게시 ${account.used??0}/${account.limit}회`:''}</p>}
+      {account&&<p className="slot-note">연결된 계정: @{account.username}{account.limit?` · 최근 24시간 게시 ${account.used??0}/${account.limit}회`:''}{account.host?` · 방식: ${account.mode} (${account.host})`:''}</p>}
       <div className="instagram-actions">
         <button type="button" disabled={!password} onClick={check}>연결 확인</button>
         <button type="button" className="primary" disabled={!password||!photos.length||!captionOk} onClick={publish}>인스타그램에 지금 게시</button>

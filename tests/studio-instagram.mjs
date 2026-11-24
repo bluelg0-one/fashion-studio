@@ -12,7 +12,7 @@ try{
  await page.route('**/api/instagram?*',async r=>{const a=new URL(r.request().url()).searchParams.get('action'),body=r.request().postDataJSON?.()||null;calls.push({a,body});
   if(a==='status')return r.fulfill({json:{ready,token:ready,storage:ready,password:ready}});
   if(body?.password!=='pw')return r.fulfill({status:401,json:{error:'게시 비밀번호가 맞지 않습니다.'}});
-  if(a==='check')return r.fulfill({json:{username:'testshop',used:1,limit:50}});
+  if(a==='check')return r.fulfill({json:{username:'testshop',used:1,limit:50,host:'graph.facebook.com',mode:'Facebook(Meta 비즈니스) 토큰',forced:false,idSource:'INSTAGRAM_USER_ID'}});
   if(a==='upload')return r.fulfill({json:{url:`https://x.public.blob.vercel-storage.com/instagram/${calls.filter(c=>c.a==='upload').length}.jpg`}});
   return r.fulfill({json:{id:'1',permalink:'https://www.instagram.com/p/TEST/',username:'testshop',count:body.urls.length}});});
  const url=process.env.STUDIO_TEST_URL || 'http://127.0.0.1:3001';
@@ -66,7 +66,7 @@ try{
  await page.getByText('게시 비밀번호가 맞지 않습니다.').waitFor();
  assert.equal(calls.filter(c=>c.a==='publish').length,0);
  await page.getByLabel('인스타 게시 비밀번호').fill('pw');
- await panel.getByRole('button',{name:'연결 확인'}).click();await idle();
+ await panel.getByRole('button',{name:'연결 확인'}).click();await idle(); assert.match(await panel.innerText(),/연결된 계정: @testshop · 최근 24시간 게시 1\/50회 · 방식: Facebook\(Meta 비즈니스\) 토큰 \(graph\.facebook\.com\)/);assert.match(await page.locator('[role=status]').innerText(),/계정 ID는 INSTAGRAM_USER_ID 사용/);
  await panel.getByText('연결된 계정: @testshop · 최근 24시간 게시 1/50회').waitFor();
  let message='';page.once('dialog',d=>{message=d.message();d.dismiss();});
  await panel.getByRole('button',{name:'인스타그램에 지금 게시'}).click();await idle();
