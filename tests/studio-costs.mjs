@@ -84,7 +84,7 @@ try{
  await panel.getByLabel('환율').fill('1500');assert.match(await panel.locator('summary').innerText(),/\(258원\)/);
  await panel.getByLabel('환율').fill('1400');
  // 월 예산: 300원 → 80% 넘음(노랑), 200원 → 넘음(빨강 + 민감도 낮추기)
- assert.equal(await page.locator('.budget-alert').count(),0,'예산 비우면 경고 없음');
+ assert.equal(await panel.getByLabel('월 예산').inputValue(),'50000','월 예산 기본 50,000원');assert.equal(await page.locator('.budget-alert').count(),0,'241원 / 50,000원 → 경고 없음');
  await panel.getByLabel('월 예산').fill('300');
  assert.match(await page.locator('.budget-alert.budget-warn').innerText(),/80%를 넘었습니다[\s\S]*80%\)/);
  assert.equal(await page.getByRole('button',{name:'민감도를 보통으로 낮추기'}).count(),0);
