@@ -100,6 +100,11 @@ try{
  const rows=await page.locator('.cost-log tbody tr').allInnerTexts();
  assert.equal(rows.filter(r=>/\(드라이브 가져오기\)/.test(r)).length,3);
 
+ // 가져오기 끝난 화면의 ‘자동 보정 시작’ → 가져온 상품 8개로 자동 보정 계획(사진 컷 45개, 무료 엔진이 꺼져 있어 시작 못 함)
+ await panel.getByRole('button',{name:'자동 보정 시작 (가져온 상품 8개)'}).click();
+ await page.locator('.auto-plan').getByText('상품 8개 · 컷 45개').waitFor();
+ assert.match(await page.locator('.auto-plan').innerText(),/IOPaint Start’를 켜 주세요/);
+ await page.locator('.auto-plan').getByRole('button',{name:'취소'}).click();
  // 4) 같은 폴더 다시: 이미 가져온 45장 건너뜀(HEIC 1장만 새 사진)
  await panel.getByRole('button',{name:'드라이브 폴더에서 가져오기 (자동 분류)'}).click();await idle();
  assert.match(await panel.innerText(),/새 사진 1장 · 이미 가져온 사진 45장 건너뜀/);

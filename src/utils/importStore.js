@@ -31,3 +31,7 @@ export const clearJob=()=>run(JOBS,'readwrite',s=>s.delete(CURRENT));
 export async function importedIds() {return new Set(((await run(FILES,'readonly',s=>s.getAllKeys()))||[]).map(String));}
 export const markImported=(files,productId)=>run(FILES,'readwrite',s=>{for(const f of files)s.put({id:f.id,name:f.name,productId,at:Date.now()});});
 export const forgetImported=()=>run(FILES,'readwrite',s=>s.clear());
+// 자동 보정(010) 진행 상태(한 번에 하나)
+export const loadAutoJob=async()=>(await run(JOBS,'readonly',s=>s.get('auto')))?.job||null;
+export const saveAutoJob=job=>run(JOBS,'readwrite',s=>s.put({key:'auto',job}));
+export const clearAutoJob=()=>run(JOBS,'readwrite',s=>s.delete('auto'));
