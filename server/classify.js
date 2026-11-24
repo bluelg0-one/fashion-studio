@@ -38,6 +38,12 @@ const INSTRUCTIONS=`You sort product photos for a women's clothing shop. Photos 
 Return every photo exactly once, using its number as index.`;
 
 const fail=(message,status)=>Object.assign(new Error(message),{status});
+// Anthropic 응답의 사용량(토큰)을 그대로 브라우저에 돌려줍니다. 비용 계산은 브라우저(src/utils/pricing.js)에서 합니다.
+export function usageOf(response) {
+  const u=response?.usage||{},n=v=>Number.isFinite(Number(v))?Number(v):0;
+  return {input_tokens:n(u.input_tokens),output_tokens:n(u.output_tokens),cache_read_input_tokens:n(u.cache_read_input_tokens),cache_creation_input_tokens:n(u.cache_creation_input_tokens),
+    ...(u.cache_creation?{cache_creation:{ephemeral_5m_input_tokens:n(u.cache_creation.ephemeral_5m_input_tokens),ephemeral_1h_input_tokens:n(u.cache_creation.ephemeral_1h_input_tokens)}}:{})};
+}
 
 export async function classifyPhotos(body,env=process.env,client) {
   if(!env.ANTHROPIC_API_KEY&&!client)throw fail('현재 실행 환경에 ANTHROPIC_API_KEY가 연결되지 않았습니다.',503);
@@ -79,7 +85,7 @@ export async function classifyPhotos(body,env=process.env,client) {
   }));
   // 빠진 사진은 확인 필요로 돌려줍니다.
   photos.forEach((p,i)=>{if(!seen.has(i+1))list.push({id:p.id,garment:out.garments[0]?.id||'g1',shot:'unknown',confidence:0,review:true,note:'분류 결과에서 빠졌습니다.'});});
-  return {garments:out.garments,photos:list,model:response.model,usage:{input:response.usage.input_tokens,output:response.usage.output_tokens}};
+  return {garments:out.garments,photos:list,model:response.model,usage:usageOf(response)};
 }
 
 // ---- 수정할 곳 찾기 (Claude 비전) → IOPaint로 지울 영역 ----
@@ -147,5 +153,5 @@ export async function findDefects(body,env=process.env,client) {
   const clamp=v=>Math.max(0,Math.min(1000,v));
   const regions=response.parsed_output.regions.map(r=>({...r,x0:clamp(Math.min(r.x0,r.x1)),x1:clamp(Math.max(r.x0,r.x1)),y0:clamp(Math.min(r.y0,r.y1)),y1:clamp(Math.max(r.y0,r.y1)),confidence:Math.max(0,Math.min(1,r.confidence))}))
     .filter(r=>r.x1-r.x0>=2&&r.y1-r.y0>=2).slice(0,DEFECT_LIMIT[level]);
-  return {regions,model:response.model,level};
+  return {regions,model:response.model,level,usage:usageOf(response)};
 }

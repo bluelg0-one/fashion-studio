@@ -33,7 +33,7 @@ try{
  const hero=page.locator('[data-slot="hero"]'),level=page.getByLabel('hero 찾기 민감도');
  // 기본 = 적극(4회), 비용 표시도 4회 기준
  assert.equal(await level.inputValue(),'aggressive');
- assert.match(await hero.locator('.cost-claudeDefects').innerText(),/약 \$0\.08~0\.20 \(4회\)/);
+ assert.match(await hero.locator('.cost-claudeDefects').innerText(),/약 \$0\.04~0\.16 \(4회\)/);
  await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(defectCalls.length,4,'적극: 타일 4번');
  assert.ok(defectCalls.every(c=>c.level==='aggressive'&&c.tile===true));
@@ -48,7 +48,7 @@ try{
  await level.selectOption('normal');assert.match(await hero.locator('.cost-claudeDefects').innerText(),/\(1회\)/);
  await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(defectCalls.length,5);assert.equal(defectCalls[4].level,'normal');assert.ok(!defectCalls[4].tile);
- await level.selectOption('max');assert.match(await hero.locator('.cost-claudeDefects').innerText(),/약 \$0\.18~0\.45 \(9회\)/);
+ await level.selectOption('max');assert.match(await hero.locator('.cost-claudeDefects').innerText(),/약 \$0\.09~0\.36 \(9회\)/);
  await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(defectCalls.length,14,'최대: 타일 9번');
  // IOPaint: 넓은 상자(보통으로 찾은 넓은 구김)는 작은 상자로 나눠 한 마스크로 1번. 보통 결과는 저장돼 있어 추가 호출 없음.
@@ -62,5 +62,5 @@ try{
  await hero.getByRole('button',{name:/IOPaint로 지우기/}).click();await idle();
  assert.equal(inpaints.length,2);assert.doesNotMatch(await page.locator('.auto-studio').innerText(),/작은 상자 \d+개로 나눔/);
  assert.deepEqual(errors,[]);
- console.log(`PASS: aggressive (default) = 4 tile calls with cost '약 $0.08~0.20 (4회)', overlapping tiles merged (8 → ${found}), same photo reuses result, normal = 1 call, max = 9 calls, wide boxes split and sent to IOPaint as one mask (1 request), split can be turned off.`);
+ console.log(`PASS: aggressive (default) = 4 tile calls with cost '약 $0.04~0.16 (4회)', overlapping tiles merged (8 → ${found}), same photo reuses result, normal = 1 call, max = 9 calls, wide boxes split and sent to IOPaint as one mask (1 request), split can be turned off.`);
 }finally{await browser.close();}

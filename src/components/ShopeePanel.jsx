@@ -2,8 +2,9 @@ import {GARMENTS} from '../utils/studioDocument.js';
 import {SHOPEE_IMAGE, SHOPEE_TITLE_MAX, shopeePhotos, shopeePackage, sizeTableEn} from '../utils/shopeeExport.js';
 import {downloadBlob} from '../utils/studioImages.js';
 import {Cost} from './Cost.jsx';
+import {openaiRow} from '../utils/costStats.js';
 
-export default function ShopeePanel({shopee,setShopee,slots,fitEnabled,garment,rows,texts,ready,task,setStep,api,productName}) {
+export default function ShopeePanel({logCost=()=>{},shopee,setShopee,slots,fitEnabled,garment,rows,texts,ready,task,setStep,api,productName}) {
   const set=patch=>setShopee(current=>({...current,...patch}));
   const photos=shopeePhotos(slots,fitEnabled);
   const hasSizes=sizeTableEn(garment,rows).rows.length>0;
@@ -13,6 +14,7 @@ export default function ShopeePanel({shopee,setShopee,slots,fitEnabled,garment,r
     await task(async()=>{
       setStep('쇼피용 영문 상품명·설명 작성 중');
       const result=await api('shopee',{garment:GARMENTS.find(g=>g.id===garment)?.label,headline:texts.headline,description:texts.description,product:texts.product,image:slots.hero.image||slots.hero.source});
+      logCost(openaiRow({feature:'openai_shopee',product:productName,cut:'대표',model:result.model,usage:result.usage}));
       set({title:result.title,description:result.description});
       setStep('영문 상품명·설명을 작성했습니다. 사실과 다른 내용이 없는지 확인하고 고쳐 주세요.');
     });

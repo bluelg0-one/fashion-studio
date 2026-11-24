@@ -6,7 +6,7 @@ test('status exposes only credential presence',async()=>{assert.deepEqual(await 
 test('missing key fails before upstream call',async()=>{await assert.rejects(studio('edit',{image},{},()=>{throw Error('unexpected request')}),{status:503});});
 test('rejects URLs and oversized input',async()=>{for(const input of ['https://example.com/p.png','data:image/png;base64,'+'a'.repeat(9*1024*1024)])await assert.rejects(studio('edit',{image:input},{OPENAI_API_KEY:'test-only'}),{status:400});});
 test('upstream credentials and errors do not leak',async()=>{await assert.rejects(studio('edit',{image},{OPENAI_API_KEY:'test-only'},async()=>({ok:false,status:401,json:async()=>({error:{message:'sensitive upstream text'}})})),e=>e.status===401&&!e.message.includes('sensitive'));});
-test('analysis accepts copy without unreliable crop coordinates',async()=>{const copy={headline:'제목',description:'설명',points:['줄무늬']};const result=await studio('analyze',{image},{OPENAI_API_KEY:'test-only'},async()=>({ok:true,json:async()=>({output:[{content:[{type:'output_text',text:JSON.stringify(copy)}]}]})}));assert.deepEqual(result,copy);});
+test('analysis accepts copy without unreliable crop coordinates',async()=>{const copy={headline:'제목',description:'설명',points:['줄무늬']};const result=await studio('analyze',{image},{OPENAI_API_KEY:'test-only'},async()=>({ok:true,json:async()=>({model:'gpt-4.1-mini-2025-04-14',usage:{input_tokens:900,output_tokens:120},output:[{content:[{type:'output_text',text:JSON.stringify(copy)}]}]})}));assert.deepEqual(result,{...copy,model:'gpt-4.1-mini-2025-04-14',usage:{input_tokens:900,output_tokens:120}});});
 test('image edit requests restrained wrinkle correction, high fidelity and color preservation',async()=>{
  let form;
  await studio('edit',{image},{OPENAI_API_KEY:'test-only'},async(url,options)=>{form=options.body;return {ok:true,json:async()=>({data:[{b64_json:'cG5n'}]})};});
@@ -68,8 +68,8 @@ test('credits reads the Photoroom balance without editing',async()=>{
 });
 test('shopee copy keeps seller data as data and returns title/description',async()=>{
  let sent;
- const r=await studio('shopee',{garment:'긴팔티셔츠',headline:'스트라이프 티',product:'면 100%',image},env,async(url,o)=>{sent=JSON.parse(o.body);return {ok:true,json:async()=>({output:[{content:[{type:'output_text',text:'{"title":"Women\'s Striped Tee","description":"Soft stripes"}'}]}]})};});
- assert.deepEqual(r,{title:"Women's Striped Tee",description:'Soft stripes'});
+ const r=await studio('shopee',{garment:'긴팔티셔츠',headline:'스트라이프 티',product:'면 100%',image},env,async(url,o)=>{sent=JSON.parse(o.body);return {ok:true,json:async()=>({usage:{input_tokens:700,output_tokens:80},output:[{content:[{type:'output_text',text:'{"title":"Women\'s Striped Tee","description":"Soft stripes"}'}]}]})};});
+ assert.deepEqual(r,{title:"Women's Striped Tee",description:'Soft stripes',model:'gpt-4.1-mini',usage:{input_tokens:700,output_tokens:80}});
  const text=sent.input[0].content[0].text;assert.match(text,/Never invent material/);assert.match(text,/면 100%/);assert.equal(sent.input[0].content[1].type,'input_image');
  await assert.rejects(studio('shopee',{},{PHOTOROOM_API_KEY:'x'}),{status:503});
 });

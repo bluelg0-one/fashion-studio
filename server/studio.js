@@ -21,6 +21,8 @@ async function photoroom(env,request,blob,fields,extraHeaders={}) {
   if(!type.startsWith('image/'))throw fail('Photoroom 결과가 이미지가 아닙니다.',502);
   return new Blob([await response.arrayBuffer()],{type});
 }
+// OpenAI 응답의 사용량(토큰). 단가는 공식 확인 전이라 브라우저 기록에서 '미확인'으로 둡니다.
+const openaiUsage=data=>{const u=data?.usage||{},n=v=>Number.isFinite(Number(v))?Number(v):0;return {input_tokens:n(u.input_tokens),output_tokens:n(u.output_tokens)};};
 const toDataUrl=async blob=>`data:${blob.type};base64,${Buffer.from(await blob.arrayBuffer()).toString('base64')}`;
 async function openaiEdit(env,request,blob,prompt) {
   const model=env.OPENAI_IMAGE_MODEL||'gpt-image-1',form=new FormData();
@@ -31,7 +33,7 @@ async function openaiEdit(env,request,blob,prompt) {
   const data=await response.json();
   if(!response.ok)throw fail({401:'OpenAI API 키 인증에 실패했습니다.',429:'OpenAI 사용 한도에 도달했습니다.'}[response.status]||`OpenAI 보정 실패 (${response.status})`,response.status);
   if(!data.data?.[0]?.b64_json)throw fail('OpenAI 보정 결과가 비어 있습니다.',502);
-  return `data:image/png;base64,${data.data[0].b64_json}`;
+  return {image:`data:image/png;base64,${data.data[0].b64_json}`,openai:{model,usage:openaiUsage(data)}};
 }
 // ---- 2차 보정 유료 대체(Photoroom) ----
 // 공식 문서(docs.photoroom.com, 2026-11-23 확인): 영역(마스크·상자)을 지정해 지우는 기능은 찾지 못함(미확인).
@@ -95,7 +97,7 @@ async function retouch(body,env,request) {
   const cutout=await photoroom(env,request,source,base,headers);
   try {
     if(!env.OPENAI_API_KEY)throw fail('OPENAI_API_KEY가 없어 OpenAI 프롬프트 보정을 할 수 없습니다.',503);
-    return {image:await openaiEdit(env,request,cutout,prompt)};
+    return await openaiEdit(env,request,cutout,prompt);
   } catch(e) {
     return {image:await toDataUrl(cutout),warning:`누끼는 완료했지만 프롬프트 보정은 실패했습니다: ${e.status?e.message:'처리 오류'}`};
   }
@@ -113,7 +115,7 @@ async function shopeeCopy(body,env,request) {
   const raw=data.output?.flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('')||'';
   let parsed;try{parsed=JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g,''));}catch{throw fail('영문 문구 형식이 올바르지 않습니다. 다시 시도하세요.',502);}
   if(typeof parsed.title!=='string'||typeof parsed.description!=='string')throw fail('영문 문구 형식이 올바르지 않습니다. 다시 시도하세요.',502);
-  return {title:parsed.title.trim().slice(0,120),description:parsed.description.trim().slice(0,3000)};
+  return {title:parsed.title.trim().slice(0,120),description:parsed.description.trim().slice(0,3000),model:data.model||env.OPENAI_TEXT_MODEL||'gpt-4.1-mini',usage:openaiUsage(data)};
 }
 export async function studio(action, body, env = process.env, request = fetch) {
   // googleClientId는 비밀이 아닌 공개 값(브라우저의 구글 로그인에 필요)입니다. 형식이 맞을 때만 돌려줍니다.
@@ -156,12 +158,12 @@ export async function studio(action, body, env = process.env, request = fetch) {
   }
   if (action === 'edit') {
     if (!data.data?.[0]?.b64_json) throw new Error('이미지 결과가 비어 있습니다.');
-    return {image:`data:image/png;base64,${data.data[0].b64_json}`};
+    return {image:`data:image/png;base64,${data.data[0].b64_json}`,model:env.OPENAI_IMAGE_MODEL||'gpt-image-1',usage:openaiUsage(data)};
   }
   const raw = data.output?.flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('') || '';
   const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*|\s*```$/g,''));
   if(typeof parsed.headline !== 'string' || typeof parsed.description !== 'string' || !Array.isArray(parsed.points) || !parsed.points.every(p=>typeof p==='string')) throw new Error('분석 결과 형식이 올바르지 않습니다.');
-  return parsed;
+  return {...parsed,model:data.model||env.OPENAI_TEXT_MODEL||'gpt-4.1-mini',usage:openaiUsage(data)};
 }
 export async function middleware(req,res,next) {
   const url = new URL(req.url,'http://localhost');
