@@ -5,8 +5,9 @@ import {costStats, budgetState, perPhoto, boxesPerDollar, FEATURES, GROUP_LABEL,
 import {SOURCES} from '../utils/pricing.js';
 import {downloadBlob} from '../utils/studioImages.js';
 
-const KEY='fashion-studio-cost-settings',DEFAULT_RATE=1400;
-const loadSettings=()=>{try{return {rate:DEFAULT_RATE,budget:'',...JSON.parse(localStorage.getItem(KEY)||'{}')};}catch{return {rate:DEFAULT_RATE,budget:''};}};
+// 월 예산 기본 50,000원 (사장님 결정 2026-11-24). 화면에서 바꾸면 이 브라우저에 기억합니다.
+const KEY='fashion-studio-cost-settings',DEFAULT_RATE=1400,DEFAULT_BUDGET='50000';
+const loadSettings=()=>{try{return {rate:DEFAULT_RATE,budget:DEFAULT_BUDGET,...JSON.parse(localStorage.getItem(KEY)||'{}')};}catch{return {rate:DEFAULT_RATE,budget:DEFAULT_BUDGET};}};
 
 export function useCostSettings() {
   const [s,setS]=useState(loadSettings);
