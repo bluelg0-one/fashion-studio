@@ -1,9 +1,29 @@
-// 인스타그램 게시 (Instagram API with Instagram Login · graph.instagram.com).
+// 인스타그램 게시. 토큰 두 종류를 모두 지원합니다(지시서 012).
+// - Instagram 로그인 토큰(IGAA…) → graph.instagram.com
+// - Facebook 계열 토큰(EAA…, Meta ‘API setup with Unified login’의 시스템 사용자 토큰 등) → graph.facebook.com
+//   이 경우 /me는 인스타 계정이 아니므로 INSTAGRAM_USER_ID(인스타 비즈니스 계정 ID, 비밀 아님)가 필요합니다.
+// INSTAGRAM_GRAPH_HOST로 호스트를 강제로 정할 수 있습니다(graph.instagram.com 또는 graph.facebook.com만 허용).
 // 흐름: 사진을 공개 주소에 잠깐 올림 → 인스타그램이 그 주소에서 사진을 가져감(컨테이너) → 게시 → 올려 둔 사진 삭제.
 // 문서: developers.facebook.com/docs/instagram-platform/content-publishing
 import {createHash, timingSafeEqual} from 'node:crypto';
 
-const GRAPH='https://graph.instagram.com/v25.0';
+const GRAPH_VERSION='v25.0',HOSTS={instagram:'graph.instagram.com',facebook:'graph.facebook.com'};
+// 붙여넣기 실수(앞뒤 공백·따옴표·줄바꿈, 'Bearer ' 머리말, 중간 줄바꿈)를 잘라 냅니다. 토큰에는 공백이 없습니다.
+export function cleanToken(raw) {
+  let t=String(raw??'').trim();
+  for(let i=0;i<3;i++)t=t.replace(/^['"`\s]+|['"`\s]+$/g,'').replace(/^Bearer\s+/i,'');
+  return t.replace(/\s+/g,'');
+}
+// 토큰 앞부분으로 방식을 고릅니다. 알 수 없는 모양이면 예전처럼 graph.instagram.com.
+export function graphSetup(env) {
+  const token=cleanToken(env.INSTAGRAM_ACCESS_TOKEN),forced=String(env.INSTAGRAM_GRAPH_HOST||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+  if(forced&&!Object.values(HOSTS).includes(forced))throw fail('INSTAGRAM_GRAPH_HOST는 graph.instagram.com 또는 graph.facebook.com만 쓸 수 있습니다.',503);
+  const kind=forced?(forced===HOSTS.facebook?'facebook':'instagram'):/^EA/.test(token)?'facebook':'instagram';
+  const id=String(env.INSTAGRAM_USER_ID||'').trim();
+  if(id&&!/^\d+$/.test(id))throw fail('INSTAGRAM_USER_ID는 숫자로 된 인스타그램 비즈니스 계정 ID여야 합니다.',503);
+  return {token,kind,host:HOSTS[kind],base:`https://${HOSTS[kind]}/${GRAPH_VERSION}`,userId:id||null,
+    label:kind==='facebook'?'Facebook(Meta 비즈니스) 토큰':/^IG/.test(token)?'Instagram 로그인 토큰':'Instagram 로그인 방식(토큰 모양 확인 안 됨)',forced:Boolean(forced)};
+}
 // Vercel 요청 한도(4.5MB) 안쪽. 사진은 한 요청에 1장씩 받습니다.
 const MAX_IMAGE_CHARS=4_200_000, MAX_BODY=MAX_IMAGE_CHARS+20_000;
 export const IG_LIMITS={maxImages:10,captionMax:2200,hashtagMax:30,minRatio:.8,maxRatio:1.91};
@@ -39,10 +59,10 @@ async function authorize(body,env,delay) {
   throw fail('게시 비밀번호가 맞지 않습니다.',401);
 }
 
-function graphError(httpStatus,error,token) {
+function graphError(httpStatus,error,tokens) {
   const code=error?.code,sub=error?.error_subcode;
   let detail=String(error?.error_user_msg||error?.message||'').slice(0,300);
-  if(token)detail=detail.split(token).join('***');
+  for(const t of [].concat(tokens))if(t)detail=detail.split(t).join('***');
   const tail=detail?` · 인스타그램 응답: ${detail}`:'';
   if(code===190)return fail('인스타그램 액세스 토큰이 만료됐거나 올바르지 않습니다. 토큰을 새로 발급해 INSTAGRAM_ACCESS_TOKEN 값을 바꿔 주세요.'+tail,502);
   if([4,17,32,613].includes(code)||sub===2207042)return fail('인스타그램 게시·요청 한도에 도달했습니다. 시간을 두고 다시 시도하세요.'+tail,429);
@@ -51,24 +71,31 @@ function graphError(httpStatus,error,token) {
 }
 
 async function graph(env,request,path,{method='GET',body,query,unreachable='인스타그램 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.'}={}) {
-  const url=new URL(GRAPH+path);
+  const cfg=graphSetup(env),url=new URL(cfg.base+path);
   for(const [key,value] of Object.entries(query||{}))url.searchParams.set(key,value);
   let response;
   try {
-    response=await request(url.toString(),{method,headers:{Authorization:`Bearer ${env.INSTAGRAM_ACCESS_TOKEN}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(60000)});
+    response=await request(url.toString(),{method,headers:{Authorization:`Bearer ${cfg.token}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(60000)});
   } catch {throw fail(unreachable,502);}
   let data={};
   try {data=await response.json();} catch {}
-  if(!response.ok||data?.error)throw graphError(response.status,data?.error,env.INSTAGRAM_ACCESS_TOKEN);
+  if(!response.ok||data?.error)throw graphError(response.status,data?.error,[cfg.token,env.INSTAGRAM_ACCESS_TOKEN]);
   return data;
 }
 
+// 게시할 인스타 계정: INSTAGRAM_USER_ID가 있으면 /me를 건너뛰고 그 ID로(이름만 읽음). Facebook 토큰은 ID가 꼭 필요합니다.
 async function account(env,request) {
+  const cfg=graphSetup(env);
+  if(cfg.userId){
+    const data=await graph(env,request,`/${cfg.userId}`,{query:{fields:'username'}});
+    return {id:cfg.userId,username:String(data.username||''),cfg,idSource:'INSTAGRAM_USER_ID'};
+  }
+  if(cfg.kind==='facebook')throw fail('Facebook(Meta 비즈니스) 방식 토큰이라 INSTAGRAM_USER_ID가 필요합니다. Vercel 환경변수 INSTAGRAM_USER_ID에 인스타그램 비즈니스 계정 ID(숫자)를 넣고 다시 배포해 주세요.',503);
   const data=await graph(env,request,'/me',{query:{fields:'user_id,username'}});
   const me=Array.isArray(data.data)?data.data[0]||{}:data;
-  const id=String(env.INSTAGRAM_USER_ID||me.user_id||me.id||'');
+  const id=String(me.user_id||me.id||'');
   if(!/^\d+$/.test(id))throw fail('인스타그램 계정 정보를 읽지 못했습니다. 토큰을 확인하세요.',502);
-  return {id,username:String(me.username||'')};
+  return {id,username:String(me.username||''),cfg,idSource:'/me'};
 }
 
 function jpegSize(buffer) {
@@ -143,7 +170,7 @@ export async function instagram(action,body={},env=process.env,request=fetch,sto
   if(action==='status')return {ready:!missing.length,token:Boolean(env.INSTAGRAM_ACCESS_TOKEN),storage:Boolean(store),password:Boolean(env.INSTAGRAM_POST_PASSWORD)};
   if(!['check','upload','publish'].includes(action))throw fail('지원하지 않는 작업입니다.',400);
   await authorize(body,env,delay);
-  if(!env.INSTAGRAM_ACCESS_TOKEN)throw fail('서버에 인스타그램 액세스 토큰(INSTAGRAM_ACCESS_TOKEN)이 연결되지 않았습니다.',503);
+  if(!cleanToken(env.INSTAGRAM_ACCESS_TOKEN))throw fail('서버에 인스타그램 액세스 토큰(INSTAGRAM_ACCESS_TOKEN)이 연결되지 않았습니다.',503);
   if(action==='upload')return upload(body,env,store);
   if(action==='publish')return publish(body,env,request,store,delay);
   // check: 토큰이 살아 있는지와 어느 계정에 올라가는지, 24시간 게시 횟수를 확인합니다.
@@ -153,7 +180,8 @@ export async function instagram(action,body={},env=process.env,request=fetch,sto
     const quota=(await graph(env,request,`/${me.id}/content_publishing_limit`,{query:{fields:'quota_usage,config'}})).data?.[0];
     if(quota){used=Number(quota.quota_usage??NaN);limit=Number(quota.config?.quota_total??NaN);}
   } catch {}
-  return {username:me.username,used:Number.isFinite(used)?used:null,limit:Number.isFinite(limit)?limit:null};
+  // 어떤 호스트·방식을 썼는지와 계정 이름만 돌려줍니다(토큰 값은 넣지 않음).
+  return {username:me.username,used:Number.isFinite(used)?used:null,limit:Number.isFinite(limit)?limit:null,host:me.cfg.host,mode:me.cfg.label,forced:me.cfg.forced,idSource:me.idSource};
 }
 
 // 로컬 실행(vite dev, npm start)용. Vercel에서는 api/instagram.js가 같은 일을 합니다.

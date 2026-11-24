@@ -109,13 +109,59 @@ test('expired token, rate limit and lost publish response give clear messages wi
 
 test('check reports the connected account and how many posts were made in 24 hours',async()=>{
   const {store}=fakeStore(),{request}=fakeGraph();
-  assert.deepEqual(await instagram('check',{password},env,request,store,noDelay),{username:'testshop',used:3,limit:50});
+  assert.deepEqual(await instagram('check',{password},env,request,store,noDelay),{username:'testshop',used:3,limit:50,host:'graph.instagram.com',mode:'Instagram 로그인 방식(토큰 모양 확인 안 됨)',forced:false,idSource:'/me'});
   const wrapped=fakeGraph({'/me':()=>json({data:[{user_id:'42',username:'wrapped'}]}),'/content_publishing_limit':()=>json({},false,500)});
-  assert.deepEqual(await instagram('check',{password},env,wrapped.request,store,noDelay),{username:'wrapped',used:null,limit:null});
+  assert.deepEqual(await instagram('check',{password},env,wrapped.request,store,noDelay),{username:'wrapped',used:null,limit:null,host:'graph.instagram.com',mode:'Instagram 로그인 방식(토큰 모양 확인 안 됨)',forced:false,idSource:'/me'});
   await assert.rejects(instagram('check',{password},{...env,INSTAGRAM_ACCESS_TOKEN:''},request,store,noDelay),{status:503});
 });
 
 test('hashtags are counted the way the caption limit needs',()=>{
   assert.equal(countHashtags('긴팔티 #여성의류 #데일리룩\n#우아샵'),3);
   assert.equal(countHashtags('해시태그 없음'),0);
+});
+
+// ---- 지시서 012: 토큰 두 종류 ----
+import {cleanToken, graphSetup} from './instagram.js';
+const hostOf=calls=>[...new Set(calls.map(c=>c.host))];
+function hostGraph(overrides={}) {
+  const g=fakeGraph(overrides),calls=[];
+  return {calls,request:async(url,o)=>{calls.push({host:new URL(url).host,path:new URL(url).pathname,auth:o?.headers?.Authorization});return g.request(url,o);}};
+}
+test('token cleanup: spaces, quotes, line breaks and a Bearer prefix pasted by mistake are removed',()=>{
+  assert.equal(cleanToken('  "EAAB12\n34"\n'),'EAAB1234');
+  assert.equal(cleanToken("'IGAAxyz' "),'IGAAxyz');assert.equal(cleanToken('Bearer IGAAabc'),'IGAAabc');assert.equal(cleanToken(undefined),'');
+});
+test('Instagram-login token (IGAA…) uses graph.instagram.com with /me',async()=>{
+  const {store}=fakeStore(),{calls,request}=hostGraph();
+  const r=await instagram('check',{password},{...env,INSTAGRAM_ACCESS_TOKEN:' "IGAAtest123"\n'},request,store,noDelay);
+  assert.deepEqual(hostOf(calls),['graph.instagram.com']);assert.ok(calls.every(c=>c.path.startsWith('/v25.0/')));
+  assert.equal(calls[0].path,'/v25.0/me');assert.equal(calls[0].auth,'Bearer IGAAtest123','정리된 토큰으로 요청');
+  assert.equal(r.mode,'Instagram 로그인 토큰');assert.equal(r.host,'graph.instagram.com');assert.equal(r.username,'testshop');
+});
+test('Facebook token (EAA…) uses graph.facebook.com and INSTAGRAM_USER_ID (no /me); without the ID the check explains it',async()=>{
+  const {store}=fakeStore();
+  const fbEnv={...env,INSTAGRAM_ACCESS_TOKEN:'EAAGsecretvalue',INSTAGRAM_USER_ID:'17841400000000001'};
+  const {calls,request}=hostGraph({'/17841400000000001':(b,u)=>u.searchParams.get('fields')==='username'?json({username:'wooahshop',id:'17841400000000001'}):json({status_code:'FINISHED'})});
+  const r=await instagram('check',{password},fbEnv,request,store,noDelay);
+  assert.deepEqual(hostOf(calls),['graph.facebook.com']);assert.ok(!calls.some(c=>c.path.endsWith('/me')),'/me 건너뜀');
+  assert.deepEqual(calls.map(c=>c.path),['/v25.0/17841400000000001','/v25.0/17841400000000001/content_publishing_limit']);
+  assert.deepEqual({...r},{username:'wooahshop',used:3,limit:50,host:'graph.facebook.com',mode:'Facebook(Meta 비즈니스) 토큰',forced:false,idSource:'INSTAGRAM_USER_ID'});
+  assert.ok(!JSON.stringify(r).includes('EAAG'),'응답에 토큰 없음');
+  // 게시도 그 ID로
+  const pub=hostGraph({'/17841400000000001':()=>json({username:'wooahshop'})});const s2=fakeStore();
+  await instagram('publish',{password,urls:[blobUrl(1)],caption:'안녕'},fbEnv,pub.request,s2.store,noDelay);
+  assert.ok(pub.calls.some(c=>c.path==='/v25.0/17841400000000001/media')&&pub.calls.some(c=>c.path==='/v25.0/17841400000000001/media_publish'));
+  assert.deepEqual(hostOf(pub.calls),['graph.facebook.com']);
+  // ID 없으면 쉬운 안내(요청 없이)
+  const none=hostGraph();
+  await assert.rejects(instagram('check',{password},{...env,INSTAGRAM_ACCESS_TOKEN:'EAAGsecretvalue'},none.request,store,noDelay),e=>e.status===503&&/INSTAGRAM_USER_ID가 필요합니다/.test(e.message));
+  assert.equal(none.calls.length,0);
+});
+test('INSTAGRAM_GRAPH_HOST forces the host; only the two Graph hosts are accepted; token never appears in errors',async()=>{
+  assert.equal(graphSetup({INSTAGRAM_ACCESS_TOKEN:'IGAAx',INSTAGRAM_GRAPH_HOST:'https://graph.facebook.com/'}).host,'graph.facebook.com');
+  assert.equal(graphSetup({INSTAGRAM_ACCESS_TOKEN:'EAAx',INSTAGRAM_GRAPH_HOST:'graph.instagram.com'}).kind,'instagram');
+  assert.throws(()=>graphSetup({INSTAGRAM_ACCESS_TOKEN:'x',INSTAGRAM_GRAPH_HOST:'evil.example.com'}),/graph\.instagram\.com 또는 graph\.facebook\.com/);
+  assert.throws(()=>graphSetup({INSTAGRAM_ACCESS_TOKEN:'x',INSTAGRAM_USER_ID:'wooahshop'}),/숫자로 된/);
+  const {store}=fakeStore(),bad=hostGraph({'/me':()=>json({error:{code:190,message:'Invalid OAuth access token - Cannot parse access token IGAAleak'}},false,400)});
+  await assert.rejects(instagram('check',{password},{...env,INSTAGRAM_ACCESS_TOKEN:' IGAAleak '},bad.request,store,noDelay),e=>/만료됐거나 올바르지 않습니다/.test(e.message)&&!e.message.includes('IGAAleak')&&e.message.includes('***'));
 });
