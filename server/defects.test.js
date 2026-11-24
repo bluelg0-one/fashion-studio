@@ -6,9 +6,9 @@ import {costTimes} from '../src/utils/cost.js';
 
 test('sensitivity: normal 1 call, aggressive 4 (2×2), max 9 (3×3); cost shown per number of calls',()=>{
  assert.deepEqual(Object.keys(DEFECT_LEVELS).map(callsFor),[1,4,9]);
- assert.equal(costTimes('claudeDefects',1),'약 $0.02~0.05 (1회)');
- assert.equal(costTimes('claudeDefects',4),'약 $0.08~0.20 (4회)');
- assert.equal(costTimes('claudeDefects',9),'약 $0.18~0.45 (9회)');
+ assert.equal(costTimes('claudeDefects',1),'약 $0.01~0.04 (1회)');
+ assert.equal(costTimes('claudeDefects',4),'약 $0.04~0.16 (4회)');
+ assert.equal(costTimes('claudeDefects',9),'약 $0.09~0.36 (9회)');
 });
 test('tiles cover the garment box with at least 15% overlap',()=>{
  const box={x:100,y:50,w:600,h:900};

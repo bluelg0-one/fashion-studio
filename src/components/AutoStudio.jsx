@@ -20,6 +20,9 @@ import ChannelExportPanel from './ChannelExportPanel.jsx';
 import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME} from '../utils/detailThemes.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
+import CostPanel from './CostPanel.jsx';
+import {addCost} from '../utils/costLog.js';
+import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
 import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
@@ -71,7 +74,9 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null);
+  const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef('');
+  // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
+  const logCost=row=>{addCost(row);};
   const rows=sizeRows[garment]||[newSizeRow()];
   useEffect(()=>{checkIopaint(getIopaintUrl()).then(setIop);checkBirefnet().then(setBir);api('status').then(r=>{setReady(r);if(r.photoroom)refreshCredits();}).catch(()=>setReady({}));return()=>{if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);};},[]);
   const patch=(id,values)=>{setSlots(current=>({...current,[id]:{...current[id],...values}}));setPreview(null);};
@@ -218,9 +223,11 @@ export default function AutoStudio() {
     let hit=cache.current.get(key)||(saved?.key===key?{image:saved.image,angle:saved.angle||0}:null);
     if(!hit){
       const response=await api('retouch',{image:input,options:req});
+      logCost(photoroomRow({feature:'photoroom_cutout',product:productName,cut:costCut.current}));
+      if(response.openai)logCost(openaiRow({feature:'openai_edit',product:productName,cut:costCut.current,...response.openai}));
       if(response.warning){warnings.push(response.warning);return {url:await photoroomCleanup(response.image,options)};}
       hit={image:response.image,angle:input===source?0:angle};cache.current.set(key,hit);
-    }
+    } else logCost(photoroomRow({feature:'photoroom_cutout',product:productName,cut:costCut.current,cached:true}));
     let raw=hit.image;
     const delta=Math.round((angle-(hit.angle||0))*100)/100;
     if(delta)raw=rotateCanvas(await imageCanvas(raw),delta,null).toDataURL('image/png');
@@ -269,6 +276,7 @@ export default function AutoStudio() {
       if(engines.has('birefnet'))setBir(await checkBirefnet());
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
+        costCut.current=slot.label;
         const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource);
         const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id});
         const prev=entryOf(slot);
@@ -280,6 +288,7 @@ export default function AutoStudio() {
       if(!onlyId&&!texts.headline&&current.hero.source&&status.openai){
         setStep('확인된 상품 정보로 문구 작성 중');
         const copy=await api('analyze',{image:current.hero.source,product:texts.product});
+        logCost(openaiRow({feature:'openai_copy',product:productName,cut:current.hero.label,model:copy.model,usage:copy.usage}));
         setTexts(value=>({...value,headline:copy.headline,description:[copy.description,...copy.points].join('\n')}));
       }
       if(warnings.length)setError(warnings.join('\n'));
@@ -375,21 +384,27 @@ export default function AutoStudio() {
   // 민감도별 호출: 보통 1회(사진 전체) · 적극 4회(옷 영역 2×2 타일) · 최대 9회(3×3). 같은 사진·같은 민감도는 다시 부르지 않습니다.
   async function findRegions(cutout,level) {
     const key='defects:'+level+':'+cutout;
-    if(cache.current.has(key))return {regions:cache.current.get(key),cached:true};
-    const n=(DEFECT_LEVELS[level]||DEFECT_LEVELS.normal).grid;
+    if(cache.current.has(key))return {regions:cache.current.get(key),cached:true,responses:[]};
+    const n=(DEFECT_LEVELS[level]||DEFECT_LEVELS.normal).grid,responses=[];
     let regions;
-    if(n<=1)regions=(await api('defects',{...(await inspectImage(cutout)),level})).regions;
-    else {
-      const c=await imageCanvas(cutout),tiles=tileGrid(garmentBox(c.getContext('2d').getImageData(0,0,c.width,c.height)),n),all=[];
-      for(let i=0;i<tiles.length;i++){
-        setStep(`Claude가 수정할 곳을 찾는 중 · 타일 ${i+1}/${tiles.length}`);
-        const {regions:found}=await api('defects',{...(await inspectTile(cutout,tiles[i])),level,tile:true});
-        all.push(...found.map(r=>mapFromTile(r,tiles[i],c.width,c.height)));
+    try {
+      if(n<=1){const r=await api('defects',{...(await inspectImage(cutout)),level});responses.push(r);regions=r.regions;}
+      else {
+        const c=await imageCanvas(cutout),tiles=tileGrid(garmentBox(c.getContext('2d').getImageData(0,0,c.width,c.height)),n),all=[];
+        for(let i=0;i<tiles.length;i++){
+          setStep(`Claude가 수정할 곳을 찾는 중 · 타일 ${i+1}/${tiles.length}`);
+          const r=await api('defects',{...(await inspectTile(cutout,tiles[i])),level,tile:true});responses.push(r);
+          all.push(...r.regions.map(x=>mapFromTile(x,tiles[i],c.width,c.height)));
+        }
+        regions=mergeRegions(all).slice(0,40);
       }
-      regions=mergeRegions(all).slice(0,40);
+    } catch(e) {
+      // 중간에 실패해도 이미 끝난 타일은 과금되었으므로 기록합니다.
+      if(responses.length)e.partial=responses;
+      throw e;
     }
     cache.current.set(key,regions);
-    return {regions,cached:false};
+    return {regions,cached:false,responses};
   }
   async function findDefectsFor(id) {
     await task(async()=>{
@@ -398,7 +413,11 @@ export default function AutoStudio() {
       if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');
       const level=defectOpts.level||DEFAULT_DEFECT_LEVEL;
       setStep(`Claude가 ${slot.label}에서 얼룩·구김을 찾는 중 (민감도: ${DEFECT_LEVELS[level].label})`);
-      const {regions:found,cached}=await findRegions(slot.cutout,level);
+      let res;
+      try {res=await findRegions(slot.cutout,level);}
+      catch(e){if(e.partial)logCost(claudeRow({feature:'defects',product:productName,cut:slot.label,level,responses:e.partial,boxes:e.partial.reduce((a,r)=>a+r.regions.length,0)}));throw e;}
+      const {regions:found,cached}=res;
+      logCost(claudeRow({feature:'defects',product:productName,cut:slot.label,level,responses:res.responses,boxes:found.length,cached}));
       // 사장님이 직접 표시한 곳은 그대로 두고, Claude가 찾은 곳만 새로 바꿉니다.
       const old=slot.defects||{regions:[],selected:[]},kept=old.regions.map((r,i)=>({r,on:old.selected.includes(i)})).filter(x=>x.r.manual);
       const regions=[...found,...kept.map(x=>x.r)];
@@ -443,11 +462,12 @@ export default function AutoStudio() {
         const fallback=defectOpts.engine2!=='photoroom';
         setStep(`${slot.label} · ${fallback?'IOPaint에 연결할 수 없어 ':''}Photoroom으로 2차 보정 중 (구김 펴기${ops.stains?' + 얼룩 AI 지우기':''}, $0.10/장)`);
         const res=await api('retouch2',{image:input,options:ops});
+        logCost(photoroomRow({feature:'photoroom_retouch2',product:productName,cut:slot.label}));
         // 혹시 흰 배경(불투명)으로 오면 가장자리의 흰색만 투명으로 되살립니다.
         const c=await imageCanvas(res.image),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
         if(isOpaque(px)&&alphaFromWhite(px))ctx.putImageData(px,0,0);
         image=c.toDataURL('image/png');cache.current.set(key,image);
-      }
+      } else logCost(photoroomRow({feature:'photoroom_retouch2',product:productName,cut:slot.label,cached:true}));
       const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:input,stage2:image}),defects:null,raw2:{key,image}}});
       setSlots(next);refreshCredits();
       setStep(`${slot.label} · Photoroom 2차 보정 완료 (${ops.stains?'구김 펴기 + 얼룩 AI 지우기 · 결과 1K로 줄어듦':'구김 펴기(옷 전체)'}${reused?' · 저장된 결과 재사용·추가 비용 없음':' · $0.10'}). 1차와 나란히 비교하고, 마음에 안 들면 ‘이전으로’(무료)를 누르세요.`);
@@ -475,6 +495,7 @@ export default function AutoStudio() {
       for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name});}
       setStep(`Claude가 사진 ${photos.length}장을 옷별·컷별로 분류하는 중`);
       const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb}))});
+      logCost(claudeRow({feature:'classify',product:'(한꺼번에 올리기)',cut:`사진 ${photos.length}장`,responses:[result],photos:photos.length}));
       const byId=Object.fromEntries(photos.map(p=>[p.id,p]));
       const groups=result.garments.map(g=>({...g,items:result.photos.filter(p=>p.garment===g.id)})).filter(g=>g.items.length);
       const orphans=result.photos.filter(p=>!result.garments.some(g=>g.id===p.garment));
@@ -592,6 +613,7 @@ export default function AutoStudio() {
       <div className="btn-row"><label className="iop-url">IOPaint 주소<input aria-label="IOPaint 주소" value={iopUrl} onChange={e=>{setIopUrl(e.target.value);setIopaintUrl(e.target.value);}}/></label>
         <button type="button" onClick={async()=>{setIop(null);setBir(null);const [a,b]=await Promise.all([checkIopaint(iopUrl),checkBirefnet()]);setIop(a);setBir(b);}}>다시 확인</button></div>
     </details>
+    <CostPanel level={defectOpts.level||DEFAULT_DEFECT_LEVEL} onLowerLevel={()=>{setDefectOpts({level:'normal'});setStep('수정할 곳 찾기 민감도를 ‘보통’(사진당 1회 호출)으로 낮췄습니다. 다시 올리려면 각 사진의 수정할 곳 찾기에서 바꾸세요.');}}/>
     <section className="product-bar" aria-label="상품 목록">
       <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
       <label>상품 이름<input aria-label="상품 이름" disabled={busy} maxLength={80} value={productName} onChange={e=>setProductName(e.target.value)}/></label>
@@ -656,7 +678,7 @@ export default function AutoStudio() {
         <button disabled={rows.length>=12} onClick={()=>{setSizeRows(current=>({...current,[garment]:[...rows,newSizeRow()]}));setPreview(null);}}>사이즈 행 추가</button>
         <label>치수 안내 문구<textarea maxLength={1500} value={texts.sizeNote} onChange={e=>setText('sizeNote',e.target.value)}/></label>
       </section>
-      <ShopeePanel shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
+      <ShopeePanel logCost={logCost} shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
       <InstagramPanel instagram={instagram} setInstagram={setInstagram} slots={slots} fitEnabled={fitEnabled} rows={rows} texts={texts} task={task} setStep={setStep} productName={productName}/>
       <ChannelExportPanel slots={slots} fitEnabled={fitEnabled} task={task} setStep={setStep} productName={productName}/>
     </fieldset><aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside></div>

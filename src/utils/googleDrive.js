@@ -160,6 +160,20 @@ async function uploadBlob(meta,blob,existing) {
   const r=await call(location,{method:'PUT',headers:{'Content-Type':blob.type},body:blob});
   return (await r.json()).id;
 }
+// ---- 비용 기록 CSV: 작업 폴더 / 두손_앱_비용기록.csv ----
+// 드라이브에는 ‘덧붙이기’가 없어, 앱이 만든 이 파일(drive.file 권한 안)을 읽어 새 줄을 붙인 뒤 다시 올립니다.
+export const COST_CSV_NAME='두손_앱_비용기록.csv';
+export async function appendCostCsv(folderId,header,lines) {
+  const query=`'${esc(folderId)}' in parents and appProperties has { key='fashionStudio' and value='costlog' } and trashed=false`;
+  const f=((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id)')}&spaces=drive`)).json()).files||[])[0];
+  let text=f?(await (await call(`${API}/files/${q(f.id)}?alt=media`)).text()).replace(/^﻿/,''):'';
+  if(!text.trim())text=header+'\n';else if(!text.endsWith('\n'))text+='\n';
+  // 엑셀에서 한글이 깨지지 않도록 맨 앞에 BOM을 붙입니다.
+  const blob=new Blob(['﻿'+text+lines.join('\n')+'\n'],{type:'text/csv'});
+  const meta={name:COST_CSV_NAME,mimeType:'text/csv',appProperties:{fashionStudio:'costlog'}};
+  if(!f)meta.parents=[folderId];
+  return uploadBlob(meta,blob,f?.id);
+}
 // 흰 배경 JPG, 2MB 이하(품질부터 낮추고, 그래도 크면 크기를 줄임)
 export async function finalJpg(src,maxBytes=2*1024*1024) {
   const bmp=await createImageBitmap(await (await fetch(src)).blob());
