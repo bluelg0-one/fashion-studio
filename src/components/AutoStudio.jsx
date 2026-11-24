@@ -14,6 +14,10 @@ import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, inspectTile, m
 import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions, splitRegions} from '../utils/defectTiles.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import DrivePanel from './DrivePanel.jsx';
+import DriveImportPanel from './DriveImportPanel.jsx';
+import {assignSlots} from '../utils/driveImport.js';
+import {driveThumb, driveFull, refThumb} from '../utils/drivePhotos.js';
+import {markImported} from '../utils/importStore.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
@@ -41,9 +45,6 @@ async function api(action,body) {
 }
 
 const MAX_VERSIONS=6;
-// Claude 분류 결과(컷 종류) → 칸. 기타 디테일은 원단 및 디테일 → 디테일2·3 → 포인트1·2 순서로 빈 칸에.
-const SHOT_SLOT={front:'hero',frontZoom:'frontZoom',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
-const DETAIL_ORDER=['fabric','detail2','detail3','point1','point2'];
 const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
 const entryOf=slot=>{const v=(slot.versions||[null])[slot.vIndex??0];return typeof v==='string'?{matte:null,stage1:v,stage2:null}:v||null;};
@@ -503,13 +504,9 @@ export default function AutoStudio() {
       const built=[];
       for(const g of groups){
         const next=initialSlots();let fit=false;
-        const order=[...g.items].sort((a,b)=>b.confidence-a.confidence);
-        for(const item of order){
-          const p=byId[item.id];let id=SHOT_SLOT[item.shot];
-          if((!id||next[id].source)&&['fabric','detail'].includes(item.shot))id=DETAIL_ORDER.find(k=>!next[k].source);
-          if(!id||next[id].source){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
-          if(id==='fit')fit=true;
-          next[id]={...next[id],source:p.full,...await initialLevel(p.full,retouch),image:whitePhoto(await imageCanvas(p.full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,file:p.name}};
+        for(const {slotId,item} of assignSlots(g.items)){
+          const p=byId[item.id];
+          if(await placePhoto(next,slotId,item,p.full,{file:p.name})==='fit')fit=true;
         }
         built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
       }
@@ -525,6 +522,36 @@ export default function AutoStudio() {
       const review=result.photos.filter(p=>p.review).length;
       setStep(`분류 완료 · 옷 ${built.length}벌 · 사진 ${result.photos.length}장${review?` · ⚠ 확인 필요 ${review}장 (노란 표시)`:''} · 상품 선택에서 옷별로 확인하세요.`);
     });
+  }
+  // 분류된 사진 한 장을 칸에 넣습니다(한꺼번에 올리기·드라이브 가져오기 공통). slotId가 없으면 추가 칸을 만듭니다.
+  async function placePhoto(next,slotId,item,full,extra={}) {
+    let id=slotId;
+    if(!id){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
+    next[id]={...next[id],source:full,...await initialLevel(full,retouch),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
+    return id;
+  }
+  // ---- 드라이브에서 가져오기(009): 화면 밖 흐름(driveImport.js)에 넘기는 함수들 ----
+  // 옷 하나 = 상품 하나. 같은 옷 사진이 나중에 더 오면(실패 후 다시 시도 등) 이미 만든 상품의 빈 칸·추가 칸에 넣습니다.
+  async function createImportedProduct({description,items,existing}) {
+    const old=existing?await getProduct(existing):null;
+    const next=old?migrateSlots(old.data?.slots):initialSlots();
+    let fit=Boolean(old?.data?.fitEnabled);
+    for(const {slotId,item} of assignSlots(items,Object.keys(next).filter(k=>next[k].source))){
+      const full=await driveFull(item);
+      if(await placePhoto(next,slotId,item,full,{file:item.name,driveId:item.id})==='fit')fit=true;
+    }
+    const product=old?{...old,data:{...old.data,slots:next,fitEnabled:fit}}:{id:newProductId(),name:description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}};
+    await saveProduct(product);await markImported(items,product.id);
+    return product.id;
+  }
+  const importDeps={
+    readThumb:driveThumb,refImage:refThumb,createProduct:createImportedProduct,
+    classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',body);},
+    onClassified:(result,batch)=>logCost(claudeRow({feature:'classify',product:'(드라이브 가져오기)',cut:`사진 ${batch.length}장`,responses:[result],photos:batch.length})),
+  };
+  async function importFinished(firstId) {
+    const list=await listProducts();setProducts(list);
+    if(firstId&&list.some(p=>p.id===firstId)&&firstId!==productId){await saveNow();await applyProduct(await getProduct(firstId));}
   }
   async function changeVersion(id,index) {
     await task(async()=>{
@@ -620,6 +647,7 @@ export default function AutoStudio() {
       <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
       <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label><Cost k="claudeClassify"/>
       <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
+      <DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)}/>
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
     <DrivePanel clientId={ready?.googleClientId} productId={productId} localSavedAt={localSavedAt} busy={busy} task={task} setStep={setStep}

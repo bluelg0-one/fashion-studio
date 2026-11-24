@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {studio} from './studio.js';
 const image='data:image/png;base64,aGVsbG8=';
-test('status exposes only credential presence',async()=>{assert.deepEqual(await studio('status',{},{}),{configured:false,openai:false,photoroom:false,claude:false,googleClientId:null});assert.deepEqual(await studio('status',{}, {OPENAI_API_KEY:'test-only',PHOTOROOM_API_KEY:'test-only'}),{configured:true,openai:true,photoroom:true,claude:false,googleClientId:null});assert.equal((await studio('status',{},{GOOGLE_CLIENT_ID:'123-abc.apps.googleusercontent.com'})).googleClientId,'123-abc.apps.googleusercontent.com');assert.equal((await studio('status',{},{GOOGLE_CLIENT_ID:'<script>'})).googleClientId,null);});
+test('status exposes only credential presence',async()=>{assert.deepEqual(await studio('status',{},{}),{configured:false,openai:false,photoroom:false,claude:false,googleClientId:null,googlePicker:null});assert.deepEqual(await studio('status',{}, {OPENAI_API_KEY:'test-only',PHOTOROOM_API_KEY:'test-only'}),{configured:true,openai:true,photoroom:true,claude:false,googleClientId:null,googlePicker:null});assert.equal((await studio('status',{},{GOOGLE_CLIENT_ID:'123-abc.apps.googleusercontent.com'})).googleClientId,'123-abc.apps.googleusercontent.com');assert.equal((await studio('status',{},{GOOGLE_CLIENT_ID:'<script>'})).googleClientId,null);});
 test('missing key fails before upstream call',async()=>{await assert.rejects(studio('edit',{image},{},()=>{throw Error('unexpected request')}),{status:503});});
 test('rejects URLs and oversized input',async()=>{for(const input of ['https://example.com/p.png','data:image/png;base64,'+'a'.repeat(9*1024*1024)])await assert.rejects(studio('edit',{image:input},{OPENAI_API_KEY:'test-only'}),{status:400});});
 test('upstream credentials and errors do not leak',async()=>{await assert.rejects(studio('edit',{image},{OPENAI_API_KEY:'test-only'},async()=>({ok:false,status:401,json:async()=>({error:{message:'sensitive upstream text'}})})),e=>e.status===401&&!e.message.includes('sensitive'));});
@@ -101,4 +101,12 @@ test('retouch with center:false keeps the original size and position (for the ma
  const env={PHOTOROOM_API_KEY:'pr-test'};let call;
  await studio('retouch',{image,options:{center:false,presets:[],custom:''}},env,async(url,o)=>{call=o;return imageResponse();});
  const f=call.body;assert.equal(f.get('referenceBox'),'originalImage');assert.equal(f.get('outputSize'),'originalImage');assert.equal(f.get('horizontalAlignment'),null);assert.equal(f.get('padding'),null);
+});
+test('status passes the Drive picker browser key and app number only when both look valid (no secrets)',async()=>{
+ const key='AIza'+'x'.repeat(35);
+ assert.deepEqual((await studio('status',{},{GOOGLE_PICKER_API_KEY:key,GOOGLE_APP_ID:'123456789012'})).googlePicker,{apiKey:key,appId:'123456789012'});
+ assert.equal((await studio('status',{},{GOOGLE_PICKER_API_KEY:key})).googlePicker,null,'앱 번호 없으면 없음');
+ assert.equal((await studio('status',{},{GOOGLE_PICKER_API_KEY:'<script>',GOOGLE_APP_ID:'1234567'})).googlePicker,null);
+ const s=await studio('status',{},{ANTHROPIC_API_KEY:'sk-ant-secret',PHOTOROOM_API_KEY:'pr-secret',GOOGLE_PICKER_API_KEY:key,GOOGLE_APP_ID:'1234567'});
+ assert.doesNotMatch(JSON.stringify(s),/secret/,'비밀 키는 돌려주지 않음');
 });

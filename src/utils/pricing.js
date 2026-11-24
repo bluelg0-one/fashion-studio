@@ -50,3 +50,11 @@ export function estimateRange(k) {
 }
 const usd2=v=>(Math.round(v*100)/100).toFixed(2);
 export function estimateText(k) {const [a,b]=estimateRange(k);return `약 $${usd2(a)}~${usd2(b)}/${ESTIMATES[k].unit}`;}
+
+// 묶음 분류(드라이브 가져오기) 예상 비용: n장을 batchSize장씩 나누고, 두 번째 묶음부터 앞에서 찾은 옷의 작은 썸네일(최대 refLimit장)을 함께 보냅니다.
+// 가정: 512px 사진 장당 입력 270~400·출력 60~150 토큰, 묶음마다 지시문 입력 1,000~1,500·출력 100~300, 참고 썸네일 장당 입력 최대 100.
+export function classifyEstimate(n,batchSize=20,refLimit=24) {
+  const b=Math.ceil(n/batchSize),p=claudePrice(ESTIMATES.claudeClassify.model);
+  const inMin=n*270+b*1000,inMax=n*400+b*1500+Math.max(0,b-1)*refLimit*100,outMin=n*60+b*100,outMax=n*150+b*300;
+  return {batches:b,range:[(inMin*p.input+outMin*p.output)/1e6,(inMax*p.input+outMax*p.output)/1e6]};
+}

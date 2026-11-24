@@ -119,7 +119,9 @@ async function shopeeCopy(body,env,request) {
 }
 export async function studio(action, body, env = process.env, request = fetch) {
   // googleClientId는 비밀이 아닌 공개 값(브라우저의 구글 로그인에 필요)입니다. 형식이 맞을 때만 돌려줍니다.
-  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY), googleClientId: /^[\w-]+\.apps\.googleusercontent\.com$/.test(env.GOOGLE_CLIENT_ID||'') ? env.GOOGLE_CLIENT_ID : null };
+  // googlePicker: 드라이브 ‘파일 선택’ 창용 브라우저 공개 키·앱 번호(지시서 009). 비밀 키가 아니며(구글이 브라우저에서 쓰도록 만든 키), 구글 콘솔에서 앱 주소로만 쓰도록 제한합니다. 둘 다 형식이 맞을 때만 돌려줍니다.
+  if (action === 'status') return { configured: Boolean(env.OPENAI_API_KEY), openai: Boolean(env.OPENAI_API_KEY), photoroom: Boolean(env.PHOTOROOM_API_KEY), claude: Boolean(env.ANTHROPIC_API_KEY), googleClientId: /^[\w-]+\.apps\.googleusercontent\.com$/.test(env.GOOGLE_CLIENT_ID||'') ? env.GOOGLE_CLIENT_ID : null,
+    googlePicker: /^AIza[\w-]{35}$/.test(env.GOOGLE_PICKER_API_KEY||'') && /^\d{6,20}$/.test(env.GOOGLE_APP_ID||'') ? {apiKey:env.GOOGLE_PICKER_API_KEY,appId:env.GOOGLE_APP_ID} : null };
   if (action === 'classify') return classifyPhotos(body,env);
   if (action === 'defects') return findDefects(body,env);
   if (action === 'retouch') return retouch(body,env,request);

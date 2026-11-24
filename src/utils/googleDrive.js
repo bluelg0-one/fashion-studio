@@ -160,6 +160,47 @@ async function uploadBlob(meta,blob,existing) {
   const r=await call(location,{method:'PUT',headers:{'Content-Type':blob.type},body:blob});
   return (await r.json()).id;
 }
+// ---- 드라이브에서 사진 가져오기 (지시서 009) ----
+// 권한은 그대로 drive.file: 구글 ‘파일 선택’ 창(Google Picker)에서 사장님이 고른 사진·폴더만 앱이 읽을 수 있습니다.
+// 선택 창에는 API 키(GOOGLE_PICKER_API_KEY, 브라우저용 공개 키 — 앱 주소로만 쓰도록 제한)와 앱 번호(GOOGLE_APP_ID = 구글 클라우드 프로젝트 번호)가 필요합니다.
+// 폴더를 골랐을 때 그 안의 사진까지 읽을 수 있는지는 공식 문서로 확인하지 못했습니다(작업 환경에서 문서가 열리지 않음).
+// 그래서 폴더 안을 읽지 못하면 ‘폴더를 열어 사진을 모두 선택’하도록 안내합니다.
+export const FOLDER_TYPE=FOLDER_MIME;
+let pickerLoading=null;
+function loadPicker() {
+  if(window.google?.picker)return Promise.resolve();
+  if(!pickerLoading)pickerLoading=new Promise((resolve,reject)=>{
+    const fail=()=>{pickerLoading=null;reject(new Error('구글 파일 선택 창을 불러오지 못했습니다. 인터넷 연결을 확인하세요.'));};
+    const s=document.createElement('script');s.src='https://apis.google.com/js/api.js';s.async=true;
+    s.onload=()=>window.gapi.load('picker',{callback:resolve,onerror:fail});s.onerror=fail;
+    document.head.appendChild(s);
+  });
+  return pickerLoading;
+}
+// 사진·폴더 고르기(여러 개). 취소하면 빈 목록.
+export async function pickPhotos({apiKey,appId,mimeTypes}) {
+  if(!hasToken())throw Object.assign(new Error('구글 드라이브 연결 시간이 지났습니다. 다시 연결해 주세요.'),{expired:true});
+  await loadPicker();
+  const P=window.google.picker;
+  return new Promise(resolve=>{
+    const view=new P.DocsView(P.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(true).setMimeTypes([...mimeTypes,FOLDER_MIME].join(','));
+    new P.PickerBuilder().addView(view).enableFeature(P.Feature.MULTISELECT_ENABLED).setOAuthToken(token.value).setDeveloperKey(apiKey).setAppId(appId)
+      .setLocale('ko').setTitle('가져올 사진 폴더나 사진을 고르세요 (여러 개 가능)')
+      .setCallback(d=>{if(d.action===P.Action.PICKED)resolve((d.docs||[]).map(x=>({id:x.id,name:x.name,mimeType:x.mimeType})));else if(d.action===P.Action.CANCEL)resolve([]);})
+      .build().setVisible(true);
+  });
+}
+// 폴더 안의 사진 목록(하위 폴더는 보지 않음). 읽을 권한이 없으면 빈 목록이 옵니다.
+export async function listFolderImages(folderId) {
+  const query=`'${esc(folderId)}' in parents and mimeType contains 'image/' and trashed=false`,out=[];let page='';
+  do {
+    const r=await call(`${API}/files?q=${q(query)}&fields=${q('nextPageToken,files(id,name,mimeType)')}&pageSize=1000&spaces=drive${page?`&pageToken=${q(page)}`:''}`);
+    const d=await r.json();out.push(...(d.files||[]));page=d.nextPageToken||'';
+  } while(page);
+  return out;
+}
+export async function downloadFile(id) {return (await call(`${API}/files/${q(id)}?alt=media`)).blob();}
+
 // ---- 비용 기록 CSV: 작업 폴더 / 두손_앱_비용기록.csv ----
 // 드라이브에는 ‘덧붙이기’가 없어, 앱이 만든 이 파일(drive.file 권한 안)을 읽어 새 줄을 붙인 뒤 다시 올립니다.
 export const COST_CSV_NAME='두손_앱_비용기록.csv';
