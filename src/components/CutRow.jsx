@@ -89,10 +89,12 @@ function LevelPanel({slot,draft,setDraft,onLevel}) {
       <button type="button" disabled={!level.angle} onClick={()=>onLevel(slot.id,0)}>원래대로 (0°)</button>
       <Cost k="browser"/>
     </div>
+    {level.suggest&&level.angle!==level.suggest?<div className="btn-row"><button type="button" className="primary" aria-label={`${slot.id} 수평 제안 적용`} onClick={()=>onLevel(slot.id,level.suggest)}>수평 제안 {level.suggest>0?'+':''}{level.suggest}° 적용</button><span className="slot-note">계산한 기울기입니다. 눌러야만 돌립니다(무료).</span></div>:null}
     {level.angle&&!level.manual?<p className="level-badge" aria-label={`${slot.id} 자동 수평 표시`}>자동 수평 {level.angle>0?'+':''}{level.angle}° 적용 — 기울어 보이면 ‘원래대로 (0°)’</p>:null}
     {level.zoom>1&&<p className="slot-note">돌린 모서리가 비지 않게 {Math.round((level.zoom-1)*1000)/10}% 안쪽으로 잘라 냈습니다.</p>}
     {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.reason?` — ${level.reason}`:''}</p>}
     {level.auto==null&&!level.manual&&level.reason&&<p className="slot-note">{level.reason} (직접 돌릴 수 있습니다)</p>}
+    {!level.suggest&&level.auto!=null&&!level.angle&&<p className="slot-note">수평 제안 없음 — 거의 똑바로이거나 근거가 확실하지 않습니다.</p>}
   </div>;
 }
 function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive'},setOpts=()=>{}}) {

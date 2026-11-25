@@ -171,14 +171,15 @@ export default function AutoStudio() {
     return source.startsWith('data:image/png')?r.toDataURL('image/png'):r.toDataURL('image/jpeg',.95);
   }
   const zoomFor=async(slotId,source,angle,shot)=>{if(!angle||autoLevelAllowed(slotId,shot))return 1;const c=await imageCanvas(source);return Math.round(coverScale(c.width,c.height,angle)*10000)/10000;};
-  // 새 사진을 넣을 때(013): 정면 전체·측면·후면만 자동으로 기울기를 재고, 세로·가로 근거가 같은 방향·비슷한 각도이고 ±4° 안일 때만 돌립니다.
-  // 확대·디테일·모델컷은 자동으로 돌리지 않습니다(직접 돌리기는 됨).
+  // 새 사진을 넣을 때(013 팀장 결정): 자동 수평은 기본으로 끔. 기울기는 계산해서 '수평 제안 n°'(suggest)로만 보여 주고, 누를 때만 돌립니다.
+  // '자동 수평 (실험)'을 켜면 예전처럼 정면 전체·측면·후면만, 세로·가로 근거가 같은 방향·비슷한 각도이고 ±4° 안일 때만 돌립니다.
   async function initialLevel(source,options,slotId,shot) {
-    const none={angle:0,auto:null,confidence:null,manual:false,zoom:1,reason:null,review:false};
-    if(options?.autoLevel===false)return {level:none,workSource:null};
-    if(!autoLevelAllowed(slotId,shot))return {level:{...none,reason:'확대·디테일 컷은 자동 수평을 하지 않음'},workSource:null};
+    const none={angle:0,auto:null,confidence:null,manual:false,zoom:1,reason:null,review:false,suggest:0};
     const est=estimateCanvasTilt(await imageCanvas(source)),d=decideLevel(est);
-    return {level:{...none,angle:d.angle,auto:est.angle,confidence:est.confidence,reason:d.reason,review:d.review},workSource:await levelSource(source,d.angle,1)};
+    const base={...none,auto:est.angle,confidence:est.confidence,suggest:d.angle,reason:d.reason};
+    if(options?.autoLevelBeta!==true)return {level:base,workSource:null};
+    if(!autoLevelAllowed(slotId,shot))return {level:{...base,reason:'확대·디테일 컷은 자동 수평을 하지 않음'},workSource:null};
+    return {level:{...base,angle:d.angle,review:d.review},workSource:await levelSource(source,d.angle,1)};
   }
   // 수평 바꾸기: 'auto'(다시 계산) · 숫자(직접 각도). 이미 누끼를 딴 사진은 바로 다시 처리합니다
   // (Photoroom은 저장된 결과를 차이만큼 돌려 쓰므로 다시 과금하지 않음).
@@ -617,7 +618,8 @@ export default function AutoStudio() {
   const autoSteps={
     level:async(slot,{product})=>{
       const options=autoOptions(slot,product.data,false);
-      const lv=slot.level?{level:slot.level,workSource:slot.workSource||null}:await initialLevel(slot.source,options,slot.id,slot.ai?.shot);
+      // 사장님이 직접 맞춘 각도는 그대로. 자동 수평(실험)이 꺼져 있으면 예전에 자동으로 돌린 컷도 0°로 되돌리고 제안만 남깁니다(013 팀장 결정).
+      const lv=slot.level?.manual||(options.autoLevelBeta===true&&slot.level)?{level:slot.level,workSource:slot.workSource||null}:await initialLevel(slot.source,options,slot.id,slot.ai?.shot);
       const f=levelFlag(lv.level);
       return {slot:{...slot,...lv},flags:f?[f]:[]};
     },

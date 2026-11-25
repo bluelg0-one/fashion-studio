@@ -1,4 +1,4 @@
-// 자동 수평 맞추기 검사: 기울여 만든 합성 매장 사진 → 자동 각도, 누끼는 바로 세운 사진으로 요청, 각도를 바꿔도 Photoroom 재호출 없음,
+// 자동 수평 검사(013: 기본 꺼짐 + 수평 제안 버튼): 기울여 만든 합성 매장 사진 → 제안 각도, 누끼는 바로 세운 사진으로 요청, 각도를 바꿔도 Photoroom 재호출 없음,
 // 0°로·자동 다시 계산, 격자 미리보기, 자동 수평 끄기. Photoroom은 모의 응답(비용 없음).
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import assert from 'node:assert/strict';
@@ -26,13 +26,18 @@ try{
  cut=fx.cut;
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'a.jpg',mimeType:'image/jpeg',buffer:Buffer.from(fx.src.split(',')[1],'base64')});await idle();
  const angle=async()=>Number(await page.getByLabel('hero 수평 각도').inputValue());
- const auto=await angle();
- assert.ok(Math.abs(auto-TILT)<=.3,`자동 각도 ${auto}° (기대 +${TILT}°)`);
+ // (013 팀장 결정) 자동 수평은 기본 꺼짐: 넣자마자 돌리지 않고 '수평 제안 +n°' 버튼만 보여 줌 → 눌러야 적용
+ assert.equal(await angle(),0,'기본은 돌리지 않음');
+ assert.equal(await page.getByLabel('hero 자동 수평 표시').count(),0);
+ const suggestBtn=page.getByLabel('hero 수평 제안 적용');
+ const sugText=await suggestBtn.innerText(),sug=Number(sugText.match(/([+-]?[\d.]+)°/)[1]);
+ assert.ok(Math.abs(sug-TILT)<=.3,`수평 제안 ${sug}° (기대 +${TILT}°)`);
  assert.match(await page.locator('[aria-label="hero 수평 맞추기"]').innerText(),/자동 계산 \+[\d.]+° · 신뢰도 \d+%/);
  assert.equal(await page.locator('[data-slot="hero"] .level-grid').count(),1,'격자 미리보기');
+ await suggestBtn.click();await idle();
+ const auto=await angle();assert.ok(Math.abs(auto-sug)<1e-9,'제안 각도 적용');
  assert.match(await page.locator('[data-slot="hero"] .level-view img').getAttribute('style'),/rotate\(3\.\d+deg\)/);
- // 돌린 컷은 눈에 띄게 '자동 수평 n°' 표시 + 원래대로 버튼
- assert.match(await page.getByLabel('hero 자동 수평 표시').innerText(),/자동 수평 \+3\.\d° 적용/);
+ assert.equal(await page.getByLabel('hero 수평 제안 적용').count(),0,'적용 뒤 제안 버튼 숨김');
  // 누끼는 바로 세운 사진으로 요청
  await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();await idle();
  assert.equal(sent.length,1);assert.notEqual(sent[0],fx.src,'원본이 아니라 바로 세운 사진을 보냄');
@@ -46,7 +51,8 @@ try{
  const slider=page.getByLabel('hero 수평 각도');await slider.focus();await page.keyboard.press('ArrowLeft');await idle();
  assert.ok(Math.abs(await angle()-(auto-.1))<1e-6,`0.1° 내림 ${await angle()}`);assert.match(await page.locator('[aria-label="hero 수평 맞추기"]').innerText(),/\(직접\)/);
  assert.equal(sent.length,1);
- // (013) 확대·디테일 컷은 같은 기울어진 사진이어도 자동으로 돌리지 않음
+ // '자동 수평 (실험)'을 켜면 예전 방식(정면 전체·측면·후면만, 근거 일치·±4°). 확대·디테일 컷은 켜도 자동으로 돌리지 않음
+ await page.getByLabel('자동 수평 (실험)',{exact:true}).first().check();
  await page.getByLabel('frontZoom 컷 추가').click();await page.getByLabel('frontZoom 사진 선택',{exact:true}).setInputFiles({name:'z.jpg',mimeType:'image/jpeg',buffer:Buffer.from(fx.src.split(',')[1],'base64')});await idle();
  assert.equal(Number(await page.getByLabel('frontZoom 수평 각도').inputValue()),0,'확대 컷은 자동 회전 꺼짐');
  assert.match(await page.locator('[aria-label="frontZoom 수평 맞추기"]').innerText(),/확대·디테일 컷은 자동 수평을 하지 않음/);
@@ -62,10 +68,10 @@ try{
  await page.getByLabel('back 컷 추가').click();await page.getByLabel('back 사진 선택',{exact:true}).setInputFiles({name:'s.jpg',mimeType:'image/jpeg',buffer:Buffer.from(steep.split(',')[1],'base64')});await idle();
  assert.equal(Number(await page.getByLabel('back 수평 각도').inputValue()),0,'7°는 최대 ±4°를 넘어 돌리지 않음');
  assert.match(await page.locator('[aria-label="back 수평 맞추기"]').innerText(),/최대 ±4°를 넘어 돌리지 않음/);
- // 자동 수평 끄기 → 새 사진은 0°
- await page.getByLabel('자동 수평 맞추기',{exact:true}).first().uncheck();
+ // 실험을 켠 상태의 정면 전체급 컷(측면)은 자동으로 돌아가고 노란 표시
  await page.getByLabel('side 컷 추가').click();await page.getByLabel('side 사진 선택',{exact:true}).setInputFiles({name:'b.jpg',mimeType:'image/jpeg',buffer:Buffer.from(fx.src.split(',')[1],'base64')});await idle();
- assert.equal(Number(await page.getByLabel('side 수평 각도').inputValue()),0,'자동 수평을 끄면 돌리지 않음');
+ assert.ok(Math.abs(Number(await page.getByLabel('side 수평 각도').inputValue())-TILT)<=.3,'실험 켜면 자동 회전');
+ assert.match(await page.getByLabel('side 자동 수평 표시').innerText(),/자동 수평 \+3\.\d° 적용/);
  assert.deepEqual(errors,[]);
- console.log(`PASS: auto level ${auto}° for a ${TILT}° counter-clockwise photo (error ${Math.abs(auto-TILT).toFixed(2)}°), cutout requested with the leveled photo, 0°/auto/0.1° slider changes reuse the saved Photoroom result (1 call), grid preview, auto level can be turned off; zoom cut not auto-rotated and cropped inward when rotated by hand, 7° front not rotated (max ±4°), '자동 수평 n° 적용' badge.`);
+ console.log(`PASS: auto level off by default (0° on upload), '수평 제안 +${sug}°' button for a ${TILT}° photo applies it, cutout requested with the leveled photo, 0°/auto/0.1° slider changes reuse the saved Photoroom result (1 call), grid preview; with '자동 수평 (실험)' on: zoom cut not auto-rotated and cropped inward when rotated by hand, 7° front not rotated (max ±4°), side auto-rotated with the '자동 수평 n° 적용' badge.`);
 }finally{await browser.close();}

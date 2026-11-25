@@ -25,7 +25,7 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
     <div className="post-clean" aria-label={`${prefix}누끼 뒤 정리`}>
       <h4>누끼 뒤 정리 <Cost k="browser"/></h4>
-      <label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 맞추기`} checked={value.autoLevel!==false} onChange={e=>set({autoLevel:e.target.checked})}/>사진을 넣을 때 자동 수평 맞추기 (기울어진 사진 바로 세우기, 누끼 전 적용)</label>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 (실험)`} checked={value.autoLevelBeta===true} onChange={e=>set({autoLevelBeta:e.target.checked})}/>자동 수평 (실험 · 기본 꺼짐: 꺼져 있으면 사진마다 ‘수평 제안’만 보여 주고 누를 때만 돌립니다)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}흰 옷 맑게`} checked={value.clearWhite!==false} onChange={e=>set({clearWhite:e.target.checked})}/>흰·아이보리 옷 맑게 (누런 기 약하게 덜기 · 무료)</label>
