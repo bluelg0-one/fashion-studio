@@ -4,7 +4,7 @@ import {cutoutBounds} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {estimateCanvasTilt, rotateCanvas, borderColor, decideLevel, autoLevelAllowed, coverScale} from '../utils/level.js';
-import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
+import {removeIslands, solidifyThin, removeHanger, removeMannequinTop, clearAboveFinial, restoreHook, clearWallPockets} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
@@ -206,10 +206,15 @@ export default function AutoStudio() {
   }
   // 배경 지우기 결과(원본과 같은 위치·크기의 누끼). 같은 사진·같은 설정은 다시 과금하지 않습니다.
   // 누끼 뒤 정리(무료): 옷걸이 → 마네킹 꼭지·목 받침 → 떨어진 조각 순서로 알파만 고칩니다.
-  async function cleanMatte(url,options) {
+  // src: 누끼를 딴 사진(같은 크기·위치). 있으면 벽 색을 재서 옷걸이 고리 끝 살리기·닫힌 틈의 벽 지우기를 합니다(013-B).
+  async function cleanMatte(url,options,src=null) {
     const c=await imageCanvas(url),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
-    if(options.hangerMode==='remove')removeHanger(px);else solidifyThin(px);
-    if(options.cleanMannequinTop)removeMannequinTop(px);
+    let sp=null,wall=null;
+    if(src){const sc=await imageCanvas(src);if(sc.width===c.width&&sc.height===c.height){sp=sc.getContext('2d').getImageData(0,0,sc.width,sc.height);wall=borderColor(sp);}}
+    if(options.hangerMode==='remove')removeHanger(px);else {solidifyThin(px);if(sp)restoreHook(px,sp,wall);}
+    if(wall)clearWallPockets(px,wall);
+    // 마네킹 꼭지는 남기되(사장님 결정), 꼭지 맨 위보다 위에 남은 벽 걸이 부품 등은 지웁니다.
+    if(options.cleanMannequinTop)removeMannequinTop(px);else clearAboveFinial(px);
     if(options.cleanIslands!==false)removeIslands(px);
     ctx.putImageData(px,0,0);
     return c.toDataURL('image/png');
@@ -217,7 +222,7 @@ export default function AutoStudio() {
   // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
   async function engineMatte(source,warnings,options,saved,angle=0,work=null,zoom=1) {
     const cut=await engineCut(source,warnings,options,saved,angle,work,zoom);
-    return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null,charged:Boolean(cut.charged)};
+    return {matte:await cleanMatte(cut.url,options,angle&&work?work:source),raw:cut.raw||null,charged:Boolean(cut.charged)};
   }
   // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
   // 사진 아래에서 올라오는 좁고 곧은 무채색 기둥만 지웁니다(stand.js).

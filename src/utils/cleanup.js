@@ -24,10 +24,17 @@ function components(data,width,height,th=128) {
 
 // 본체와 이어지지 않은 작은 덩어리(전체 불투명 면적의 minShare 미만)를 지웁니다.
 // 남은 덩어리 둘레 2px 밖의 반투명 찌꺼기도 함께 지웁니다. 지운 덩어리 수를 돌려줍니다.
+// (013-B) 마네킹 조각은 남김: 원단 디테일 같은 확대 컷에서 마네킹 목이 옷과 떨어진 덩어리로 보여 지워졌습니다(사장님 결정: 마네킹은 남김).
+//  밝은 무채색(마네킹 크림·흰색, L 55 이상·채도 14 미만)이고 사진의 0.1% 이상인 덩어리는 작아도 지우지 않습니다.
+export const MANNEQUIN_PIECE={minL:55,maxC:14,minImageShare:.001};
 export function removeIslands({data,width,height},{minShare=.004}={}) {
   const {label,sizes}=components(data,width,height);
   if(sizes.length<2)return 0;
-  const total=sizes.reduce((a,b)=>a+b,0),biggest=Math.max(...sizes),keep=sizes.map(s=>s===biggest||s>=total*minShare);
+  // 덩어리별 평균 색(마네킹 조각 판별)
+  const sum=sizes.map(()=>[0,0,0]);
+  for(let p=0;p<label.length;p++){const id=label[p];if(id<0)continue;const s3=sum[id];s3[0]+=data[p*4];s3[1]+=data[p*4+1];s3[2]+=data[p*4+2];}
+  const mannequinLike=sizes.map((sz,id)=>{if(sz<width*height*MANNEQUIN_PIECE.minImageShare)return false;const [l,a,b]=rgbToLab(...sum[id].map(v=>Math.round(v/sz)));return l>=MANNEQUIN_PIECE.minL&&Math.hypot(a,b)<MANNEQUIN_PIECE.maxC;});
+  const total=sizes.reduce((a,b)=>a+b,0),biggest=Math.max(...sizes),keep=sizes.map((s,id)=>s===biggest||s>=total*minShare||mannequinLike[id]);
   const removed=keep.filter(k=>!k).length;
   if(!removed)return 0;
   const kept=new Uint8Array(width*height);
@@ -124,5 +131,87 @@ export function removeMannequinTop({data,width,height}) {
     for(const q of [x>0?p-1:-1,x<width-1?p+1:-1,y>0?p-width:-1,y<height-1?p+width:-1]){
       if(q<0||seen[q])continue;seen[q]=1;if(kind[q]===2&&data[q*4+3]>=30){extra.push(q);stack.push(q);}}}
   if(extra.length<=opaque*.25){for(const p of extra)data[p*4+3]=0;changed+=extra.length;}
+  return changed;
+}
+
+// ---- 013-B: 마네킹 꼭지 위 정리 ----
+// 사장님 2차 시험: 꼭지(금색 피니얼) 위에 벽의 투명 걸이 부품이 누끼되지 않고 남았습니다. 마네킹과 꼭지는 남깁니다(사장님 결정).
+// 금색 꼭지를 찾아(누끼 맨 위 15% 안, 가운데쪽, 폭이 옷 폭의 25% 이하인 작은 금색 덩어리), 꼭지 맨 위보다 위에 있는 것은 모두 지웁니다.
+// 꼭지 높이에서도 꼭지 옆으로 꼭지 폭 이상 떨어진 무채색(투명·회색 부품)은 지웁니다. 옷이 금색 계열이면(구분 불가) 아무것도 하지 않습니다.
+const isGold=(r,g,b)=>{const l=rgbToLab(r,g,b);return l[0]>35&&l[2]>18&&l[1]<14&&l[2]>Math.abs(l[1])*1.2;};
+export function clearAboveFinial({data,width,height}) {
+  let x0=width,x1=-1,top=height,bottom=-1,opaque=0;
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(data[(y*width+x)*4+3]>=128){opaque++;if(x<x0)x0=x;if(x>x1)x1=x;if(y<top)top=y;if(y>bottom)bottom=y;}
+  if(x1<x0)return 0;
+  try{const d=dominantLab({data,width,height});if(d.L>35&&d.b>18&&d.a<14)return 0;}catch{return 0;}
+  const H=bottom-top+1,W=x1-x0+1,limit=top+Math.round(H*.15);
+  let gx0=width,gx1=-1,gy0=height,gy1=-1,gold=0;
+  for(let y=top;y<=limit;y++)for(let x=x0;x<=x1;x++){const i=(y*width+x)*4;if(data[i+3]<128||!isGold(data[i],data[i+1],data[i+2]))continue;gold++;if(x<gx0)gx0=x;if(x>gx1)gx1=x;if(y<gy0)gy0=y;if(y>gy1)gy1=y;}
+  if(gold<30)return 0;
+  const fw=gx1-gx0+1,cx=(gx0+gx1)/2;
+  if(fw>W*.25||Math.abs(cx-(x0+x1)/2)>W*.2||gold>opaque*.03)return 0;   // 꼭지가 아니라 옷의 금색 무늬 등
+  let changed=0;
+  // 꼭지 맨 위보다 위: 전부
+  for(let y=0;y<gy0-1;y++)for(let x=0;x<width;x++){const i=(y*width+x)*4+3;if(data[i]){data[i]=0;changed++;}}
+  // 꼭지 높이: 꼭지에서 꼭지 폭 이상 떨어진 무채색
+  for(let y=Math.max(0,gy0-1);y<=gy1;y++)for(let x=0;x<width;x++){
+    if(x>=gx0-fw&&x<=gx1+fw)continue;const i=(y*width+x)*4;if(!data[i+3])continue;
+    const l=rgbToLab(data[i],data[i+1],data[i+2]);if(Math.hypot(l[1],l[2])<14){data[i+3]=0;changed++;}
+  }
+  return changed;
+}
+
+// ---- 013-B: 옷걸이 컷 ----
+// 사장님 결정: 옷걸이는 남김. 시험에서 ① 얇은 금속 고리 끝이 같이 지워지고 ② 옷걸이와 옷 사이의 벽이 누끼되지 않아 지저분했습니다.
+// src = 누끼를 딴 사진(같은 크기·위치). wall = 벽 색(사진 가장자리 중앙값, 'rgb(r,g,b)').
+const parseRgb=s=>(s.match(/\d+/g)||[]).slice(0,3).map(Number);
+// ① 고리 끝 살리기: 어깨선 위에 남은 옷걸이(옷 색 아닌 불투명) 맨 위에서, 원본에서 벽과 다른(ΔE 12 이상) 픽셀을 따라 위로 이어 붙입니다.
+//    가는 선일 때만(어느 줄도 사진 폭의 3%보다 넓어지지 않음, 늘어난 양이 원래 고리의 3배 이하). 아니면(벽돌 줄 등을 따라감) 아무것도 하지 않습니다.
+export function restoreHook(img,src,wall) {
+  const {data,width,height}=img;if(!src||src.width!==width||src.height!==height)return 0;
+  const sh=shoulderRow(data,width,height);if(!sh)return 0;
+  const W=parseRgb(wall),wl=rgbToLab(...W),n=width*height;
+  const srcLab=p=>rgbToLab(src.data[p*4],src.data[p*4+1],src.data[p*4+2]);
+  const seeds=[];let hookPx=0;
+  for(let y=sh.top;y<sh.row;y++)for(let x=0;x<width;x++){const p=y*width+x;if(data[p*4+3]>=128){hookPx++;if(y<sh.top+3)seeds.push(p);}}
+  if(!seeds.length||hookPx>n*.02)return 0;
+  const seen=new Uint8Array(n),add=[],stack=[...seeds];for(const p of seeds)seen[p]=1;
+  const maxAdd=Math.max(30,hookPx*3),yMin=Math.max(0,sh.top-Math.round(height*.08));
+  while(stack.length){
+    const p=stack.pop(),x=p%width,y=(p-x)/width;
+    for(const [dx,dy] of [[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[0,1]]){
+      const xx=x+dx,yy=y+dy;if(xx<0||xx>=width||yy<yMin||yy>=sh.row)continue;const q=yy*width+xx;if(seen[q])continue;seen[q]=1;
+      if(data[q*4+3]>=128)continue;
+      const l=srcLab(q);if(Math.hypot(l[0]-wl[0],l[1]-wl[1],l[2]-wl[2])<12)continue;
+      add.push(q);stack.push(q);if(add.length>maxAdd)return 0;
+    }
+  }
+  if(!add.length)return 0;
+  const rows=new Map();for(const p of add){const y=Math.floor(p/width),x=p%width,r=rows.get(y)||[x,x];rows.set(y,[Math.min(r[0],x),Math.max(r[1],x)]);}
+  for(const [a,b] of rows.values())if(b-a+1>width*.03)return 0;
+  for(const p of add){data[p*4]=src.data[p*4];data[p*4+1]=src.data[p*4+1];data[p*4+2]=src.data[p*4+2];data[p*4+3]=255;}
+  return add.length;
+}
+// ② 닫힌 틈의 벽 지우기: 누끼에 남은 '벽 색'(ΔE 12 이하)이고 옷 대표 색과 다른(ΔE 20 이상) 덩어리 중,
+//    둘레의 80% 이상이 불투명한 다른 것(옷·옷걸이)에 둘러싸인 것(닫힌 구멍)을 투명하게 합니다. 옷 색이 벽 색과 비슷하면 아무것도 하지 않습니다.
+export function clearWallPockets(img,wall) {
+  const {data,width,height}=img,n=width*height,W=parseRgb(wall);
+  let ref;try{ref=dominantLab(img);}catch{return 0;}
+  const wl=rgbToLab(...W);if(Math.hypot(ref.L-wl[0],ref.a-wl[1],ref.b-wl[2])<20)return 0;
+  const isWall=new Uint8Array(n);let opaque=0;
+  for(let p=0;p<n;p++){if(data[p*4+3]<128)continue;opaque++;const l=rgbToLab(data[p*4],data[p*4+1],data[p*4+2]);if(Math.hypot(l[0]-wl[0],l[1]-wl[1],l[2]-wl[2])<=12)isWall[p]=1;}
+  const seen=new Uint8Array(n);let changed=0;
+  for(let s0=0;s0<n;s0++){
+    if(!isWall[s0]||seen[s0])continue;
+    const comp=[],stack=[s0];seen[s0]=1;let border=0,closed=0;
+    while(stack.length){const p=stack.pop();comp.push(p);const x=p%width,y=(p-x)/width;
+      for(const q of [x>0?p-1:-1,x<width-1?p+1:-1,y>0?p-width:-1,y<height-1?p+width:-1]){
+        if(q<0){border++;continue;}
+        if(isWall[q]){if(!seen[q]){seen[q]=1;stack.push(q);}continue;}
+        border++;if(data[q*4+3]>=128)closed++;
+      }}
+    if(comp.length<30||comp.length>opaque*.15||closed<border*.8)continue;
+    for(const p of comp)data[p*4+3]=0;changed+=comp.length;
+  }
   return changed;
 }
