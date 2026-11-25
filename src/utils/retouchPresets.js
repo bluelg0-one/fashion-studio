@@ -19,8 +19,9 @@ export const CUTOUT_ENGINES=['photoroom','birefnet'];
 // 사진마다 ‘밝기·화사하게’ 슬라이더로 조절하거나 ‘색감 보정 끄기’로 0으로 돌릴 수 있습니다.
 export const DEFAULT_TONE={bright:20,vivid:30};
 // autoLevel: 사진을 넣을 때 자동 수평 맞추기(무료, 기본 켬). 엔진 요청과 상관없어 재과금 기준에서 뺍니다.
-export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','hangerMode','autoLevel'];
-export const DEFAULT_RETOUCH = {cutout:'photoroom', autoLevel:true, removeStand:true, cleanIslands:true, cleanMannequinTop:false, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+// clearWhite: 흰·아이보리 옷의 누런 기를 약하게 덜고 밝은 부분을 살짝 올림(013-B, 기본 켬, 브라우저 계산)
+export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','hangerMode','autoLevel','clearWhite'];
+export const DEFAULT_RETOUCH = {cutout:'photoroom', autoLevel:true, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
 // 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
 export const MANNEQUIN_MODES = [
   {id:'keep', label:'마네킹 그대로 두기'},

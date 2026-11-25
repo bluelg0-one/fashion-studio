@@ -28,6 +28,7 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
       <label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 맞추기`} checked={value.autoLevel!==false} onChange={e=>set({autoLevel:e.target.checked})}/>사진을 넣을 때 자동 수평 맞추기 (기울어진 사진 바로 세우기, 누끼 전 적용)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
+      <label className="check"><input type="checkbox" aria-label={`${prefix}흰 옷 맑게`} checked={value.clearWhite!==false} onChange={e=>set({clearWhite:e.target.checked})}/>흰·아이보리 옷 맑게 (누런 기 약하게 덜기 · 무료)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>
       <label>옷걸이<select aria-label={`${prefix}옷걸이`} value={value.hangerMode||'keep'} onChange={e=>set({hangerMode:e.target.value})}>
         <option value="keep">남기기 (반투명해진 고리만 선명하게)</option>

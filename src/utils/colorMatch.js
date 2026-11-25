@@ -73,3 +73,39 @@ export function applyShift({data},shift) {
 }
 
 export const labCss=({L,a,b})=>{const [r,g,bl]=labToRgb(L,a,b);return `rgb(${r},${g},${bl})`;};
+
+// ---- 흰·밝은 옷 맑게(013-B) ----
+// 사장님: 흰 가디건 정면 상단을 '좀 더 화사하고 맑게(누런 기·탁함)' 원하셨습니다. 실물과 달라 보이지 않게 약하게만 합니다.
+//  - 대상: 옷 픽셀의 밝기 중앙값 70 이상, 채도 중앙값 18 이하(흰색·아이보리·연회색). 아니면 아무것도 하지 않습니다.
+//  - 누런 기: 옷의 밝은 쪽(밝기 상위 25%) 평균 a·b를 '낀 색'으로 보고 그 60%만, 최대 5(Lab)까지 덜어 냅니다.
+//    아이보리(b 약 +14)는 b +9 정도로 아이보리가 남고, 탁한 흰색(b 약 +7)은 +3 정도로 맑아집니다.
+//    밝고 무채색에 가까운 픽셀에만 적용(채도 30 이상인 무늬·단추, 어두운 곳은 그대로).
+//  - 밝기: 밝은 부분(L 56~100)을 최대 +3만 올리고 L 97을 넘기지 않습니다(결이 하얗게 날아가지 않게).
+export const CLEAR_WHITE={minL:70,maxC:18,keep:.4,maxShift:5,lift:3,maxL:97};
+export function clearWhite({data,width,height}) {
+  const Ls=[],Cs=[],px=[];
+  const step=Math.max(1,Math.floor(Math.sqrt(width*height/200000)));
+  for(let y=0;y<height;y+=step)for(let x=0;x<width;x+=step){const i=(y*width+x)*4;if(data[i+3]<200)continue;const l=rgbToLab(data[i],data[i+1],data[i+2]);Ls.push(l[0]);Cs.push(Math.hypot(l[1],l[2]));px.push(l);}
+  if(px.length<50)return {applied:false};
+  const med=a=>Float64Array.from(a).sort()[a.length>>1],mL=med(Ls),mC=med(Cs);
+  if(mL<CLEAR_WHITE.minL||mC>CLEAR_WHITE.maxC)return {applied:false,medianL:Math.round(mL),medianC:Math.round(mC)};
+  const q=Float64Array.from(Ls).sort()[Math.floor(Ls.length*.75)],bright=px.filter(l=>l[0]>=q&&Math.hypot(l[1],l[2])<30);
+  const ca=bright.reduce((s,l)=>s+l[1],0)/bright.length,cb=bright.reduce((s,l)=>s+l[2],0)/bright.length;
+  let sa=-ca*(1-CLEAR_WHITE.keep),sb=-cb*(1-CLEAR_WHITE.keep);const m=Math.hypot(sa,sb);if(m>CLEAR_WHITE.maxShift){sa*=CLEAR_WHITE.maxShift/m;sb*=CLEAR_WHITE.maxShift/m;}
+  const cache=new Map();
+  for(let i=0;i<data.length;i+=4){
+    if(data[i+3]===0)continue;
+    const k=(data[i]<<16)|(data[i+1]<<8)|data[i+2];let out=cache.get(k);
+    if(!out){
+      const [L,a,b]=rgbToLab(data[i],data[i+1],data[i+2]),C=Math.hypot(a,b);
+      const w=Math.max(0,Math.min(1,(L-50)/30))*Math.max(0,Math.min(1,1-C/30));
+      const t=(L-78)/22,lift=L>=56?Math.max(0,CLEAR_WHITE.lift*(1-t*t)):0;
+      const L2=L>=CLEAR_WHITE.maxL?L:Math.min(CLEAR_WHITE.maxL,L+lift);
+      out=w>0||L2!==L?labToRgb(L2,a+sa*w,b+sb*w):[data[i],data[i+1],data[i+2]];
+      if(cache.size<200000)cache.set(k,out);
+    }
+    data[i]=out[0];data[i+1]=out[1];data[i+2]=out[2];
+  }
+  const r1=v=>Math.round(v*10)/10;
+  return {applied:true,medianL:r1(mL),medianC:r1(mC),castBefore:{a:r1(ca),b:r1(cb)},castAfter:{a:r1(ca+sa),b:r1(cb+sb)},shift:{a:r1(sa),b:r1(sb)}};
+}

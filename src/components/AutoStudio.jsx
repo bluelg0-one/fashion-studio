@@ -36,7 +36,7 @@ import {COST, Cost} from './Cost.jsx';
 import CostPanel from './CostPanel.jsx';
 import {addCost} from '../utils/costLog.js';
 import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
-import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
+import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -277,6 +277,8 @@ export default function AutoStudio() {
     let c=await imageCanvas(matte);
     const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
     applyTone(px,tone||{});
+    // 흰·아이보리 옷이면 누런 기를 약하게 덜고 밝은 부분을 살짝 올립니다(013-B, 실물과 다르지 않게 최대 Lab 5·밝기 +3).
+    if(options?.clearWhite!==false)clearWhite(px);
     if(ref&&ref.slotId!==slotId){try{applyShift(px,colorShift(dominantLab(px),ref.lab,matchStrength/100));}catch{}}
     ctx.putImageData(px,0,0);
     if(options?.center!==false)c=framePhoto(c,{margin:6,size:[c.width,c.height]});
