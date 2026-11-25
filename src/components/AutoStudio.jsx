@@ -469,11 +469,14 @@ export default function AutoStudio() {
   // 마네킹·벽 표시, 넓은 얼룩 = 건너뜀(사장님이 직접 표시한 곳은 그대로 고침)
   // 고친 곳마다 전·후의 채도·결 세기를 비교해, 회색으로 바랬거나 결이 사라진 곳은 자동으로 원래대로 되돌립니다.
   // (예전 방식: 넓은 구김을 작은 상자로 나눠 LaMa로 지움 → 실제 니트에서 회색 얼룩·후드 끈 지워짐, 보고서 013)
-  async function fixRegions(input,regions,{iopaintOk=true}={}) {
+  // closeup(013-C): 확대·디테일 컷은 LaMa에 보내는 상자가 픽셀로 넓어 결 대신 회색을 채우고(원단 디테일의 단추 사이 회색 얼룩), 단추 찾기도
+  // 크기 기준이 맞지 않습니다. 그래서 확대 컷의 자동 표시 얼룩은 IOPaint로 보내지 않고 '확인 필요'로 남깁니다(구김 펴기는 함, 직접 표시는 보냄).
+  async function fixRegions(input,regions,{iopaintOk=true,closeup=false}={}) {
     const img=await pixelsOf(input),plan=planFixes(regions),spots=[],skipped=[...plan.skipped];
     let lab=null;try{lab=dominantLab(img);}catch{}
     for(const r of plan.spot){
-      if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
+      if(closeup&&!r.manual)skipped.push({region:r,reason:'확대 컷은 얼룩을 IOPaint로 자동 지우지 않음',review:true});
+      else if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
       else if(!iopaintOk)skipped.push({region:r,reason:'IOPaint가 꺼져 있어 얼룩은 건너뜀',review:true});
       else spots.push(r);
     }
@@ -502,7 +505,7 @@ export default function AutoStudio() {
       const iopaintOk=plan.spot.length?(await checkIopaint(iopUrl)).ok:true;
       setStep(`${slot.label} · 고르신 ${chosen.length}곳을 고치는 중 (구김은 그림자 펴기, 얼룩은 내 PC의 IOPaint)`);
       const e=entryOf(slot)||{stage1:slot.cutout},input=slot.cutout;
-      const fix=await fixRegions(input,chosen,{iopaintOk});
+      const fix=await fixRegions(input,chosen,{iopaintOk,closeup:!autoLevelAllowed(id,slot.ai?.shot)});
       if(!fix.image){patch(id,{defects:null});setStep(`${slot.label} · 바뀐 곳이 없습니다 (${fixSummary(fix.counts)||'고칠 곳 없음'}).${fix.flags.length?' '+fix.flags.join(' · '):''}`);return;}
       const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:fix.image}),defects:null}});
       setSlots(next);
@@ -659,7 +662,7 @@ export default function AutoStudio() {
       const f=regionsFlag(res.regions.length),flags=f?[f]:[];
       const chosen=res.regions.filter(r=>r.confidence>=.3);
       if(!chosen.length)return {slot:{...slot,defects:null},flags,cost};
-      const fix=await fixRegions(input,chosen);
+      const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot)});
       return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
     final:async(product,ref)=>{
