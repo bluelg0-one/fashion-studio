@@ -86,10 +86,13 @@ function LevelPanel({slot,draft,setDraft,onLevel}) {
       <input type="range" aria-label={`${slot.id} 수평 각도`} min="-10" max="10" step="0.1" value={draft} onChange={e=>setDraft(Number(e.target.value))} onPointerUp={e=>commit(e.currentTarget.value)} onKeyUp={e=>commit(e.currentTarget.value)}/></label>
     <div className="btn-row">
       <button type="button" onClick={()=>onLevel(slot.id,'auto')}>자동 수평 다시 계산</button>
-      <button type="button" disabled={!level.angle} onClick={()=>onLevel(slot.id,0)}>0°로</button>
+      <button type="button" disabled={!level.angle} onClick={()=>onLevel(slot.id,0)}>원래대로 (0°)</button>
       <Cost k="browser"/>
     </div>
-    {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.auto===0&&level.confidence!=null&&level.confidence<.25?' — 곧은 선이 부족해 돌리지 않았습니다':''}</p>}
+    {level.angle&&!level.manual?<p className="level-badge" aria-label={`${slot.id} 자동 수평 표시`}>자동 수평 {level.angle>0?'+':''}{level.angle}° 적용 — 기울어 보이면 ‘원래대로 (0°)’</p>:null}
+    {level.zoom>1&&<p className="slot-note">돌린 모서리가 비지 않게 {Math.round((level.zoom-1)*1000)/10}% 안쪽으로 잘라 냈습니다.</p>}
+    {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.reason?` — ${level.reason}`:''}</p>}
+    {level.auto==null&&!level.manual&&level.reason&&<p className="slot-note">{level.reason} (직접 돌릴 수 있습니다)</p>}
   </div>;
 }
 function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive'},setOpts=()=>{}}) {

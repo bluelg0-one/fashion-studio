@@ -38,3 +38,31 @@ test('tilt beyond ±10° is not forced into range as a wrong answer with high co
  const r=estimateTilt(scene(14,{noise:8}));
  assert.ok(r.angle===0||r.confidence<.6||Math.abs(r.angle)>=9.5,`14° → ${r.angle} (${r.confidence})`);
 });
+
+// ---- 013 자동 수평 안전장치 ----
+import {decideLevel, coverScale, autoLevelAllowed, AUTO_LEVEL_MAX} from '../src/utils/level.js';
+test('013: only full front/side/back cuts are auto-rotated (by shot type when classified)',()=>{
+ for(const id of ['hero','side','back'])assert.equal(autoLevelAllowed(id),true,id);
+ for(const id of ['frontZoom','frontTop','frontBottom','fabric','detail2','point1','fit'])assert.equal(autoLevelAllowed(id),false,id);
+ assert.equal(autoLevelAllowed('extra-1','front'),true);assert.equal(autoLevelAllowed('hero','frontZoom'),false,'분류가 확대면 칸 이름과 상관없이 끔');
+ assert.equal(autoLevelAllowed('extra-2','fabric'),false);assert.equal(autoLevelAllowed('hero','unknown'),true,'알 수 없음은 칸 이름으로');
+});
+test('013: rotate only when vertical and horizontal evidence agree and within ±4°',()=>{
+ const est=(angle,v,h,confidence=.6)=>({angle,confidence,votes:{vertical:v,horizontal:h}});
+ assert.deepEqual(decideLevel(est(2.1,2.0,2.3)),{angle:2.1,reason:null,review:false});
+ assert.equal(decideLevel(est(2.1,2.0,null)).angle,0,'근거 하나뿐');
+ assert.equal(decideLevel(est(2.1,2.4,-0.6)).angle,0,'방향이 반대');
+ assert.equal(decideLevel(est(3,3.2,1.5)).angle,0,'각도 차 1° 초과');
+ const steep=decideLevel(est(6.5,6.4,6.6));assert.equal(steep.angle,0);assert.equal(steep.review,true);assert.match(steep.reason,/최대 ±4°/);
+ assert.equal(AUTO_LEVEL_MAX,4);
+ assert.equal(decideLevel(est(0,null,null,.1)).reason,'곧은 선이 부족해 돌리지 않음');
+});
+test('013: synthetic shop photos within ±4° still level correctly through the new rule; 7° is refused',()=>{
+ for(const t of [-3.2,-1.1,0.8,2.5,3.8]){const e=estimateTilt(scene(t,{noise:10})),d=decideLevel(e);assert.ok(Math.abs(d.angle-t)<=.3,`${t} → ${d.angle} (${d.reason}) votes ${JSON.stringify(e.votes)}`);}
+ assert.equal(decideLevel(estimateTilt(scene(7,{noise:10}))).angle,0);
+});
+test('013: cover scale removes empty corners (3:4 photo, 2° → about 4.7% zoom)',()=>{
+ assert.equal(coverScale(900,1200,0),1);
+ const k=coverScale(900,1200,2);assert.ok(k>1.04&&k<1.06,String(k));
+ assert.equal(coverScale(900,1200,-2),k);
+});
