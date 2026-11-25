@@ -65,8 +65,15 @@ try{
  await panel.getByRole('button',{name:'인스타그램에 지금 게시'}).click();await idle();
  await page.getByText('게시 비밀번호가 맞지 않습니다.').waitFor();
  assert.equal(calls.filter(c=>c.a==='publish').length,0);
+ // (013) 연결 확인 결과를 눈에 띄게: 실패는 빨강 ❌, 성공은 초록 ✅
+ await panel.getByRole('button',{name:'연결 확인'}).click();await idle();
+ const result=panel.getByLabel('연결 확인 결과');
+ assert.match(await result.innerText(),/❌ 연결 실패[\s\S]*게시 비밀번호가 맞지 않습니다/);assert.match(await result.getAttribute('class'),/check-fail/);
+ assert.equal(await result.evaluate(e=>getComputedStyle(e).borderTopColor),'rgb(217, 54, 54)');
  await page.getByLabel('인스타 게시 비밀번호').fill('pw');
- await panel.getByRole('button',{name:'연결 확인'}).click();await idle(); assert.match(await panel.innerText(),/연결된 계정: @testshop · 최근 24시간 게시 1\/50회 · 방식: Facebook\(Meta 비즈니스\) 토큰 \(graph\.facebook\.com\)/);assert.match(await page.locator('[role=status]').innerText(),/계정 ID는 INSTAGRAM_USER_ID 사용/);
+ await panel.getByRole('button',{name:'연결 확인'}).click();await idle();
+ assert.match(await result.innerText(),/✅ 연결 성공[\s\S]*연결된 계정: @testshop/);assert.match(await result.getAttribute('class'),/check-ok/);
+ assert.equal(await result.evaluate(e=>getComputedStyle(e).borderTopColor),'rgb(46, 155, 79)'); assert.match(await panel.innerText(),/연결된 계정: @testshop · 최근 24시간 게시 1\/50회 · 방식: Facebook\(Meta 비즈니스\) 토큰 \(graph\.facebook\.com\)/);assert.match(await page.locator('[role=status]').innerText(),/계정 ID는 INSTAGRAM_USER_ID 사용/);
  await panel.getByText('연결된 계정: @testshop · 최근 24시간 게시 1/50회').waitFor();
  let message='';page.once('dialog',d=>{message=d.message();d.dismiss();});
  await panel.getByRole('button',{name:'인스타그램에 지금 게시'}).click();await idle();

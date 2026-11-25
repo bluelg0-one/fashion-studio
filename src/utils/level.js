@@ -72,13 +72,41 @@ export function estimateTilt(image,{range=LEVEL_RANGE,step=LEVEL_STEP,minConfide
 }
 
 // 같은 크기 안에서 회전(가운데 기준). fill: 빈 모서리 색(누끼 전 원본은 벽 색, 누끼 결과는 투명).
-export function rotateCanvas(src,angle,fill=null) {
+// scale: 가운데 기준 확대(확대·디테일 컷을 돌릴 때 모서리가 비지 않게 안쪽으로 잘라 냄, coverScale).
+export function rotateCanvas(src,angle,fill=null,scale=1) {
   const c=document.createElement('canvas');c.width=src.width;c.height=src.height;
   const ctx=c.getContext('2d');
   if(fill){ctx.fillStyle=fill;ctx.fillRect(0,0,c.width,c.height);}
   ctx.imageSmoothingQuality='high';
-  ctx.translate(c.width/2,c.height/2);ctx.rotate(rad(angle));ctx.drawImage(src,-src.width/2,-src.height/2);
+  ctx.translate(c.width/2,c.height/2);ctx.rotate(rad(angle));if(scale!==1)ctx.scale(scale,scale);ctx.drawImage(src,-src.width/2,-src.height/2);
   return c;
+}
+
+// ---- 자동 수평 안전장치(013) ----
+// 사장님 실전 시험: 정면 확대 컷이 반시계로 너무 돌아가 삐뚤어졌고, 원단 디테일 컷은 아래 가장자리가 사선으로 잘렸습니다.
+// - 자동으로 돌리는 컷: 정면 전체·측면·후면만(곧은 마네킹 기둥·벽이 보이는 컷). 확대·상단·하단·원단·디테일·모델컷은 자동 회전 꺼짐(직접 돌리기는 됨).
+// - 근거 2가지(세로선·가로선)가 모두 있고, 같은 방향·비슷한 각도(차이 1° 이내)일 때만 돌림. 최대 ±4°(넘으면 돌리지 않고 확인 필요).
+// - 확대·디테일 컷을 직접 돌리면 모서리가 비지 않게 안쪽으로 잘라 냅니다(coverScale만큼 확대).
+export const AUTO_LEVEL_SLOTS=['hero','side','back'];
+export const AUTO_LEVEL_MAX=4;
+export const VOTE_AGREE=1;
+export const AUTO_LEVEL_SHOTS=['front','side','back'];   // 분류 결과의 컷 종류(정면 전체·측면·후면)
+// 분류 결과(shot)가 있으면 그것으로, 없으면 칸 이름으로 정함
+export const autoLevelAllowed=(slotId,shot)=>shot&&shot!=='unknown'?AUTO_LEVEL_SHOTS.includes(shot):AUTO_LEVEL_SLOTS.includes(slotId);
+// 모서리가 비지 않으려면 얼마나 확대해야 하는지(돌린 사진이 원래 사각형을 다 덮는 배율)
+export function coverScale(width,height,angle) {
+  const t=Math.abs(rad(angle)),c=Math.cos(t),s=Math.sin(t);
+  return Math.max(c+height/width*s,c+width/height*s);
+}
+// 추정 결과로 실제로 돌릴지 정함. 반환 {angle, reason(돌리지 않은 이유 또는 null), review(확인 필요)}
+export function decideLevel(est,{max=AUTO_LEVEL_MAX,agree=VOTE_AGREE}={}) {
+  const a=est.angle,{vertical:v,horizontal:h}=est.votes||{};
+  if(!a)return {angle:0,reason:est.confidence!=null&&est.confidence<LEVEL_MIN_CONFIDENCE?'곧은 선이 부족해 돌리지 않음':null,review:false};
+  if(v==null||h==null)return {angle:0,reason:'세로·가로 근거 중 하나만 있어 돌리지 않음',review:false};
+  const opposite=Math.abs(v)>=.3&&Math.abs(h)>=.3&&Math.sign(v)!==Math.sign(h);
+  if(opposite||Math.abs(v-h)>agree||Math.abs(a-v)>agree||Math.abs(a-h)>agree)return {angle:0,reason:`세로선(${v}°)·가로선(${h}°) 근거가 서로 달라 돌리지 않음`,review:false};
+  if(Math.abs(a)>max)return {angle:0,reason:`계산 각도 ${a}°가 최대 ±${max}°를 넘어 돌리지 않음`,review:true};
+  return {angle:a,reason:null,review:false};
 }
 
 // 사진 가장자리의 대표 색(중앙값) — 회전으로 생긴 모서리를 벽 색으로 채워 누끼 때 배경으로 지워지게 합니다.

@@ -61,3 +61,23 @@ test('너무 비스듬한 막대(약 8° 넘음)는 기둥으로 보지 않는�
  for(let y=650;y<800;y++){const x0=Math.round(260+(799-y)*0.3);rect(img,x0,y,x0+14,y,[10,10,12]);}
  assert.equal(removeStand(img),null);
 });
+
+// ---- 013-C 후면 컷: 검은 봉이 남은 경우들 ----
+const noPole=(img,x,y0,y1)=>{for(let y=y0;y<=y1;y+=5)if(alpha(img,x,y)!==0)return y;return null;};
+test('013-C: a pole that stops above the bottom edge (cut short by the cutout) is still removed',()=>{
+  const img=canvas();garment(img,[200,120,140]);rect(img,286,600,302,740,[10,10,12]);   // 아래 60줄은 이미 지워짐
+  assert.ok(removeStand(img),'기둥을 찾음');assert.equal(noPole(img,294,660,740),null);assert.equal(alpha(img,294,500),255);
+});
+test('013-C: a pole standing on a wide dark base at the bottom is removed, base too',()=>{
+  const img=canvas();garment(img,[200,120,140]);rect(img,286,600,302,770,[10,10,12]);rect(img,200,771,390,799,[15,15,18]);  // 받침 다리(넓음)
+  assert.ok(removeStand(img),'기둥을 찾음');assert.equal(noPole(img,294,660,770),null);assert.equal(alpha(img,250,790),0,'받침도 지움');assert.equal(alpha(img,294,500),255);
+});
+test('013-C: a wider pole (close-up back shot, 5.5% of width) is removed',()=>{
+  const img=canvas();garment(img,[200,120,140]);rect(img,278,600,310,799,[12,12,14]);
+  assert.ok(removeStand(img));assert.equal(noPole(img,294,660,799),null);
+});
+test('013-C: a dark pole tinted by reflected pink light is still a pole; a pink strap is not',()=>{
+  const img=canvas();garment(img,[200,120,140]);rect(img,286,600,302,799,[70,30,45]);
+  assert.ok(removeStand(img));assert.equal(noPole(img,294,660,799),null);
+  const s=canvas();garment(s,[200,120,140]);rect(s,286,600,302,799,[200,110,135]);assert.equal(removeStand(s),null,'분홍 끈(옷)은 그대로');
+});

@@ -96,7 +96,7 @@ test('quality flags: cutout area, low level confidence, large ΔE after color ma
  const px=n=>{const d=new Uint8ClampedArray(400);for(let i=0;i<n;i++)d[i*4+3]=255;return {data:d};};
  assert.equal(opaqueFraction(px(30)),.3);assert.equal(areaFlag(.3),null);
  assert.match(areaFlag(opaqueFraction(px(3))),/너무 작음\(3%\)/);assert.match(areaFlag(.9),/너무 큼\(90%\)/);
- assert.match(levelFlag({confidence:.1}),/신뢰도 낮음\(10%\)/);assert.equal(levelFlag({confidence:.6}),null);assert.equal(levelFlag({confidence:null}),null);
+ assert.match(levelFlag({angle:2,confidence:.1}),/신뢰도 낮음\(10%\)/);assert.equal(levelFlag({angle:2,confidence:.6}),null);assert.equal(levelFlag({confidence:null}),null);assert.equal(levelFlag({angle:0,confidence:.1}),null,'돌리지 않은 컷은 표시 안 함(013)');
  assert.equal(deltaE({L:50,a:0,b:0},{L:53,a:4,b:0}),5);assert.equal(colorFlag(5),null);assert.match(colorFlag(12.34),/ΔE 12\.3/);
  assert.match(regionsFlag(0),/0곳/);assert.match(regionsFlag(40),/상한\(40곳\)/);assert.equal(regionsFlag(7),null);
 });

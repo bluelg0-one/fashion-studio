@@ -24,14 +24,14 @@ try{
 
  // 1) Claude 없이 직접 표시
  await panel.getByRole('button',{name:/직접 표시하기/}).click();
- await page.getByLabel('hero 직접 표시 종류').selectOption('wrinkle');
+ await page.getByLabel('hero 직접 표시 종류').selectOption('stain');
  const img=panel.locator(".defect-preview");await img.waitFor();await img.scrollIntoViewIfNeeded();
  const b=await img.boundingBox();
  const pt=(fx,fy)=>[b.x+b.width*fx,b.y+b.height*fy];
  await page.mouse.move(...pt(.40,.50));await page.mouse.down();await page.mouse.move(...pt(.45,.53),{steps:4});await page.mouse.move(...pt(.50,.56),{steps:4});await page.mouse.up();
  await panel.locator('.defect-list li').first().waitFor();
  assert.equal(await panel.locator('.defect-list li').count(),1);
- assert.match(await panel.locator('.defect-list li').first().innerText(),/구김 · 직접 표시[\s\S]*\(직접\)/);
+ assert.match(await panel.locator('.defect-list li').first().innerText(),/얼룩 · 직접 표시[\s\S]*\(직접\)/);
  assert.ok(await page.getByLabel('hero 수정 1').isChecked(),'직접 표시는 바로 선택됨');
  assert.ok(!calls.includes('defects'),'직접 표시는 Claude를 부르지 않음');
  // 너무 작은 클릭은 무시
@@ -51,11 +51,11 @@ try{
  assert.match(await panel.locator('.defect-list li').first().innerText(),/직접/);
  // 4) IOPaint로 지우기 → 마스크가 그린 위치(가로 40~50%, 세로 50~56%)에만 칠해졌는지
  await page.locator('.tools-panel summary').click();await page.getByRole('button',{name:'다시 확인'}).click();
- await panel.getByRole('button',{name:'IOPaint로 지우기 (1곳)'}).click();await idle();
+ await panel.getByRole('button',{name:'선택한 곳 고치기 (1곳)'}).click();await idle();
  assert.ok(mask,'IOPaint 요청');
  const m=await page.evaluate(async src=>{const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src;});const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const g=c.getContext('2d');g.drawImage(im,0,0);const at=(fx,fy)=>g.getImageData(Math.round(fx*c.width),Math.round(fy*c.height),1,1).data[0];return {inside:at(.45,.53),outside:at(.2,.2),below:at(.45,.7)};},mask);
  assert.deepEqual(m,{inside:255,outside:0,below:0},JSON.stringify(m));
- assert.match(await page.locator('[role=status]').innerText(),/IOPaint로 1곳( \(작은 상자 \d+개로 나눔\))?을 지웠습니다/);
+ assert.match(await page.locator('[role=status]').innerText(),/얼룩 1곳 IOPaint로 지우기/);
  assert.deepEqual(errors,[]);
  console.log('PASS: manual boxes without Claude, merge with Claude results (manual kept), delete, mask matches the drawn box.');
 }finally{await browser.close();}

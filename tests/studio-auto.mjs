@@ -3,7 +3,7 @@
 // - 시작 전 상품·컷 수, 예상 시간, Claude 예상 비용 → 시작
 // - 처리 중 BiRefNet이 끊기면 그 컷이 ‘대기(PC 연결 끊김)’ → 다시 켜지면 같은 컷부터 이어서
 // - 순서: 대표 정면 먼저, 1차 → 색감 통일 → 2차(Claude 적극 4타일 → IOPaint 한 번) → 최종, 비용 기록
-// - 품질 안전장치: 수평 신뢰도 낮음·찾은 곳 0곳 → 확인 필요 목록
+// - 품질 안전장치: 찾은 곳 0곳 → 확인 필요 목록 (자동 수평은 013부터 기본 꺼짐이라 수평 표시 없음)
 // - 다시 준비하면 이미 보정한 컷은 건너뜀, ‘다시 보정’이면 다시 / 유료 대체는 상한에서 멈춤
 const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 import assert from 'node:assert/strict';
@@ -89,10 +89,11 @@ try{
  assert.equal(calls.defects.length,16,'적극 = 컷당 4타일');assert.ok(calls.defects.every(d=>d.level==='aggressive'&&d.tile));
  assert.equal(calls.inpaint,3,'찾은 곳 0곳인 후면은 IOPaint 생략');assert.equal(calls.retouch+calls.retouch2,0,'유료 호출 없음');
  const done=await panel.locator('.auto-summary').innerText();
- assert.match(done,/끝났습니다 · 완료 2 · 확인 필요 2 · 실패 0 · 쓴 비용: Claude 약 \$0\.29/);// 16타일 × $0.018 = $0.288
+ assert.match(done,/끝났습니다 · 완료 3 · 확인 필요 1 · 실패 0 · 쓴 비용: Claude 약 \$0\.29/);// (013) 측면은 수평 신뢰도로 확인 필요가 되지 않음// 16타일 × $0.018 = $0.288
  const reviews=await panel.locator('.auto-summary .review-list').innerText();
  assert.match(reviews,/핑크 후드\s+후면\s+Claude가 수정할 곳을 찾지 못함\(0곳\)/);
- assert.match(reviews,/핑크 후드\s+측면\s+자동 수평 신뢰도 낮음\(10%\)/);
+ // (013 팀장 결정) 자동 수평은 기본으로 끔 → 돌리지 않으므로 수평 신뢰도는 확인 목록에 올리지 않음
+ assert.doesNotMatch(reviews,/자동 수평/);
  // 010 요약 뒤 자동으로 이어서: 완성본 저장 + 상세페이지(기본 켬, 드라이브 미연결 → 브라우저 보관). 확인 필요 컷이 있는 핑크 후드는 초안
  await page.waitForFunction(()=>/저장됨 2/.test(document.querySelector('.save-progress .import-counts')?.innerText||''),null,{timeout:120000});await idle();
  assert.match(await panel.locator('[data-save="pa"]').innerText(),/핑크 후드\s*초안[\s\S]*상세페이지_초안\.png/);
@@ -128,5 +129,5 @@ try{
  assert.match(await page.locator('[role=alert].studio-error').innerText(),/유료 상한\(\$0\.15\)에 닿아 멈췄습니다/);
  assert.match(await panel.getByRole('button',{name:/이어서 하기/}).innerText(),/남은 컷 4개/,'정면 2차는 저장됐지만 최종 확정은 상품 단위라 아직 남음(이어서 하면 2차는 다시 안 함)');
  assert.deepEqual(errors,[]);
- console.log(`PASS: engines off → 'IOPaint Start를 켜 주세요' and no start; plan shows 2 products / 4 cuts / time / Claude estimate; BiRefNet drop mid-run → that cut waits (no next cut) and resumes after reconnect; hero first, color matched to hero, 16 aggressive tiles, IOPaint 3×, 0-box and low-level cuts in the review list, cost logged; re-plan skips corrected cuts, redo re-plans 4; paid fallback stops at the $0.15 cap after one Photoroom call. (${Math.round((Date.now()-startAt)/1000)} s)`);
+ console.log(`PASS: engines off → 'IOPaint Start를 켜 주세요' and no start; plan shows 2 products / 4 cuts / time / Claude estimate; BiRefNet drop mid-run → that cut waits (no next cut) and resumes after reconnect; hero first, color matched to hero, 16 aggressive tiles, IOPaint 3×, 0-box cut in the review list (no level flag: auto level off by default), cost logged; re-plan skips corrected cuts, redo re-plans 4; paid fallback stops at the $0.15 cap after one Photoroom call. (${Math.round((Date.now()-startAt)/1000)} s)`);
 }finally{await browser.close();}

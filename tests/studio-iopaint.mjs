@@ -14,7 +14,7 @@ try{
  const calls=[];
  await page.route('**/api/studio?*',r=>{const a=new URL(r.request().url()).searchParams.get('action');calls.push(a);
   if(a==='retouch')return r.fulfill({json:{image:cutout}});
-  if(a==='defects'){const b=JSON.parse(r.request().postData());assert.ok(b.width<=1024&&b.image.startsWith('data:image/jpeg'));return r.fulfill({json:{regions:[{type:'mannequin_mark',x0,y0,x1,y1,confidence:.92,note:'마네킹 목 얼룩'},{type:'wrinkle',x0:600,y0:900,x1:640,y1:930,confidence:.3,note:'애매한 주름'}]}});}
+  if(a==='defects'){const b=JSON.parse(r.request().postData());assert.ok(b.width<=1024&&b.image.startsWith('data:image/jpeg'));return r.fulfill({json:{regions:[{type:'stain',x0,y0,x1,y1,confidence:.92,note:'마네킹 목 얼룩'},{type:'wrinkle',x0:600,y0:900,x1:640,y1:930,confidence:.3,note:'애매한 주름'}]}});}
   return r.fulfill({json:{configured:true,openai:true,photoroom:true,claude:true}});});
  await page.goto(process.env.STUDIO_TEST_URL || 'http://127.0.0.1:3001');
  const idle=()=>page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);await idle();
@@ -30,9 +30,9 @@ try{
  assert.ok(await page.getByLabel('hero 수정 1').isChecked(),'확신 높은 곳은 기본 선택');assert.ok(!(await page.getByLabel('hero 수정 2').isChecked()),'애매한 곳은 기본 해제');
  await panel.locator('.defect-preview').waitFor();
  const t=Date.now();
- await panel.getByRole('button',{name:'IOPaint로 지우기 (1곳)'}).click();await idle();
+ await panel.getByRole('button',{name:'선택한 곳 고치기 (1곳)'}).click();await idle();
  const secs=((Date.now()-t)/1000).toFixed(1);
- assert.match(await page.locator('[role=status]').innerText(),/IOPaint로 1곳을 지웠습니다/,await page.locator('[role=alert]').allInnerTexts().then(a=>a.join()));
+ assert.match(await page.locator('[role=status]').innerText(),/얼룩 1곳 IOPaint로 지우기/,await page.locator('[role=alert]').allInnerTexts().then(a=>a.join()));
  // 결과: 얼룩 자리 색이 주변(마네킹 크림색)과 비슷해졌는지, 투명 배경 유지
  const res=await page.evaluate(async([src,box])=>{
   const slotImg=document.querySelector('[data-slot="hero"] .final-zone img');

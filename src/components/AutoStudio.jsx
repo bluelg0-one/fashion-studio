@@ -3,15 +3,16 @@ import './AutoStudio.css';
 import {cutoutBounds} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
-import {estimateCanvasTilt, rotateCanvas, borderColor} from '../utils/level.js';
-import {removeIslands, solidifyThin, removeHanger, removeMannequinTop} from '../utils/cleanup.js';
+import {estimateCanvasTilt, rotateCanvas, borderColor, decideLevel, autoLevelAllowed, coverScale} from '../utils/level.js';
+import {removeIslands, solidifyThin, removeHanger, removeMannequinTop, clearAboveFinial, restoreHook, clearWallPockets} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
 import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../utils/retouchPresets.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
 import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, inspectTile, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
-import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions, splitRegions} from '../utils/defectTiles.js';
+import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions} from '../utils/defectTiles.js';
+import {planFixes, flattenShadows, fillTransparent, mergeSpots, garmentShare, GARMENT_SHARE_MIN, findButtons, nearButtons} from '../utils/flatten.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import DrivePanel from './DrivePanel.jsx';
 import DriveImportPanel from './DriveImportPanel.jsx';
@@ -35,7 +36,7 @@ import {COST, Cost} from './Cost.jsx';
 import CostPanel from './CostPanel.jsx';
 import {addCost} from '../utils/costLog.js';
 import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
-import {dominantLab, colorShift, applyShift, labCss} from '../utils/colorMatch.js';
+import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -76,7 +77,7 @@ export default function AutoStudio() {
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram),[docTheme,setDocTheme]=useState('basic');
   // 수정할 곳 찾기 설정(이 브라우저에 기억): 민감도 · 넓은 상자 잘게 나누기
-  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false};}});
+  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,engine2:'iopaint',stainAI:false,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,engine2:'iopaint',stainAI:false};}});
   const setDefectOpts=patchOpts=>setDefectOptsState(cur=>{const next={...cur,...patchOpts};try{localStorage.setItem('fashion-studio-defects',JSON.stringify(next));}catch{}return next;});
   const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState(''),[localSavedAt,setLocalSavedAt]=useState(0);
@@ -162,17 +163,23 @@ export default function AutoStudio() {
   }
   // ---- 자동 수평 (브라우저 계산, 무료) ----
   // 원본은 그대로 두고, 바로 세운 사본(workSource)으로 누끼를 땁니다. 돌리며 생긴 모서리는 벽 색으로 채워 누끼 때 배경으로 지워집니다.
-  async function levelSource(source,angle) {
+  // zoom: 확대·디테일 컷을 돌릴 때 모서리가 비지 않도록 가운데 기준으로 확대(안쪽으로 잘라 냄). 정면 전체 등은 1(모서리는 벽 색 → 누끼 때 배경).
+  async function levelSource(source,angle,zoom=1) {
     if(!angle)return null;
     const c=await imageCanvas(source),fill=borderColor(c.getContext('2d').getImageData(0,0,c.width,c.height));
-    const r=rotateCanvas(c,angle,fill);
+    const r=rotateCanvas(c,angle,fill,zoom);
     return source.startsWith('data:image/png')?r.toDataURL('image/png'):r.toDataURL('image/jpeg',.95);
   }
-  // 새 사진을 넣을 때: 자동 수평이 켜져 있으면 기울기를 재고, 신뢰도가 낮으면 0°(돌리지 않음).
-  async function initialLevel(source,options) {
-    if(options?.autoLevel===false)return {level:{angle:0,auto:null,confidence:null,manual:false},workSource:null};
-    const est=estimateCanvasTilt(await imageCanvas(source));
-    return {level:{angle:est.angle,auto:est.angle,confidence:est.confidence,manual:false},workSource:await levelSource(source,est.angle)};
+  const zoomFor=async(slotId,source,angle,shot)=>{if(!angle||autoLevelAllowed(slotId,shot))return 1;const c=await imageCanvas(source);return Math.round(coverScale(c.width,c.height,angle)*10000)/10000;};
+  // 새 사진을 넣을 때(013 팀장 결정): 자동 수평은 기본으로 끔. 기울기는 계산해서 '수평 제안 n°'(suggest)로만 보여 주고, 누를 때만 돌립니다.
+  // '자동 수평 (실험)'을 켜면 예전처럼 정면 전체·측면·후면만, 세로·가로 근거가 같은 방향·비슷한 각도이고 ±4° 안일 때만 돌립니다.
+  async function initialLevel(source,options,slotId,shot) {
+    const none={angle:0,auto:null,confidence:null,manual:false,zoom:1,reason:null,review:false,suggest:0};
+    const est=estimateCanvasTilt(await imageCanvas(source)),d=decideLevel(est);
+    const base={...none,auto:est.angle,confidence:est.confidence,suggest:d.angle,reason:d.reason};
+    if(options?.autoLevelBeta!==true)return {level:base,workSource:null};
+    if(!autoLevelAllowed(slotId,shot))return {level:{...base,reason:'확대·디테일 컷은 자동 수평을 하지 않음'},workSource:null};
+    return {level:{...base,angle:d.angle,review:d.review},workSource:await levelSource(source,d.angle,1)};
   }
   // 수평 바꾸기: 'auto'(다시 계산) · 숫자(직접 각도). 이미 누끼를 딴 사진은 바로 다시 처리합니다
   // (Photoroom은 저장된 결과를 차이만큼 돌려 쓰므로 다시 과금하지 않음).
@@ -181,36 +188,42 @@ export default function AutoStudio() {
     let next=null;
     await task(async()=>{
       let level;
-      if(value==='auto'){const est=estimateCanvasTilt(await imageCanvas(slot.source));level={angle:est.angle,auto:est.angle,confidence:est.confidence,manual:false};}
-      else level={...(slot.level||{auto:null,confidence:null}),angle:Math.max(-10,Math.min(10,Math.round(Number(value)*10)/10)),manual:true};
-      const workSource=await levelSource(slot.source,level.angle);
+      if(value==='auto'){const est=estimateCanvasTilt(await imageCanvas(slot.source)),d=decideLevel(est);level={angle:d.angle,auto:est.angle,confidence:est.confidence,manual:false,reason:d.reason,review:d.review};}
+      else level={...(slot.level||{auto:null,confidence:null}),angle:Math.max(-10,Math.min(10,Math.round(Number(value)*10)/10)),manual:true,reason:null,review:false};
+      level.zoom=await zoomFor(id,slot.source,level.angle,slot.ai?.shot);
+      const workSource=await levelSource(slot.source,level.angle,level.zoom);
       next={...slots,[id]:{...slot,level,workSource}};setSlots(next);
-      setStep(`${slot.label} · 수평 ${level.angle>0?'+':''}${level.angle}°${value==='auto'?` (자동${level.confidence!=null?`, 신뢰도 ${Math.round(level.confidence*100)}%`:''}${level.angle===0&&level.confidence!=null&&level.confidence<.25?' — 확실하지 않아 돌리지 않음':''})`:''}`);
+      setStep(`${slot.label} · 수평 ${level.angle>0?'+':''}${level.angle}°${value==='auto'?` (자동${level.confidence!=null?`, 신뢰도 ${Math.round(level.confidence*100)}%`:''}${level.reason?` — ${level.reason}`:''})`:''}${level.zoom>1?` · 모서리가 비지 않게 ${Math.round((level.zoom-1)*1000)/10}% 안쪽으로 잘라 냄`:''}`);
     });
     if(next&&slot.stage1)await processPhotos(id,next);
   }
   async function upload(id,file) {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
-      const lv=await initialLevel(source,slots[id]?.retouch||retouch);
+      const lv=await initialLevel(source,slots[id]?.retouch||retouch,id);
       patch(id,{source,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,auto:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
   // 배경 지우기 결과(원본과 같은 위치·크기의 누끼). 같은 사진·같은 설정은 다시 과금하지 않습니다.
   // 누끼 뒤 정리(무료): 옷걸이 → 마네킹 꼭지·목 받침 → 떨어진 조각 순서로 알파만 고칩니다.
-  async function cleanMatte(url,options) {
+  // src: 누끼를 딴 사진(같은 크기·위치). 있으면 벽 색을 재서 옷걸이 고리 끝 살리기·닫힌 틈의 벽 지우기를 합니다(013-B).
+  async function cleanMatte(url,options,src=null) {
     const c=await imageCanvas(url),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
-    if(options.hangerMode==='remove')removeHanger(px);else solidifyThin(px);
-    if(options.cleanMannequinTop)removeMannequinTop(px);
+    let sp=null,wall=null;
+    if(src){const sc=await imageCanvas(src);if(sc.width===c.width&&sc.height===c.height){sp=sc.getContext('2d').getImageData(0,0,sc.width,sc.height);wall=borderColor(sp);}}
+    if(options.hangerMode==='remove')removeHanger(px);else {solidifyThin(px);if(sp)restoreHook(px,sp,wall);}
+    if(wall)clearWallPockets(px,wall);
+    // 마네킹 꼭지는 남기되(사장님 결정), 꼭지 맨 위보다 위에 남은 벽 걸이 부품 등은 지웁니다.
+    if(options.cleanMannequinTop)removeMannequinTop(px);else clearAboveFinial(px);
     if(options.cleanIslands!==false)removeIslands(px);
     ctx.putImageData(px,0,0);
     return c.toDataURL('image/png');
   }
   // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
-  async function engineMatte(source,warnings,options,saved,angle=0,work=null) {
-    const cut=await engineCut(source,warnings,options,saved,angle,work);
-    return {matte:await cleanMatte(cut.url,options),raw:cut.raw||null,charged:Boolean(cut.charged)};
+  async function engineMatte(source,warnings,options,saved,angle=0,work=null,zoom=1) {
+    const cut=await engineCut(source,warnings,options,saved,angle,work,zoom);
+    return {matte:await cleanMatte(cut.url,options,angle&&work?work:source),raw:cut.raw||null,charged:Boolean(cut.charged)};
   }
   // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
   // 사진 아래에서 올라오는 좁고 곧은 무채색 기둥만 지웁니다(stand.js).
@@ -220,7 +233,7 @@ export default function AutoStudio() {
     if(removeStand(px))ctx.putImageData(px,0,0);
   }
   // angle·work: 자동 수평으로 바로 세운 원본(work)과 그 각도. 누끼는 바로 세운 사진으로 땁니다.
-  async function engineCut(source,warnings,options,saved,angle=0,work=null) {
+  async function engineCut(source,warnings,options,saved,angle=0,work=null,zoom=1) {
     const input=angle&&work?work:source;
     if(options.cutout==='birefnet'){
       const rawKey='birefnet:'+input;
@@ -235,19 +248,20 @@ export default function AutoStudio() {
     const req={...options,center:false};for(const k of POST_OPTIONS)delete req[k];
     // 재과금 기준은 ‘원본 사진 + 요청 설정’입니다. 수평 각도만 바꾸면 저장된 결과를 각도 차이만큼 돌려 씁니다(무료).
     const key='photoroom:'+JSON.stringify(req)+source;
-    let hit=cache.current.get(key)||(saved?.key===key?{image:saved.image,angle:saved.angle||0}:null);
+    let hit=cache.current.get(key)||(saved?.key===key?{image:saved.image,angle:saved.angle||0,zoom:saved.zoom||1}:null);
     let charged=false;
     if(!hit){
       const response=await api('retouch',{image:input,options:req});charged=true;
       logCost(photoroomRow({feature:'photoroom_cutout',product:costProduct.current||productName,cut:costCut.current}));
       if(response.openai)logCost(openaiRow({feature:'openai_edit',product:costProduct.current||productName,cut:costCut.current,...response.openai}));
       if(response.warning){warnings.push(response.warning);return {url:await photoroomCleanup(response.image,options),charged:true};}
-      hit={image:response.image,angle:input===source?0:angle};cache.current.set(key,hit);
+      hit={image:response.image,angle:input===source?0:angle,zoom:input===source?1:zoom};cache.current.set(key,hit);
     } else logCost(photoroomRow({feature:'photoroom_cutout',product:costProduct.current||productName,cut:costCut.current,cached:true}));
     let raw=hit.image;
-    const delta=Math.round((angle-(hit.angle||0))*100)/100;
-    if(delta)raw=rotateCanvas(await imageCanvas(raw),delta,null).toDataURL('image/png');
-    return {url:await photoroomCleanup(raw,options),raw:{key,image:hit.image,angle:hit.angle||0},charged};
+    // 저장된 결과(각도 a1·확대 k1) → 지금(a2·k2): 가운데 기준 회전(a2−a1)·확대(k2/k1)를 한 번 더 하면 같습니다.
+    const delta=Math.round((angle-(hit.angle||0))*100)/100,curZoom=angle?zoom:1,ratio=curZoom/(hit.zoom||1);
+    if(delta||Math.abs(ratio-1)>1e-4)raw=rotateCanvas(await imageCanvas(raw),delta,null,ratio).toDataURL('image/png');
+    return {url:await photoroomCleanup(raw,options),raw:{key,image:hit.image,angle:hit.angle||0,zoom:hit.zoom||1},charged};
   }
   // Photoroom 결과 정리(무료): 흰 배경으로 왔으면 가장자리 흰색을 투명으로 되살리고, 받침대 기둥을 지웁니다.
   // 고스트 마네킹·플랫레이·배경 유지는 모양이 다른 결과라 건드리지 않습니다.
@@ -264,6 +278,8 @@ export default function AutoStudio() {
     let c=await imageCanvas(matte);
     const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
     applyTone(px,tone||{});
+    // 흰·아이보리 옷이면 누런 기를 약하게 덜고 밝은 부분을 살짝 올립니다(013-B, 실물과 다르지 않게 최대 Lab 5·밝기 +3).
+    if(options?.clearWhite!==false)clearWhite(px);
     if(ref&&ref.slotId!==slotId){try{applyShift(px,colorShift(dominantLab(px),ref.lab,matchStrength/100));}catch{}}
     ctx.putImageData(px,0,0);
     if(options?.center!==false)c=framePhoto(c,{margin:6,size:[c.width,c.height]});
@@ -293,7 +309,7 @@ export default function AutoStudio() {
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
         costCut.current=slot.label;
-        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource);
+        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
         const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id});
         const prev=entryOf(slot);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
@@ -442,23 +458,58 @@ export default function AutoStudio() {
       const selected=[...found.map((r,i)=>r.confidence>=minConf?i:-1).filter(i=>i>=0),...kept.map((x,k)=>x.on?found.length+k:-1).filter(i=>i>=0)];
       const preview=await markedPreview(slot.cutout,regions,selected);
       patch(id,{defects:{regions,selected,preview}});
-      setStep((found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다 (민감도 ${DEFECT_LEVELS[level].label}${cached?', 저장된 결과 재사용·추가 비용 없음':''}). 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하거나 민감도를 높여 보세요.`));
+      setStep((found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다 (민감도 ${DEFECT_LEVELS[level].label}${cached?', 저장된 결과 재사용·추가 비용 없음':''}). 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘선택한 곳 고치기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하거나 민감도를 높여 보세요.`));
     });
   }
-  // 넓은 상자는 작은 상자(한 변 9%, 28% 겹침)로 나눠 한 마스크로 보냅니다(끄기 가능).
-  // LaMa로 비교한 결과(보고서 008): 큰 상자 1개보다 구김이 더 잘 지워지고 주변 손상이 적었습니다.
-  // 작은 상자를 한 곳씩 차례로 보내면 옆에 남은 구김을 따라 다시 그려 구김이 남아서 쓰지 않습니다.
+  async function pixelsOf(src){const c=await imageCanvas(src);return c.getContext('2d').getImageData(0,0,c.width,c.height);}
+  function dataUrlOf(img){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').putImageData(new ImageData(img.data,img.width,img.height),0,0);return c.toDataURL('image/png');}
+  // ---- 2차 보정(013): 종류별로 나눠 고치기 ----
+  // 구김 = 그림자 펴기(브라우저 계산: 밝기 저주파만 주변에 맞춤, 니트 결·색은 그대로 → 회색이 들어갈 수 없음)
+  // 작은 얼룩·먼지·실밥 = IOPaint(투명한 곳을 가까운 옷 색으로 채운 사진에서 지우고, 결과에 원래 누끼 알파를 다시 씌움)
+  // 마네킹·벽 표시, 넓은 얼룩 = 건너뜀(사장님이 직접 표시한 곳은 그대로 고침)
+  // 고친 곳마다 전·후의 채도·결 세기를 비교해, 회색으로 바랬거나 결이 사라진 곳은 자동으로 원래대로 되돌립니다.
+  // (예전 방식: 넓은 구김을 작은 상자로 나눠 LaMa로 지움 → 실제 니트에서 회색 얼룩·후드 끈 지워짐, 보고서 013)
+  // closeup(013-C): 확대·디테일 컷은 LaMa에 보내는 상자가 픽셀로 넓어 결 대신 회색을 채우고(원단 디테일의 단추 사이 회색 얼룩), 단추 찾기도
+  // 크기 기준이 맞지 않습니다. 그래서 확대 컷의 자동 표시 얼룩은 IOPaint로 보내지 않고 '확인 필요'로 남깁니다(구김 펴기는 함, 직접 표시는 보냄).
+  async function fixRegions(input,regions,{iopaintOk=true,closeup=false}={}) {
+    const img=await pixelsOf(input),plan=planFixes(regions),spots=[],skipped=[...plan.skipped];
+    let lab=null;try{lab=dominantLab(img);}catch{}
+    for(const r of plan.spot){
+      if(closeup&&!r.manual)skipped.push({region:r,reason:'확대 컷은 얼룩을 IOPaint로 자동 지우지 않음',review:true});
+      else if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
+      else if(!iopaintOk)skipped.push({region:r,reason:'IOPaint가 꺼져 있어 얼룩은 건너뜀',review:true});
+      else spots.push(r);
+    }
+    // 단추·부자재 보호(013-B): 단추(후보) 둘레에 닿는 얼룩은 IOPaint로 보내지 않습니다(LaMa가 단추를 지우거나 복제함). 사장님이 직접 표시한 곳은 보냄(뒤 검사는 함).
+    if(spots.length){
+      const near=nearButtons(img,spots,findButtons(img));
+      for(let i=spots.length-1;i>=0;i--)if(near[i]&&!spots[i].manual){skipped.push({region:spots[i],reason:'단추·부자재 근처라 IOPaint로 보내지 않음',review:true});spots.splice(i,1);}
+    }
+    let {image,results}=flattenShadows(img,plan.flatten);
+    if(spots.length){
+      const sent=await inpaint(dataUrlOf(fillTransparent(image)),spots,iopUrl,{keepColors:true});
+      const m=mergeSpots(image,await pixelsOf(sent),spots);image=m.image;results=[...results,...m.results];
+    }
+    const reverted=results.filter(r=>r.reverted),flags=[];
+    if(reverted.length)flags.push(`결·색 검사에서 ${reverted.length}곳을 원래대로 되돌림(${[...new Set(reverted.flatMap(r=>r.reasons))].join(', ')})`);
+    const review=skipped.filter(x=>x.review);
+    if(review.length)flags.push(`${review.length}곳 자동으로 고치지 않음(${[...new Set(review.map(x=>x.reason))].join(', ')})`);
+    const changed=results.some(r=>!r.reverted&&!r.skipped);
+    return {image:changed?dataUrlOf(image):null,results,skipped,flags,counts:{flatten:plan.flatten.length,spot:spots.length,reverted:reverted.length,skipped:skipped.length}};
+  }
+  const fixSummary=c=>[c.flatten?`구김 ${c.flatten}곳 그림자 펴기`:'',c.spot?`얼룩 ${c.spot}곳 IOPaint로 지우기`:'',c.reverted?`${c.reverted}곳 검사 불합격 → 원래대로`:'',c.skipped?`${c.skipped}곳 건너뜀`:''].filter(Boolean).join(' · ');
   async function inpaintFor(id) {
     await task(async()=>{
       const slot=slots[id],d=slot.defects;if(!d?.selected?.length)return;
-      const chosen=d.selected.map(i=>d.regions[i]),regions=defectOpts.split!==false?splitRegions(chosen):chosen;
-      const label=`${d.selected.length}곳${regions.length!==chosen.length?` (작은 상자 ${regions.length}개로 나눔)`:''}`;
-      setStep(`내 PC의 IOPaint가 ${slot.label}의 ${label}을 지우는 중`);
-      const result=await inpaint(slot.cutout,regions,iopUrl);
-      const e=entryOf(slot)||{stage1:slot.cutout};
-      const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:result}),defects:null}});
+      const chosen=d.selected.map(i=>d.regions[i]),plan=planFixes(chosen);
+      const iopaintOk=plan.spot.length?(await checkIopaint(iopUrl)).ok:true;
+      setStep(`${slot.label} · 고르신 ${chosen.length}곳을 고치는 중 (구김은 그림자 펴기, 얼룩은 내 PC의 IOPaint)`);
+      const e=entryOf(slot)||{stage1:slot.cutout},input=slot.cutout;
+      const fix=await fixRegions(input,chosen,{iopaintOk,closeup:!autoLevelAllowed(id,slot.ai?.shot)});
+      if(!fix.image){patch(id,{defects:null});setStep(`${slot.label} · 바뀐 곳이 없습니다 (${fixSummary(fix.counts)||'고칠 곳 없음'}).${fix.flags.length?' '+fix.flags.join(' · '):''}`);return;}
+      const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:fix.image}),defects:null}});
       setSlots(next);
-      setStep(`${slot.label} · IOPaint로 ${label}을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
+      setStep(`${slot.label} · ${fixSummary(fix.counts)} (무료).${fix.flags.length?' 확인 필요: '+fix.flags.join(' · ')+'.':''} 마음에 안 들면 ‘이전으로’를 누르세요.`);
     });
   }
   // ---- 2차 보정 유료 대체: Photoroom (구김 = AI Ironing으로 옷 전체, 얼룩 = Edit With AI 글 지시, 기본 꺼짐) ----
@@ -542,7 +593,7 @@ export default function AutoStudio() {
   async function placePhoto(next,slotId,item,full,extra={}) {
     let id=slotId;
     if(!id){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
-    next[id]={...next[id],source:full,...await initialLevel(full,retouch),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,auto:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
+    next[id]={...next[id],source:full,...await initialLevel(full,retouch,id,item.shot),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,auto:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
     return id;
   }
   // ---- 드라이브에서 가져오기(009): 화면 밖 흐름(driveImport.js)에 넘기는 함수들 ----
@@ -567,18 +618,18 @@ export default function AutoStudio() {
   // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
   // 누끼는 무료 BiRefNet(사장님 PC)으로 고정, 유료 대체(paid)일 때만 Photoroom. 나머지 설정은 그 상품·컷의 지금 기본값 그대로.
   const autoOptions=(slot,data,paid)=>({...sanitizeRetouch({...DEFAULT_RETOUCH,...(data?.retouch||{}),...(slot.retouch||{})}),cutout:paid?'photoroom':'birefnet'});
-  const pixelsOf=async src=>{const c=await imageCanvas(src);return c.getContext('2d').getImageData(0,0,c.width,c.height);};
   const autoSteps={
     level:async(slot,{product})=>{
       const options=autoOptions(slot,product.data,false);
-      const lv=slot.level?{level:slot.level,workSource:slot.workSource||null}:await initialLevel(slot.source,options);
+      // 사장님이 직접 맞춘 각도는 그대로. 자동 수평(실험)이 꺼져 있으면 예전에 자동으로 돌린 컷도 0°로 되돌리고 제안만 남깁니다(013 팀장 결정).
+      const lv=slot.level?.manual||(options.autoLevelBeta===true&&slot.level)?{level:slot.level,workSource:slot.workSource||null}:await initialLevel(slot.source,options,slot.id,slot.ai?.shot);
       const f=levelFlag(lv.level);
       return {slot:{...slot,...lv},flags:f?[f]:[]};
     },
     stage1:async(slot,{paid,product})=>{
       costProduct.current=product.name;costCut.current=slot.label;
       const options=autoOptions(slot,product.data,paid),warnings=[];
-      const {matte,raw,charged}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource);
+      const {matte,raw,charged}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
       const stage1=await buildStage1(matte,{options,tone:slot.tone||DEFAULT_TONE,slotId:slot.id,ref:null});
       const f=areaFlag(opaqueFraction(await pixelsOf(matte)));
       return {slot:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null,rawCut:raw||slot.rawCut||null},
@@ -611,8 +662,8 @@ export default function AutoStudio() {
       const f=regionsFlag(res.regions.length),flags=f?[f]:[];
       const chosen=res.regions.filter(r=>r.confidence>=.3);
       if(!chosen.length)return {slot:{...slot,defects:null},flags,cost};
-      const result=await inpaint(input,defectOpts.split!==false?splitRegions(chosen):chosen,iopUrl);
-      return {slot:keep(result),flags,cost};
+      const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot)});
+      return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);

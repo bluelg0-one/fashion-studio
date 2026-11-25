@@ -54,6 +54,7 @@ test('prompt: normal is unchanged, aggressive/max ask for broad creases but stil
  const n=defectInstructions({level:'normal',W:1,H:1}),a=defectInstructions({level:'aggressive',W:1,H:1}),m=defectInstructions({level:'max',tile:true,W:1,H:1});
  assert.match(n,/Prefer missing a doubtful spot/);assert.doesNotMatch(n,/fold lines/);assert.match(n,/At most 12 regions/);
  for(const p of [a,m]){assert.match(p,/fold lines and storage creases/);assert.match(p,/pressed or crushed wrinkles/);assert.match(p,/knit ribbing/);assert.match(p,/seams and stitching/);assert.match(p,/designed pleats/);assert.match(p,/buttons/);assert.match(p,/prints/);assert.doesNotMatch(p,/Prefer missing/);}
+ for(const p of [n,a,m])assert.match(p,/never mark buttons, buttonholes, snaps, zippers[\s\S]*the box must not cover the button/,'단추·부자재 금지(013-B)');
  assert.match(a,/At most 20 regions/);assert.match(m,/At most 25 regions/);assert.match(m,/zoomed-in part of the garment/);assert.match(m,/lower confidence/);
 });
 test('server passes the sensitivity to Claude and caps the number of boxes (mock client, no real call)',async()=>{

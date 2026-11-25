@@ -53,3 +53,39 @@ test('검은 옷이면 옷걸이를 옷과 구분할 수 없어 건너뛴다',()
  const img=hangerShot();rect(img,60,100,240,360,BLACK);
  assert.equal(removeHanger(img),0);assert.ok(A(img,120,95)>0);
 });
+
+// ---- 013-B ----
+import {clearAboveFinial, restoreHook, clearWallPockets} from '../src/utils/cleanup.js';
+const WALL=[205,198,186],GLASS=[180,182,185];
+test('013-B: parts above the gold finial are cleared, mannequin and finial stay',()=>{
+ const img=mannequinShot();rect(img,140,2,160,12,GLASS);rect(img,60,25,100,35,GLASS);   // 꼭지 위 걸이 부품 + 꼭지 높이 옆 회색 부품
+ assert.ok(clearAboveFinial(img)>0);
+ assert.equal(A(img,150,5),0,'꼭지 위 부품');assert.equal(A(img,80,30),0,'꼭지 옆 멀리 떨어진 회색 부품');
+ assert.equal(A(img,150,30),255,'꼭지');assert.equal(A(img,150,90),255,'마네킹 목');assert.equal(A(img,150,200),255,'옷');
+});
+test('013-B: no finial (hanger shot) or a gold garment → nothing changes',()=>{
+ const img=canvas();rect(img,60,110,240,360,PINK);rect(img,148,20,152,109,BLACK);assert.equal(clearAboveFinial(img),0);
+ const g=canvas();rect(g,60,40,240,360,GOLD);rect(g,140,10,160,39,GOLD);assert.equal(clearAboveFinial(g),0);
+});
+test('013-B: a mannequin neck separated from the garment in a close-up is kept',()=>{
+ const img=canvas();rect(img,0,150,299,399,PINK);rect(img,120,40,180,130,CREAM);   // 옷과 떨어진 마네킹 목(전체의 약 6%)
+ rect(img,10,10,13,13,PINK);
+ removeIslands(img,{minShare:.2});
+ assert.equal(A(img,150,80),255,'마네킹 목 유지');assert.equal(A(img,11,11),0,'작은 분홍 조각은 지움');
+});
+test('013-B: hanger hook tip is restored from the original photo (thin line only)',()=>{
+ const src=canvas();rect(src,0,0,299,399,WALL);rect(src,148,20,151,60,SILVER);rect(src,60,110,240,360,PINK);
+ const img=canvas();rect(img,148,45,151,60,SILVER);rect(img,60,110,240,360,PINK);   // 고리 위쪽 끝(20~44)이 지워진 누끼
+ for(let p=0;p<src.width*src.height;p++)src.data[p*4+3]=255;
+ assert.ok(restoreHook(img,src,`rgb(${WALL})`)>0);assert.equal(A(img,149,25),255,'고리 끝 복원');assert.equal(A(img,30,30),0,'벽은 그대로 투명');
+ // 벽돌 줄처럼 넓게 퍼지는 것은 복원하지 않음
+ const src2=canvas();rect(src2,0,0,299,399,WALL);rect(src2,148,20,151,60,SILVER);rect(src2,0,30,299,33,SILVER);rect(src2,60,110,240,360,PINK);for(let p=0;p<src2.width*src2.height;p++)src2.data[p*4+3]=255;
+ const img2=canvas();rect(img2,148,45,151,60,SILVER);rect(img2,60,110,240,360,PINK);
+ assert.equal(restoreHook(img2,src2,`rgb(${WALL})`),0);
+});
+test('013-B: wall left in the closed gap between hanger and garment is cleared',()=>{
+ const img=canvas();rect(img,60,110,240,360,PINK);rect(img,100,60,200,64,BLACK);rect(img,100,60,104,110,BLACK);rect(img,196,60,200,110,BLACK);
+ rect(img,105,65,195,109,WALL);                 // 옷걸이 삼각(사각)과 옷 사이에 남은 벽
+ assert.ok(clearWallPockets(img,`rgb(${WALL})`)>0);
+ assert.equal(A(img,150,90),0,'틈의 벽');assert.equal(A(img,150,200),255,'옷');assert.equal(A(img,102,80),255,'옷걸이');
+});

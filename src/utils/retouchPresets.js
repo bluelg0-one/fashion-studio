@@ -18,9 +18,11 @@ export const CUTOUT_ENGINES=['photoroom','birefnet'];
 // 1차 보정 색감 기본값(사장님 결정 2026-11-23): 새로 넣는 사진에만 저장됩니다. 예전에 저장한 사진은 값이 없어 0(그대로)으로 남습니다.
 // 사진마다 ‘밝기·화사하게’ 슬라이더로 조절하거나 ‘색감 보정 끄기’로 0으로 돌릴 수 있습니다.
 export const DEFAULT_TONE={bright:20,vivid:30};
-// autoLevel: 사진을 넣을 때 자동 수평 맞추기(무료, 기본 켬). 엔진 요청과 상관없어 재과금 기준에서 뺍니다.
-export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','hangerMode','autoLevel'];
-export const DEFAULT_RETOUCH = {cutout:'photoroom', autoLevel:true, removeStand:true, cleanIslands:true, cleanMannequinTop:false, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+// autoLevelBeta: 사진을 넣을 때 자동 수평 맞추기(실험, 기본 꺼짐 — 013 팀장 결정: 상품 3개에서 거의 모든 컷이 틀림). 꺼져 있으면 '수평 제안 n°'만 보여 줍니다.
+//   예전 설정 autoLevel(기본 켬)은 더 이상 쓰지 않습니다(저장된 설정 때문에 다시 켜지지 않도록 새 이름).
+// clearWhite: 흰·아이보리 옷의 누런 기를 약하게 덜고 밝은 부분을 살짝 올림(013-B, 기본 켬, 브라우저 계산)
+export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','hangerMode','autoLevel','autoLevelBeta','clearWhite'];
+export const DEFAULT_RETOUCH = {cutout:'photoroom', autoLevelBeta:false, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
 // 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
 export const MANNEQUIN_MODES = [
   {id:'keep', label:'마네킹 그대로 두기'},

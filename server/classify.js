@@ -133,7 +133,8 @@ function defectInstructions({level='normal',tile=false,W,H}) {
 - thread: loose threads
 - mannequin_mark: marks, tape or damage on the mannequin
 - wall_mark: leftover wall/background marks
-Never mark prints, logos, buttons, labels the shop wants visible, stitching, pockets or texture of the fabric itself.${eager?'':' Prefer missing a doubtful spot over marking a real design element.'}${eager?DEFECT_EAGER:''}${level==='max'?DEFECT_MAX_EXTRA:''}
+Never mark prints, logos, buttons, labels the shop wants visible, stitching, pockets or texture of the fabric itself.
+Buttons and trims are part of the product: never mark buttons, buttonholes, snaps, zippers, hooks, labels, drawstrings, cord ends or any other trim, and keep every box clear of them. If a crease or stain is next to a button or trim, end the box before it (the box must not cover the button).${eager?'':' Prefer missing a doubtful spot over marking a real design element.'}${eager?DEFECT_EAGER:''}${level==='max'?DEFECT_MAX_EXTRA:''}
 Coordinates: the image is ${W||'?'}x${H||'?'} pixels; give each region as a tight box in a 0-1000 scale of width (x) and height (y), with x0<x1 and y0<y1. Keep boxes as small as possible while fully covering the flaw. At most ${DEFECT_LIMIT[level]||12} regions. note: one short Korean phrase describing the flaw. Return an empty list if the photo is clean.`;
 }
 export const DEFECT_INSTRUCTIONS=defectInstructions({level:'normal',W:'{W}',H:'{H}'});

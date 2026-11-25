@@ -140,7 +140,8 @@ export async function runAuto(job,deps) {
 // 누끼에서 옷(불투명) 면적 비율. 너무 작으면 옷이 지워졌거나, 너무 크면 배경이 남았을 수 있습니다.
 export function opaqueFraction({data}) {let n=0;for(let i=3;i<data.length;i+=4)if(data[i]>127)n++;return data.length?n/(data.length/4):0;}
 export function areaFlag(f) {return f<LIMITS.areaMin?`누끼 옷 면적이 너무 작음(${Math.round(f*100)}%) — 옷이 지워졌을 수 있음`:f>LIMITS.areaMax?`누끼 옷 면적이 너무 큼(${Math.round(f*100)}%) — 배경이 남았을 수 있음`:null;}
-export function levelFlag(level) {return level&&level.confidence!=null&&level.confidence<LIMITS.levelConfidence?`자동 수평 신뢰도 낮음(${Math.round(level.confidence*100)}%)`:null;}
+// 돌리지 않은 컷(기본, 013)은 신뢰도와 상관없이 표시하지 않습니다. 자동(실험)으로 돌렸는데 신뢰도가 낮거나 ±4°를 넘어 멈춘 경우만.
+export function levelFlag(level) {if(level?.review&&level.reason)return `자동 수평: ${level.reason}`;if(!level?.angle||level.manual)return null;return level.confidence!=null&&level.confidence<LIMITS.levelConfidence?`자동 수평 신뢰도 낮음(${Math.round(level.confidence*100)}%)`:null;}
 export const deltaE=(a,b)=>Math.hypot(a.L-b.L,a.a-b.a,a.b-b.b);
 export function colorFlag(dE) {return dE>LIMITS.deltaE?`색감 통일 후에도 대표 컷과 색 차이가 큼(ΔE ${dE.toFixed(1)})`:null;}
 export function regionsFlag(n) {return n===0?'Claude가 수정할 곳을 찾지 못함(0곳)':n>=LIMITS.regionsCap?`Claude가 찾은 곳이 상한(${LIMITS.regionsCap}곳) 이상`:null;}
