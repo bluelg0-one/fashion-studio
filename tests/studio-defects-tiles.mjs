@@ -51,16 +51,13 @@ try{
  await level.selectOption('max');assert.match(await hero.locator('.cost-claudeDefects').innerText(),/약 \$0\.09~0\.36 \(9회\)/);
  await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
  assert.equal(defectCalls.length,14,'최대: 타일 9번');
- // IOPaint: 넓은 상자(보통으로 찾은 넓은 구김)는 작은 상자로 나눠 한 마스크로 1번. 보통 결과는 저장돼 있어 추가 호출 없음.
+ // 고치기(013): 넓은 구김은 IOPaint로 보내지 않고 브라우저에서 그림자 펴기, 작은 얼룩만 IOPaint로(마스크에 얼룩만).
  await level.selectOption('normal');await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();assert.equal(defectCalls.length,14);
- await hero.getByRole('button',{name:/IOPaint로 지우기/}).click();await idle();
- assert.equal(inpaints.length,1,'한 마스크로 1번 전송');
- assert.match(await page.locator('.auto-studio').innerText(),/작은 상자 \d+개로 나눔/);
- // 분할 끄기 옵션
- await hero.getByRole('button',{name:'🤖 수정할 곳 자동 찾기'}).click();await idle();
- await page.getByLabel('hero 넓은 상자 잘게 나누기').uncheck();
- await hero.getByRole('button',{name:/IOPaint로 지우기/}).click();await idle();
- assert.equal(inpaints.length,2);assert.doesNotMatch(await page.locator('.auto-studio').innerText(),/작은 상자 \d+개로 나눔/);
+ await hero.getByRole('button',{name:/선택한 곳 고치기/}).click();await idle();
+ assert.equal(inpaints.length,1,'작은 얼룩만 IOPaint로 1번');
+ const mk=await page.evaluate(async src=>{const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src;});const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const g=c.getContext('2d');g.drawImage(im,0,0);const at=(fx,fy)=>g.getImageData(Math.round(fx*c.width),Math.round(fy*c.height),1,1).data[0];return {wrinkle:at(.45,.5),stain:at(.11,.107)};},inpaints[0].mask);
+ assert.deepEqual(mk,{wrinkle:0,stain:255},'마스크에는 얼룩만, 넓은 구김은 없음 '+JSON.stringify(mk));
+ assert.match(await page.locator('.auto-studio').innerText(),/구김 1곳 그림자 펴기 · 얼룩 1곳 IOPaint로 지우기/);
  assert.deepEqual(errors,[]);
- console.log(`PASS: aggressive (default) = 4 tile calls with cost '약 $0.04~0.16 (4회)', overlapping tiles merged (8 → ${found}), same photo reuses result, normal = 1 call, max = 9 calls, wide boxes split and sent to IOPaint as one mask (1 request), split can be turned off.`);
+ console.log(`PASS: aggressive (default) = 4 tile calls with cost '약 $0.04~0.16 (4회)', overlapping tiles merged (8 → ${found}), same photo reuses result, normal = 1 call, max = 9 calls, wide wrinkle flattened in the browser (not in the IOPaint mask), only the small stain sent to IOPaint.`);
 }finally{await browser.close();}

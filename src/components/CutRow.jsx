@@ -92,7 +92,7 @@ function LevelPanel({slot,draft,setDraft,onLevel}) {
     {level.auto!=null&&!level.manual&&<p className="slot-note">자동 계산 {level.auto>0?'+':''}{level.auto}° · 신뢰도 {Math.round((level.confidence||0)*100)}%{level.auto===0&&level.confidence!=null&&level.confidence<.25?' — 곧은 선이 부족해 돌리지 않았습니다':''}</p>}
   </div>;
 }
-function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive',split:true},setOpts=()=>{}}) {
+function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level:'aggressive'},setOpts=()=>{}}) {
   const engine2=opts.engine2||'iopaint',iopOff=!iop?.ok,usePR=engine2==='photoroom'||iopOff;
   const d=slot.defects,sel=d?.selected||[],regions=d?.regions||[];
   const [draw,setDraw]=useState(false),[kind,setKind]=useState('stain'),[drag,setDrag]=useState(null),[tool,setTool]=useState('box'),[brush,setBrush]=useState(25);
@@ -154,11 +154,11 @@ function DefectPanel({slot,iop,onPatch,onFind,onInpaint,onPhotoroom2,opts={level
         {regions.length?<ul className="defect-list">{regions.map((r,i)=><li key={i}><label className="check"><input type="checkbox" aria-label={`${slot.id} 수정 ${i+1}`} checked={sel.includes(i)} onChange={()=>toggle(i)}/><b>{i+1}</b> {DEFECT_LABEL[r.type]||r.type} · {r.note} {r.manual?<small>(직접)</small>:<small>({Math.round(r.confidence*100)}%)</small>}</label><button type="button" className="subtle tiny" aria-label={`${slot.id} 표시 ${i+1} 삭제`} onClick={()=>remove(i)}>✕</button></li>)}</ul>
           :<p className="slot-note">{draw?'사진 위에서 끌어서 표시하세요.':'표시된 곳이 없습니다.'}</p>}
         <div className="btn-row">
-          <label className="check"><input type="checkbox" aria-label={`${slot.id} 넓은 상자 잘게 나누기`} checked={opts.split!==false} onChange={e=>setOpts({split:e.target.checked})}/>넓은 상자는 작은 상자로 나눠 한 번에 지우기 (기본 · 비교해 보니 구김이 더 잘 지워짐)</label>
-          <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length||!iop?.ok} onClick={()=>{setDraw(false);onInpaint(slot.id);}}>IOPaint로 지우기 ({sel.length}곳)</button><Cost k="iopaint"/></span>
+          <span className="btn-with-cost"><button type="button" className="primary" disabled={!sel.length} onClick={()=>{setDraw(false);onInpaint(slot.id);}}>선택한 곳 고치기 ({sel.length}곳)</button><Cost k="browser"/></span>
           <button type="button" className="subtle" onClick={()=>{setDraw(false);onPatch(slot.id,{defects:null});}}>표시 모두 지우기</button>
         </div>
-        {!iop?.ok&&<p className="review-note">IOPaint가 꺼져 있습니다. 위쪽 ‘사용 도구·비용’ 안내대로 내 PC에서 IOPaint를 실행하세요.</p>}
+        <p className="slot-note">구김은 <b>그림자 펴기</b>(밝기만 고르게, 니트 결·색은 그대로 · 무료 브라우저 계산), 작은 얼룩·먼지·실밥은 <b>IOPaint로 지우기</b>(무료, 내 PC). 마네킹·벽 표시와 넓은 얼룩은 자동으로 건너뜁니다(직접 표시한 곳은 고침). 고친 곳이 회색으로 바래거나 결이 흐려지면 그곳은 자동으로 원래대로 돌립니다.</p>
+        {!iop?.ok&&<p className="review-note">IOPaint가 꺼져 있어 얼룩 지우기는 건너뜁니다(구김 펴기는 됩니다). 얼룩도 지우려면 내 PC에서 IOPaint를 실행하세요.</p>}
       </>}
     </>}
   </div>;

@@ -23,7 +23,7 @@ try{
  const panel=page.locator('[data-slot="hero"] .defect-panel');
 
  await panel.getByRole('button',{name:/직접 표시하기/}).click();
- await page.getByLabel('hero 직접 표시 종류').selectOption('wrinkle');
+ await page.getByLabel('hero 직접 표시 종류').selectOption('stain');
  await page.getByLabel('hero 표시 방법').selectOption('brush');
  await page.getByLabel('hero 표시 붓 크기').fill('30');
  const img=panel.locator(".defect-preview");await img.waitFor();await img.scrollIntoViewIfNeeded();
@@ -32,9 +32,9 @@ try{
  await page.mouse.move(...pt(.30,.50));await page.mouse.down();for(let k=1;k<=12;k++)await page.mouse.move(...pt(.30+.4*k/12,.50+.12*k/12));await page.mouse.up();
  await panel.locator('.defect-list li').first().waitFor();
  assert.equal(await panel.locator('.defect-list li').count(),1);
- assert.match(await panel.locator('.defect-list li').first().innerText(),/구김 · 직접 칠함/);
+ assert.match(await panel.locator('.defect-list li').first().innerText(),/얼룩 · 직접 칠함/);
  await page.locator('.tools-panel summary').click();await page.getByRole('button',{name:'다시 확인'}).click();
- await panel.getByRole('button',{name:'IOPaint로 지우기 (1곳)'}).click();await idle();
+ await panel.getByRole('button',{name:'선택한 곳 고치기 (1곳)'}).click();await idle();
  const m=await page.evaluate(async src=>{const im=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src;});const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const g=c.getContext('2d');g.drawImage(im,0,0);const at=(fx,fy)=>g.getImageData(Math.round(fx*c.width),Math.round(fy*c.height),1,1).data[0];return {start:at(.30,.50),mid:at(.50,.56),end:at(.70,.62),above:at(.50,.40),below:at(.50,.75)};},mask);
  assert.deepEqual(m,{start:255,mid:255,end:255,above:0,below:0},JSON.stringify(m));
  assert.deepEqual(errors,[]);

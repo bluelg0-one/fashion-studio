@@ -37,6 +37,9 @@ test('routing: wrinkles flatten, small stains go to IOPaint, mannequin/wall and 
   assert.equal(p.flatten.length,1);
   assert.equal(p.spot.length,2,'작은 얼룩 + 붓 자국(먼지)');
   assert.deepEqual(p.skipped.map(s=>[s.region.type,s.review]),[['stain',true],['mannequin_mark',false],['wall_mark',false]]);
+  // 사장님이 직접 표시한 곳은 마네킹·넓은 얼룩이라도 지우기, 직접 표시한 구김은 펴기
+  const q=planFixes([{...box(400,0,450,40,'mannequin_mark'),manual:true},{...box(0,0,300,300,'stain'),manual:true},{...box(0,0,300,300),manual:true}]);
+  assert.deepEqual([q.spot.length,q.flatten.length,q.skipped.length],[2,1,0]);
 });
 
 test('flattening lifts the wrinkle shadow, keeps the knit texture and the colour (no grey)',()=>{
@@ -90,5 +93,7 @@ test('a good spot fix (same colour, texture kept) is kept; transparent area is f
   const f=fillTransparent(img),edge=(150*W+5)*4,lab=rgbToLab(f.data[edge],f.data[edge+1],f.data[edge+2]);
   assert.ok(lab[1]>15,'투명 부분이 분홍 계열로 채워져야 함(흰·검정 아님)');
   assert.equal(f.data[edge+3],0,'알파는 그대로');
-  assert.ok(garmentShare(img,box(420,10,580,130,'stain'),{a:lab[1],b:lab[2]})<.5,'마네킹 목 표시는 옷 색 비율이 낮음');
+  const pink=rgbToLab(214,120,140),ref={a:pink[1],b:pink[2]};
+  assert.ok(garmentShare(img,box(440,20,560,110,'stain'),ref)<.5,'마네킹 목 위 표시는 주변이 옷 색이 아님');
+  assert.ok(garmentShare(dirty,box(400,400,520,520,'stain'),ref)>.8,'옷 위 얼룩은 주변이 옷 색');
 });

@@ -25,6 +25,8 @@ export const CHECK={chromaRatio:.9,blockChroma:.85,grayBlockShare:.1,hfRatio:.75
 export function planFixes(regions) {
   const out={flatten:[],spot:[],skipped:[]};
   for(const r of regions){
+    // 사장님이 직접 표시한 곳은 종류·크기와 상관없이 지우기(직접 고른 것이므로). 구김으로 표시했으면 그림자 펴기.
+    if(r.manual){(FLATTEN_TYPES.includes(r.type)?out.flatten:out.spot).push(r);continue;}
     if(SKIP_TYPES.includes(r.type)){out.skipped.push({region:r,reason:'마네킹·벽은 2차 보정에서 제외',review:false});continue;}
     if(FLATTEN_TYPES.includes(r.type)){out.flatten.push(r);continue;}
     const w=r.x1-r.x0,h=r.y1-r.y0;
@@ -224,10 +226,12 @@ export function mergeSpots(orig,inpainted,regions,opts={}) {
   return {image:out,results};
 }
 
-// 마네킹·다른 색 부분으로 보이는 표시: 표시 안 옷 픽셀 중 대표 옷 색(a·b)과 가까운 비율이 절반 미만이면 건너뜀
+// 마네킹·다른 색 부분 위의 표시인지: 표시 '주변'(표시 밖 고리)의 옷 픽셀 중 대표 옷 색(a·b)과 가까운 비율.
+// 얼룩 자체는 원래 색이 다르므로 표시 안이 아니라 주변을 봅니다. 절반 미만이면 마네킹·다른 부분으로 보고 건너뜁니다.
+export const GARMENT_SHARE_MIN=.5;
 export function garmentShare(img,r,lab) {
-  const {width,height,data}=img,mask=regionMask(width,height,r),tol=Math.max(10,.4*Math.hypot(lab.a,lab.b));
+  const {width,height,data}=img,inner=regionMask(width,height,r),outer=regionMask(width,height,r,.8),tol=Math.max(10,.4*Math.hypot(lab.a,lab.b));
   let n=0,near=0;
-  for(let p=0;p<mask.length;p+=1){if(!mask[p]||data[p*4+3]<200)continue;n++;const [,a,b]=rgbToLab(data[p*4],data[p*4+1],data[p*4+2]);if(Math.hypot(a-lab.a,b-lab.b)<=tol)near++;}
+  for(let p=0;p<inner.length;p++){if(!outer[p]||inner[p]||data[p*4+3]<200)continue;n++;const [,a,b]=rgbToLab(data[p*4],data[p*4+1],data[p*4+2]);if(Math.hypot(a-lab.a,b-lab.b)<=tol)near++;}
   return n?near/n:0;
 }

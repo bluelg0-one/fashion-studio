@@ -11,7 +11,8 @@ import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
 import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, inspectTile, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
-import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions, splitRegions} from '../utils/defectTiles.js';
+import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions} from '../utils/defectTiles.js';
+import {planFixes, flattenShadows, fillTransparent, mergeSpots, garmentShare, GARMENT_SHARE_MIN} from '../utils/flatten.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import DrivePanel from './DrivePanel.jsx';
 import DriveImportPanel from './DriveImportPanel.jsx';
@@ -76,7 +77,7 @@ export default function AutoStudio() {
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram),[docTheme,setDocTheme]=useState('basic');
   // 수정할 곳 찾기 설정(이 브라우저에 기억): 민감도 · 넓은 상자 잘게 나누기
-  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,split:true,engine2:'iopaint',stainAI:false};}});
+  const [defectOpts,setDefectOptsState]=useState(()=>{try{return {level:DEFAULT_DEFECT_LEVEL,engine2:'iopaint',stainAI:false,...JSON.parse(localStorage.getItem('fashion-studio-defects')||'{}')};}catch{return {level:DEFAULT_DEFECT_LEVEL,engine2:'iopaint',stainAI:false};}});
   const setDefectOpts=patchOpts=>setDefectOptsState(cur=>{const next={...cur,...patchOpts};try{localStorage.setItem('fashion-studio-defects',JSON.stringify(next));}catch{}return next;});
   const [iop,setIop]=useState(null),[bir,setBir]=useState(null),[iopUrl,setIopUrl]=useState(getIopaintUrl),[frame,setFrame]=useState({enabled:false,ratio:'3:4',margin:6}),[colorRef,setColorRef]=useState(null),[matchStrength,setMatchStrength]=useState(80);
   const [products,setProducts]=useState([]),[productId,setProductId]=useState(null),[productName,setProductName]=useState(''),[saveState,setSaveState]=useState(''),[localSavedAt,setLocalSavedAt]=useState(0);
@@ -442,23 +443,50 @@ export default function AutoStudio() {
       const selected=[...found.map((r,i)=>r.confidence>=minConf?i:-1).filter(i=>i>=0),...kept.map((x,k)=>x.on?found.length+k:-1).filter(i=>i>=0)];
       const preview=await markedPreview(slot.cutout,regions,selected);
       patch(id,{defects:{regions,selected,preview}});
-      setStep((found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다 (민감도 ${DEFECT_LEVELS[level].label}${cached?', 저장된 결과 재사용·추가 비용 없음':''}). 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘IOPaint로 지우기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하거나 민감도를 높여 보세요.`));
+      setStep((found.length?`${slot.label} · Claude가 수정할 곳 ${found.length}곳을 표시했습니다 (민감도 ${DEFECT_LEVELS[level].label}${cached?', 저장된 결과 재사용·추가 비용 없음':''}). 빠진 곳은 ‘직접 표시하기’로 추가하고 ‘선택한 곳 고치기’를 누르세요.`:`${slot.label} · Claude가 고칠 곳을 찾지 못했습니다. 필요하면 ‘직접 표시하기’로 표시하거나 민감도를 높여 보세요.`));
     });
   }
-  // 넓은 상자는 작은 상자(한 변 9%, 28% 겹침)로 나눠 한 마스크로 보냅니다(끄기 가능).
-  // LaMa로 비교한 결과(보고서 008): 큰 상자 1개보다 구김이 더 잘 지워지고 주변 손상이 적었습니다.
-  // 작은 상자를 한 곳씩 차례로 보내면 옆에 남은 구김을 따라 다시 그려 구김이 남아서 쓰지 않습니다.
+  async function pixelsOf(src){const c=await imageCanvas(src);return c.getContext('2d').getImageData(0,0,c.width,c.height);}
+  function dataUrlOf(img){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').putImageData(new ImageData(img.data,img.width,img.height),0,0);return c.toDataURL('image/png');}
+  // ---- 2차 보정(013): 종류별로 나눠 고치기 ----
+  // 구김 = 그림자 펴기(브라우저 계산: 밝기 저주파만 주변에 맞춤, 니트 결·색은 그대로 → 회색이 들어갈 수 없음)
+  // 작은 얼룩·먼지·실밥 = IOPaint(투명한 곳을 가까운 옷 색으로 채운 사진에서 지우고, 결과에 원래 누끼 알파를 다시 씌움)
+  // 마네킹·벽 표시, 넓은 얼룩 = 건너뜀(사장님이 직접 표시한 곳은 그대로 고침)
+  // 고친 곳마다 전·후의 채도·결 세기를 비교해, 회색으로 바랬거나 결이 사라진 곳은 자동으로 원래대로 되돌립니다.
+  // (예전 방식: 넓은 구김을 작은 상자로 나눠 LaMa로 지움 → 실제 니트에서 회색 얼룩·후드 끈 지워짐, 보고서 013)
+  async function fixRegions(input,regions,{iopaintOk=true}={}) {
+    const img=await pixelsOf(input),plan=planFixes(regions),spots=[],skipped=[...plan.skipped];
+    let lab=null;try{lab=dominantLab(img);}catch{}
+    for(const r of plan.spot){
+      if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
+      else if(!iopaintOk)skipped.push({region:r,reason:'IOPaint가 꺼져 있어 얼룩은 건너뜀',review:true});
+      else spots.push(r);
+    }
+    let {image,results}=flattenShadows(img,plan.flatten);
+    if(spots.length){
+      const sent=await inpaint(dataUrlOf(fillTransparent(image)),spots,iopUrl,{keepColors:true});
+      const m=mergeSpots(image,await pixelsOf(sent),spots);image=m.image;results=[...results,...m.results];
+    }
+    const reverted=results.filter(r=>r.reverted),flags=[];
+    if(reverted.length)flags.push(`결·색 검사에서 ${reverted.length}곳을 원래대로 되돌림(${[...new Set(reverted.flatMap(r=>r.reasons))].join(', ')})`);
+    const review=skipped.filter(x=>x.review);
+    if(review.length)flags.push(`${review.length}곳 자동으로 고치지 않음(${[...new Set(review.map(x=>x.reason))].join(', ')})`);
+    const changed=results.some(r=>!r.reverted&&!r.skipped);
+    return {image:changed?dataUrlOf(image):null,results,skipped,flags,counts:{flatten:plan.flatten.length,spot:spots.length,reverted:reverted.length,skipped:skipped.length}};
+  }
+  const fixSummary=c=>[c.flatten?`구김 ${c.flatten}곳 그림자 펴기`:'',c.spot?`얼룩 ${c.spot}곳 IOPaint로 지우기`:'',c.reverted?`${c.reverted}곳 검사 불합격 → 원래대로`:'',c.skipped?`${c.skipped}곳 건너뜀`:''].filter(Boolean).join(' · ');
   async function inpaintFor(id) {
     await task(async()=>{
       const slot=slots[id],d=slot.defects;if(!d?.selected?.length)return;
-      const chosen=d.selected.map(i=>d.regions[i]),regions=defectOpts.split!==false?splitRegions(chosen):chosen;
-      const label=`${d.selected.length}곳${regions.length!==chosen.length?` (작은 상자 ${regions.length}개로 나눔)`:''}`;
-      setStep(`내 PC의 IOPaint가 ${slot.label}의 ${label}을 지우는 중`);
-      const result=await inpaint(slot.cutout,regions,iopUrl);
-      const e=entryOf(slot)||{stage1:slot.cutout};
-      const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:result}),defects:null}});
+      const chosen=d.selected.map(i=>d.regions[i]),plan=planFixes(chosen);
+      const iopaintOk=plan.spot.length?(await checkIopaint(iopUrl)).ok:true;
+      setStep(`${slot.label} · 고르신 ${chosen.length}곳을 고치는 중 (구김은 그림자 펴기, 얼룩은 내 PC의 IOPaint)`);
+      const e=entryOf(slot)||{stage1:slot.cutout},input=slot.cutout;
+      const fix=await fixRegions(input,chosen,{iopaintOk});
+      if(!fix.image){patch(id,{defects:null});setStep(`${slot.label} · 바뀐 곳이 없습니다 (${fixSummary(fix.counts)||'고칠 곳 없음'}).${fix.flags.length?' '+fix.flags.join(' · '):''}`);return;}
+      const next=await refreshImages({...slots,[id]:{...withEntry(slot,{matte:e.matte||null,stage1:e.stage1||slot.cutout,stage2:fix.image}),defects:null}});
       setSlots(next);
-      setStep(`${slot.label} · IOPaint로 ${label}을 지웠습니다 (무료). 마음에 안 들면 ‘이전으로’를 누르세요.`);
+      setStep(`${slot.label} · ${fixSummary(fix.counts)} (무료).${fix.flags.length?' 확인 필요: '+fix.flags.join(' · ')+'.':''} 마음에 안 들면 ‘이전으로’를 누르세요.`);
     });
   }
   // ---- 2차 보정 유료 대체: Photoroom (구김 = AI Ironing으로 옷 전체, 얼룩 = Edit With AI 글 지시, 기본 꺼짐) ----
@@ -567,7 +595,6 @@ export default function AutoStudio() {
   // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
   // 누끼는 무료 BiRefNet(사장님 PC)으로 고정, 유료 대체(paid)일 때만 Photoroom. 나머지 설정은 그 상품·컷의 지금 기본값 그대로.
   const autoOptions=(slot,data,paid)=>({...sanitizeRetouch({...DEFAULT_RETOUCH,...(data?.retouch||{}),...(slot.retouch||{})}),cutout:paid?'photoroom':'birefnet'});
-  const pixelsOf=async src=>{const c=await imageCanvas(src);return c.getContext('2d').getImageData(0,0,c.width,c.height);};
   const autoSteps={
     level:async(slot,{product})=>{
       const options=autoOptions(slot,product.data,false);
@@ -611,8 +638,8 @@ export default function AutoStudio() {
       const f=regionsFlag(res.regions.length),flags=f?[f]:[];
       const chosen=res.regions.filter(r=>r.confidence>=.3);
       if(!chosen.length)return {slot:{...slot,defects:null},flags,cost};
-      const result=await inpaint(input,defectOpts.split!==false?splitRegions(chosen):chosen,iopUrl);
-      return {slot:keep(result),flags,cost};
+      const fix=await fixRegions(input,chosen);
+      return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
