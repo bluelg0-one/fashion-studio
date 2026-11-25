@@ -14,7 +14,7 @@ async function igApi(action,body) {
 }
 
 export default function InstagramPanel({instagram,setInstagram,slots,fitEnabled,rows,texts,task,setStep,productName}) {
-  const [status,setStatus]=useState(null),[account,setAccount]=useState(null);
+  const [status,setStatus]=useState(null),[account,setAccount]=useState(null),[checkResult,setCheckResult]=useState(null);
   const [password,setPassword]=useState(()=>{try{return localStorage.getItem(PASSWORD_KEY)||'';}catch{return '';}});
   useEffect(()=>{igApi('status').then(setStatus).catch(()=>setStatus({ready:false,token:false,storage:false,password:false}));},[]);
   const set=patch=>setInstagram(current=>({...current,...patch}));
@@ -44,8 +44,12 @@ export default function InstagramPanel({instagram,setInstagram,slots,fitEnabled,
   async function check() {
     await task(async()=>{
       setStep('인스타그램 연결 확인 중');
-      const result=await igApi('check',{password});
-      setAccount(result);
+      setCheckResult(null);
+      let result;
+      // (013) 사장님이 결과를 알아보지 못하셨으므로, 버튼 바로 아래에 성공(초록 ✅)·실패(빨강 ❌)를 크게 보여 줍니다.
+      try {result=await igApi('check',{password});}
+      catch(e){setAccount(null);setCheckResult({ok:false,message:e.message,at:Date.now()});throw e;}
+      setAccount(result);setCheckResult({ok:true,at:Date.now()});
       setStep(`@${result.username} 계정에 연결돼 있습니다.${result.host?` (${result.mode} · ${result.host}${result.idSource==="INSTAGRAM_USER_ID"?" · 계정 ID는 INSTAGRAM_USER_ID 사용":""}${result.forced?" · 호스트 직접 지정":""})`:""}`);
     });
   }
@@ -101,11 +105,15 @@ export default function InstagramPanel({instagram,setInstagram,slots,fitEnabled,
     {!status?<p className="slot-note">연결 상태를 확인하는 중…</p>:status.ready?<>
       <label>게시 비밀번호<input type="password" aria-label="인스타 게시 비밀번호" autoComplete="off" value={password} onChange={e=>savePassword(e.target.value)}/></label>
       <p className="slot-note">다른 사람이 이 주소로 게시하지 못하게 막는 비밀번호입니다. 이 브라우저에만 저장됩니다.</p>
-      {account&&<p className="slot-note">연결된 계정: @{account.username}{account.limit?` · 최근 24시간 게시 ${account.used??0}/${account.limit}회`:''}{account.host?` · 방식: ${account.mode} (${account.host})`:''}</p>}
       <div className="instagram-actions">
         <button type="button" disabled={!password} onClick={check}>연결 확인</button>
         <button type="button" className="primary" disabled={!password||!photos.length||!captionOk} onClick={publish}>인스타그램에 지금 게시</button>
       </div>
+      {checkResult&&<div className={`check-result ${checkResult.ok?"check-ok":"check-fail"}`} aria-live="polite" aria-label="연결 확인 결과">
+        {checkResult.ok?<><b>✅ 연결 성공</b>{account&&<span>연결된 계정: @{account.username}{account.limit?` · 최근 24시간 게시 ${account.used??0}/${account.limit}회`:''}{account.host?` · 방식: ${account.mode} (${account.host})`:''}</span>}</>
+          :<><b>❌ 연결 실패</b><span>{checkResult.message}</span></>}
+        <small>{new Date(checkResult.at).toLocaleTimeString('ko-KR')} 확인</small>
+      </div>}
     </>:<p className="review-note">아직 바로 게시를 쓸 수 없습니다. 서버에 {missing.map(key=>MISSING[key]).join(', ')} 설정이 필요합니다. 그 전에는 위의 ‘사진·캡션 묶음 다운로드’로 받아 인스타그램 앱에서 직접 올릴 수 있습니다.</p>}
   </section>;
 }

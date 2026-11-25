@@ -211,7 +211,7 @@ npm run dev
 - ‘인스타그램에 지금 게시’는 Instagram API(Instagram 로그인 방식, `graph.instagram.com`)로 게시합니다. 서버 환경변수 세 개가 모두 있어야 버튼이 켜집니다(**VITE_ 접두사 금지**).
   - `INSTAGRAM_ACCESS_TOKEN`: Meta 개발자 앱에서 발급한 액세스 토큰(게시 권한 `instagram_business_content_publish` 포함). 약 60일 뒤 만료되므로 새로 발급해 값을 바꿔야 합니다(자동 갱신은 아직 없음).
   - 토큰 두 종류 지원(012): `IG…`(Instagram 로그인) → graph.instagram.com, `EA…`(Facebook·Meta 비즈니스, 시스템 사용자 토큰) → graph.facebook.com(같은 v25.0). `INSTAGRAM_GRAPH_HOST`로 강제 지정 가능(두 주소만 허용). 붙여넣기 실수(앞뒤 공백·따옴표·줄바꿈·Bearer)는 자동으로 잘라 냅니다.
-  - `INSTAGRAM_USER_ID`(인스타 비즈니스 계정 ID, 숫자, 비밀 아님): 있으면 `/me` 없이 그 ID로 확인·게시합니다. Facebook 토큰이면 꼭 필요하고, 없으면 ‘연결 확인’에서 안내합니다. ‘연결 확인’은 계정 이름과 방식·주소만 보여 주고 토큰 값은 보여 주지 않습니다.
+  - `INSTAGRAM_USER_ID`(인스타 비즈니스 계정 ID, 숫자, 비밀 아님): 있으면 `/me` 없이 그 ID로 확인·게시합니다. Facebook 토큰이면 꼭 필요하고, 없으면 ‘연결 확인’에서 안내합니다. ‘연결 확인’은 계정 이름과 방식·주소만 보여 주고 토큰 값은 보여 주지 않습니다. 결과는 버튼 바로 아래에 크게 보입니다: 성공은 초록 상자 ‘✅ 연결 성공’(계정·방식), 실패는 빨강 상자 ‘❌ 연결 실패’(이유)와 확인 시각(013).
   - `INSTAGRAM_POST_PASSWORD`: 게시 비밀번호. 앱 주소를 아는 다른 사람이 게시하지 못하게 막습니다. 없으면 게시 요청을 모두 거절합니다.
   - `BLOB_READ_WRITE_TOKEN`: Vercel Blob(공개 저장소). 인스타그램은 공개 주소에 있는 사진만 가져가므로, 사진을 잠깐 올렸다가 게시가 끝나면 지웁니다(실패해도 지움, 남은 파일은 하루 뒤 다음 업로드 때 정리).
 - 계정 ID는 토큰으로 조회합니다. 조회가 맞지 않으면 `INSTAGRAM_USER_ID`로 직접 지정할 수 있습니다.
