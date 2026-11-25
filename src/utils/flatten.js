@@ -185,6 +185,9 @@ export function flattenShadows(img,regions,opts={}) {
     const before=copyImage(out),done=flattenOne(out,mask,o);
     if(!done){results.push({region:r,ok:true,skipped:true,reasons:['주변 옷 색을 찾지 못해 건너뜀']});continue;}
     const check=inspectFix(before,out,mask,done.box);
+    // 단추 검사: 밝기만 바꾸므로 단추가 새로 생길 수는 없고, 테두리가 뚜렷한 단추가 흐려졌는지만 봅니다.
+    // (약한 후보는 구김 그림자 덩어리도 섞여 있어, 그림자를 펴면 "흐려짐"으로 잘못 걸림. 색이 다른 단추는 색을 안 바꾸므로 남음)
+    if(check.ok&&o.buttons!==false){const lost=buttonsLost(before,out,findButtons(before,done.box,{strong:true}));if(lost){check.ok=false;check.reasons=[...check.reasons,`단추가 흐려짐(${lost}개)`];}}
     if(!check.ok)restore(out,before,done.box,done.weight);
     results.push({region:r,method:'flatten',...check,reverted:!check.ok});
   }
@@ -220,6 +223,14 @@ export function mergeSpots(orig,inpainted,regions,opts={}) {
       weight[p]=v;
     }
     const check=inspectFix(before,out,mask,box,{...opts,hfRatio:opts.hfRatio??.6});
+    if(check.ok&&opts.buttons!==false){
+      const side2=Math.ceil(Math.max(width,height)*.03),bb={x:Math.max(0,box.x-side2),y:Math.max(0,box.y-side2),x1:Math.min(width-1,box.x1+side2),y1:Math.min(height-1,box.y1+side2)};
+      // 표시한 상자 안에 중심이 있는 '단추 후보'는 지우려는 얼룩 자체(둥근 얼룩)로 봅니다. 진짜 단추에 닿는 표시는 처음부터 IOPaint로 보내지 않습니다(nearButtons).
+      const inBox=bt=>bt.x>=r.x0/1000*width&&bt.x<=r.x1/1000*width&&bt.y>=r.y0/1000*height&&bt.y<=r.y1/1000*height;
+      // 새로 생긴 단추(LaMa가 주변 단추를 복제)는 상자 안이어도 셉니다.
+      const was=findButtons(before,bb),lost=buttonsLost(before,out,was.filter(bt=>!inBox(bt))),now=findButtons(out,bb),added=now.filter(p=>!was.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<=Math.max(p.r,q.r)*1.5)).length;
+      if(lost||added){check.ok=false;check.reasons=[...check.reasons,`단추 수가 바뀜(없어짐 ${lost}·생김 ${added})`];}
+    }
     if(!check.ok)restore(out,before,box,weight);
     results.push({region:r,method:'spot',...check,reverted:!check.ok});
   }
@@ -234,4 +245,86 @@ export function garmentShare(img,r,lab) {
   let n=0,near=0;
   for(let p=0;p<inner.length;p++){if(!outer[p]||inner[p]||data[p*4+3]<200)continue;n++;const [,a,b]=rgbToLab(data[p*4],data[p*4+1],data[p*4+2]);if(Math.hypot(a-lab.a,b-lab.b)<=tol)near++;}
   return n?near/n:0;
+}
+
+// ---- 단추·부자재 보호(013-B) ----
+// 사장님 2차 시험: 흰 가디건에서 지우기 과정 중 단추가 사라지고(정면 확대), 없던 단추가 희미하게 생겼습니다(정면 하단, LaMa가 주변 단추를 복제).
+// 단추 후보 = 옷 위의 '둥근 테두리'. 밝기 경계마다 기울기 방향(안·밖 두 쪽)으로 반지름 r만큼 떨어진 곳에 표를 던져,
+// 둘레의 많은 부분이 같은 중심을 가리키면 원(단추)으로 봅니다(허프 원 찾기). 색이 옷과 같은 단추(분홍 니트의 분홍 단추)도 테두리로 찾습니다.
+//  - 반지름: 사진 긴 변의 0.6~2.3%(니트 코보다 크고 단추 크기 범위). 계산은 긴 변 800px로 줄여서 합니다.
+export const BUTTON={rMin:.006,rMax:.023,ring:.6,ringWeak:.35,smooth:.8,dE:6,edge:6};
+export function findButtons(img,box=null,opts={}) {
+  const o={...BUTTON,...opts},{width,height}=img,side=Math.max(width,height),s=Math.min(1,(opts.maxSide||1600)/side);
+  const b=box||{x:0,y:0,x1:width-1,y1:height-1};
+  // 줄인 밝기(투명은 제외)
+  const bw=Math.max(3,Math.round((b.x1-b.x+1)*s)),bh=Math.max(3,Math.round((b.y1-b.y+1)*s)),n=bw*bh,L=new Float32Array(n),A=new Float32Array(n),B=new Float32Array(n),al=new Uint8Array(n);
+  for(let y=0;y<bh;y++)for(let x=0;x<bw;x++){
+    const sx=Math.min(width-1,Math.round(b.x+(x+.5)/s-.5)),sy=Math.min(height-1,Math.round(b.y+(y+.5)/s-.5)),i=(sy*width+sx)*4;
+    const lab=rgbToLab(img.data[i],img.data[i+1],img.data[i+2]);L[y*bw+x]=lab[0];A[y*bw+x]=lab[1];B[y*bw+x]=lab[2];al[y*bw+x]=img.data[i+3]>=200?1:0;
+  }
+  const Ls=blur(L,bw,bh,1),gx=new Float32Array(n),gy=new Float32Array(n),edges=[];
+  for(let y=1;y<bh-1;y++)for(let x=1;x<bw-1;x++){
+    const p=y*bw+x;if(!al[p])continue;
+    const X=(Ls[p-bw+1]+2*Ls[p+1]+Ls[p+bw+1])-(Ls[p-bw-1]+2*Ls[p-1]+Ls[p+bw-1]),Y=(Ls[p+bw-1]+2*Ls[p+bw]+Ls[p+bw+1])-(Ls[p-bw-1]+2*Ls[p-bw]+Ls[p-bw+1]);
+    const m=Math.hypot(X,Y)/4;if(m>o.edge)edges.push(x,y,X/(4*m),Y/(4*m));
+  }
+  const rMin=Math.max(3,Math.round(side*o.rMin*s)),rMax=Math.max(rMin+1,Math.round(side*o.rMax*s)),acc=new Float32Array(n),cand=[];
+  const isEdge=new Uint8Array(n),ex=new Float32Array(n),ey=new Float32Array(n);
+  for(let k=0;k<edges.length;k+=4){const p=edges[k+1]*bw+edges[k];isEdge[p]=1;ex[p]=edges[k+2];ey[p]=edges[k+3];}
+  for(let r=rMin;r<=rMax;r++){
+    acc.fill(0);
+    for(let k=0;k<edges.length;k+=4)for(const sg of [1,-1]){const cx=Math.round(edges[k]+sg*r*edges[k+2]),cy=Math.round(edges[k+1]+sg*r*edges[k+3]);if(cx>=0&&cy>=0&&cx<bw&&cy<bh)acc[cy*bw+cx]++;}
+    const sum=blur(acc,bw,bh,1),need=Math.PI*r*.5/9;   // 3×3 정도로 모은 표(반올림 흩어짐 보정). 둘레의 절반쯤이 가리키면 후보
+    for(let y=r;y<bh-r;y++)for(let x=r;x<bw-r;x++){
+      const p=y*bw+x;if(!al[p]||sum[p]<need)continue;
+      let peak=true;for(let dy=-2;dy<=2&&peak;dy++)for(let dx=-2;dx<=2;dx++)if((dx||dy)&&sum[p+dy*bw+dx]>sum[p]){peak=false;break;}
+      if(peak)cand.push({x,y,r});
+    }
+  }
+  // 확인(둘 중 하나):
+  //  ① 둘레 24방향 중 60% 이상에 둥근 테두리 (흰 옷의 흰 단추처럼 색 차이가 없어도 테두리가 뚜렷한 단추)
+  //  ② 둘레 35% 이상 + 안쪽이 바깥 고리보다 매끈(결 80% 미만) + 안·밖 평균 색 차이 ΔE 6 이상
+  //     (실제 분홍 니트의 분홍 단추: 테두리 0.38~0.58, 안쪽 채도 36~41 vs 니트 28~31)
+  const found=[],dirs=24;
+  const stat=(cx,cy,r0,r1)=>{let sl=0,sa=0,sb=0,sq=0,c=0;for(let y=Math.floor(cy-r1);y<=cy+r1;y++)for(let x=Math.floor(cx-r1);x<=cx+r1;x++){if(x<0||y<0||x>=bw||y>=bh)continue;const d=Math.hypot(x-cx,y-cy);if(d<r0||d>r1)continue;const p=y*bw+x;if(!al[p])continue;const v=L[p]-Ls[p];sq+=v*v;sl+=L[p];sa+=A[p];sb+=B[p];c++;}return c?{L:sl/c,a:sa/c,b:sb/c,tex:Math.sqrt(sq/c)}:null;};
+  for(const c of cand){
+    let hit=0;
+    for(let k=0;k<dirs;k++){
+      const t=2*Math.PI*k/dirs,ux=Math.cos(t),uy=Math.sin(t);let ok=false;
+      for(const dr of [-1,0,1]){const x=Math.round(c.x+(c.r+dr)*ux),y=Math.round(c.y+(c.r+dr)*uy);if(x<0||y<0||x>=bw||y>=bh)continue;const p=y*bw+x;if(isEdge[p]&&Math.abs(ex[p]*ux+ey[p]*uy)>.75){ok=true;break;}}
+      if(ok)hit++;
+    }
+    const ring=hit/dirs;if(ring<o.ringWeak)continue;
+    const inner=stat(c.x,c.y,0,c.r*.6),outer=stat(c.x,c.y,c.r*1.4,c.r*2.2);if(!inner||!outer)continue;
+    const dE=Math.hypot(inner.L-outer.L,inner.a-outer.a,inner.b-outer.b),smooth=inner.tex<outer.tex*o.smooth;
+    if(o.debug)o.debug.push({x:b.x+(c.x+.5)/s,y:b.y+(c.y+.5)/s,r:c.r/s,ring,dE,smooth});
+    if(!(ring>=o.ring||(smooth&&dE>=o.dE)))continue;
+    found.push({...c,sc:ring});
+  }
+  found.sort((p,q)=>q.sc-p.sc);const keep=[];
+  for(const f of found)if(!keep.some(k=>Math.hypot(k.x-f.x,k.y-f.y)<Math.max(k.r,f.r)))keep.push(f);
+  return keep.filter(k=>!o.strong||k.sc>=o.ring).map(k=>({x:b.x+(k.x+.5)/s-.5,y:b.y+(k.y+.5)/s-.5,r:k.r/s,score:Math.round(k.sc*100)/100}));
+}
+// 단추 둘레 보호 마스크(단추 반지름 + 여유)
+export function buttonGuard(width,height,buttons,margin=null) {
+  const m=new Uint8Array(width*height),side=Math.max(width,height),pad=margin??Math.max(4,side*.006);
+  for(const bt of buttons){const R=bt.r+pad;for(let y=Math.max(0,Math.floor(bt.y-R));y<=Math.min(height-1,Math.ceil(bt.y+R));y++)for(let x=Math.max(0,Math.floor(bt.x-R));x<=Math.min(width-1,Math.ceil(bt.x+R));x++)if((x-bt.x)**2+(y-bt.y)**2<=R*R)m[y*width+x]=1;}
+  return m;
+}
+// 전·후 단추 비교: 사라졌거나 새로 생긴 단추 수. strong: 테두리가 뚜렷한 후보만(약한 후보는 밝기만 바꿔도 흔들려서 구김 펴기 검사에는 쓰지 않음)
+export function buttonChange(before,after,box,{strong=false}={}) {
+  const a=findButtons(before,box,{strong}),b=findButtons(after,box,{strong}),match=(p,list)=>list.some(q=>Math.hypot(p.x-q.x,p.y-q.y)<=Math.max(p.r,q.r)*1.5);
+  return {before:a.length,after:b.length,lost:a.filter(p=>!match(p,b)).length,added:b.filter(p=>!match(p,a)).length};
+}
+// 단추가 남아 있는지: 전에 찾은 단추마다 안쪽·바깥 고리의 평균 색 차이(ΔE)가 전의 60% 이상 남았는지(다시 찾기보다 안정적).
+export function buttonsLost(before,after,buttons) {
+  const {width,height}=before;
+  const meanLab=(img,bt,r0,r1)=>{let l=0,a=0,b=0,c=0;for(let y=Math.max(0,Math.floor(bt.y-r1));y<=Math.min(height-1,bt.y+r1);y++)for(let x=Math.max(0,Math.floor(bt.x-r1));x<=Math.min(width-1,bt.x+r1);x++){const d=Math.hypot(x-bt.x,y-bt.y);if(d<r0||d>r1)continue;const i=(y*width+x)*4;if(img.data[i+3]<200)continue;const v=rgbToLab(img.data[i],img.data[i+1],img.data[i+2]);l+=v[0];a+=v[1];b+=v[2];c++;}return c?[l/c,a/c,b/c]:null;};
+  const dE=(img,bt)=>{const i=meanLab(img,bt,0,bt.r*.6),o=meanLab(img,bt,bt.r*1.4,bt.r*2.2);return i&&o?Math.hypot(i[0]-o[0],i[1]-o[1],i[2]-o[2]):0;};
+  return buttons.filter(bt=>{const d0=dE(before,bt);return d0>=3&&dE(after,bt)<d0*.6;}).length;
+}
+// 얼룩 표시 중 단추(후보) 둘레에 닿는 것: IOPaint(LaMa)는 주변 단추를 지우거나 복제하므로 보내지 않음
+export function nearButtons(img,regions,buttons) {
+  const {width,height}=img,guard=buttonGuard(width,height,buttons);
+  return regions.map(r=>{const m=regionMask(width,height,r);for(let p=0;p<m.length;p++)if(m[p]&&guard[p])return true;return false;});
 }

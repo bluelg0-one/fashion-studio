@@ -12,7 +12,7 @@ import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
 import {getIopaintUrl, setIopaintUrl, checkIopaint, inspectImage, inspectTile, markedPreview, inpaint, removeBackground, checkBirefnet, DEFECT_LABEL} from '../utils/iopaint.js';
 import {DEFECT_LEVELS, DEFAULT_DEFECT_LEVEL, garmentBox, tileGrid, mapFromTile, mergeRegions} from '../utils/defectTiles.js';
-import {planFixes, flattenShadows, fillTransparent, mergeSpots, garmentShare, GARMENT_SHARE_MIN} from '../utils/flatten.js';
+import {planFixes, flattenShadows, fillTransparent, mergeSpots, garmentShare, GARMENT_SHARE_MIN, findButtons, nearButtons} from '../utils/flatten.js';
 import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from '../utils/productStore.js';
 import DrivePanel from './DrivePanel.jsx';
 import DriveImportPanel from './DriveImportPanel.jsx';
@@ -468,6 +468,11 @@ export default function AutoStudio() {
       if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
       else if(!iopaintOk)skipped.push({region:r,reason:'IOPaint가 꺼져 있어 얼룩은 건너뜀',review:true});
       else spots.push(r);
+    }
+    // 단추·부자재 보호(013-B): 단추(후보) 둘레에 닿는 얼룩은 IOPaint로 보내지 않습니다(LaMa가 단추를 지우거나 복제함). 사장님이 직접 표시한 곳은 보냄(뒤 검사는 함).
+    if(spots.length){
+      const near=nearButtons(img,spots,findButtons(img));
+      for(let i=spots.length-1;i>=0;i--)if(near[i]&&!spots[i].manual){skipped.push({region:spots[i],reason:'단추·부자재 근처라 IOPaint로 보내지 않음',review:true});spots.splice(i,1);}
     }
     let {image,results}=flattenShadows(img,plan.flatten);
     if(spots.length){

@@ -97,3 +97,43 @@ test('a good spot fix (same colour, texture kept) is kept; transparent area is f
   assert.ok(garmentShare(img,box(440,20,560,110,'stain'),ref)<.5,'마네킹 목 위 표시는 주변이 옷 색이 아님');
   assert.ok(garmentShare(dirty,box(400,400,520,520,'stain'),ref)>.8,'옷 위 얼룩은 주변이 옷 색');
 });
+
+// ---- 013-B 단추·부자재 보호 ----
+import {findButtons, nearButtons, buttonsLost} from '../src/utils/flatten.js';
+// 600×600 흰 니트(코 무늬) + 세로 단추 3개(지름 22px, 테두리가 약간 어둡고 안쪽은 매끈, 아이보리빛)
+function cardigan({buttons=[[300,180],[300,300],[300,420]],shadow=0}={}) {
+  const S2=600,data=new Uint8ClampedArray(S2*S2*4);
+  for(let y=0;y<S2;y++)for(let x=0;x<S2;x++){
+    const i=(y*S2+x)*4;if(x<40||x>=560){data[i+3]=0;continue;}
+    const stitch=((x>>1)+(y>>2))%2?9:-9,d=Math.abs((y-360)-(x-200)*.5)/10,sh=shadow*Math.exp(-d*d);
+    let rgb=[236+stitch-sh,232+stitch-sh,224+stitch-sh];
+    for(const [bx,by] of buttons){const r=Math.hypot(x-bx,y-by);if(r<=11){rgb=r>8.5?[170,160,140]:[222,212,190];}}
+    data[i]=rgb[0];data[i+1]=rgb[1];data[i+2]=rgb[2];data[i+3]=255;
+  }
+  return {width:S2,height:S2,data};
+}
+const near=(list,x,y)=>list.some(b=>Math.hypot(b.x-x,b.y-y)<8);
+test('013-B: buttons on a knit are found (not the knit stitches)',()=>{
+  const img=cardigan(),b=findButtons(img);
+  for(const [x,y] of [[300,180],[300,300],[300,420]])assert.ok(near(b,x,y),`단추 ${x},${y} 못 찾음: ${JSON.stringify(b)}`);
+  assert.ok(b.length<=5,`니트 코를 단추로 잘못 찾음: ${b.length}`);
+  assert.ok(findButtons(cardigan({buttons:[]})).length<=1,'단추 없는 니트');
+});
+test('013-B: a stain mark touching a button is not sent to IOPaint',()=>{
+  const img=cardigan(),b=findButtons(img);
+  const flags=nearButtons(img,[{type:'stain',x0:480,y0:470,x1:530,y1:520},{type:'stain',x0:150,y0:150,x1:190,y1:190}],b);
+  assert.deepEqual(flags,[true,false]);
+});
+test('013-B: IOPaint result that erases a button or makes a ghost button is reverted',()=>{
+  const img=cardigan(),noMid=cardigan({buttons:[[300,180],[300,420]]}),ghost=cardigan({buttons:[[300,180],[300,300],[300,420],[360,300]]});
+  const r={type:'stain',x0:505,y0:470,x1:560,y1:530};   // 가운데 단추 바로 오른쪽 얼룩(마스크가 단추에 걸침) → LaMa가 단추를 지움
+  const lost=mergeSpots(img,noMid,[r]);assert.equal(lost.results[0].reverted,true);assert.match(lost.results[0].reasons.join(),/단추/);
+  assert.deepEqual([...lost.image.data],[...img.data]);
+  const r2={type:'stain',x0:575,y0:470,x1:630,y1:530};  // 빈 니트 위 얼룩 → LaMa가 단추를 복제
+  const g=mergeSpots(img,ghost,[r2]);assert.equal(g.results[0].reverted,true);assert.match(g.results[0].reasons.join(),/생김 1/);
+});
+test('013-B: flattening a wrinkle across the buttons keeps every button',()=>{
+  const img=cardigan({shadow:20}),{image,results}=flattenShadows(img,[{type:'wrinkle',x0:350,y0:450,x1:650,y1:750}]);
+  assert.equal(results[0].reverted,false,results[0].reasons?.join());
+  assert.equal(buttonsLost(img,image,findButtons(img)),0);
+});
