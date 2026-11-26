@@ -60,3 +60,9 @@ test('helpers: size table empty, copy needed, review cuts, channels saved automa
  assert.ok(!AUTO_CHANNELS.includes('shopee'));
  assert.deepEqual(fileNames(true),{png:'상세페이지_초안.png',html:'상세페이지_초안.html',zip:'채널별_묶음.zip'});
 });
+import {isDraft as draftOf} from '../src/utils/autoSave.js';
+test('014-2: a product left for owner review by QA is saved as a draft until approved',()=>{
+ assert.equal(draftOf({slots:{},qa:{status:'fail',owner:true}}),true);
+ assert.equal(draftOf({slots:{},qa:{status:'fail',owner:true},detailApproved:true}),false);
+ assert.equal(draftOf({slots:{},qa:{status:'pass',owner:false}}),false);
+});

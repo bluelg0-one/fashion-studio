@@ -110,6 +110,8 @@ export default function AutoFixPanel({products,busy,setStep,freeEngines,runAutoJ
         {sum.reviews.length>0&&<details open className="review-list"><summary>⚠ 확인 필요 {sum.reviews.length}컷 (사장님 확인 목록)</summary><table className="cost-table"><thead><tr><th>상품</th><th>컷</th><th>이유</th><th/></tr></thead><tbody>
           {sum.reviews.map(r=><tr key={r.productId+r.slotId}><td>{r.product}</td><td>{r.label}</td><td>{r.flags.join(' · ')}</td><td><button type="button" className="subtle" disabled={busy} onClick={()=>openProduct(r.productId)}>상품 열기</button></td></tr>)}
         </tbody></table></details>}
+        {sum.qa?.length>0&&<details open className="review-list" aria-label="자동 점검 결과"><summary>자동 점검 · 통과 {sum.qa.filter(q=>q.status==='pass').length} · 보류 {sum.qa.filter(q=>q.status==='hold').length} · 불합격 {sum.qa.filter(q=>q.status==='fail').length}{sum.qa.some(q=>q.owner)?` · 사장님 확인 필요 ${sum.qa.filter(q=>q.owner).length}개`:''}</summary><table className="cost-table"><thead><tr><th>상품</th><th>결과</th><th>다시 편집</th><th>이유</th><th/></tr></thead>
+          <tbody>{sum.qa.map(q=><tr key={q.productId} data-qa={q.status}><td>{q.product}</td><td>{{pass:'✅ 통과',hold:'⚠ 보류',fail:'❌ 불합격'}[q.status]}{q.owner?' · 사장님 확인 필요':''}</td><td>{q.attempts}회</td><td>{q.reasons.join(' · ')||'—'}</td><td><button type="button" className="subtle" disabled={busy} onClick={()=>openProduct(q.productId)}>상품 열기</button></td></tr>)}</tbody></table></details>}
         {sum.failures.length>0&&<details><summary>실패 {sum.failures.length}컷</summary><ul>{sum.failures.map(r=><li key={r.productId+r.slotId}>{r.product} · {r.label} — {r.error}</li>)}</ul></details>}
         <button type="button" className="subtle" disabled={busy} onClick={discard}>기록 닫기</button>
       </div>}

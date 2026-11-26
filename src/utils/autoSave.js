@@ -10,7 +10,8 @@ const check=signal=>{if(signal?.aborted)throw Object.assign(new Error('중단했
 
 // ‘확인 필요’ 컷이 있고(자동 보정 표시) 사장님이 아직 확인을 누르지 않은 상품 = 초안
 export function reviewCuts(data) {return Object.values(data?.slots||{}).filter(s=>s?.source&&s.auto?.flags?.length).map(s=>({slotId:s.id,label:s.label,flags:s.auto.flags}));}
-export const isDraft=data=>reviewCuts(data).length>0&&!data?.detailApproved;
+// 자동 점검(014-2)이 '사장님 확인 필요'로 남긴 상품도 초안으로 저장합니다.
+export const isDraft=data=>(reviewCuts(data).length>0||Boolean(data?.qa?.owner))&&!data?.detailApproved;
 export function sizeMissing(rows) {return !rows?.length||rows.every(r=>Object.entries(r||{}).every(([k,v])=>k==='id'||!String(v??'').trim()));}
 export const needsCopy=texts=>!String(texts?.headline||'').trim()||!String(texts?.description||'').trim();
 export function fileNames(draft) {const d=draft?'_초안':'';return {png:`상세페이지${d}.png`,html:`상세페이지${d}.html`,zip:'채널별_묶음.zip'};}

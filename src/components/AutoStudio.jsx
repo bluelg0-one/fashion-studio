@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
+import {checkProduct, retryPlan, qaCsv, QA_STATUS_LABEL} from '../utils/qaCheck.js';
 import {cutoutBounds, planDetails, garmentFrame, detailSlotId, detailIds, DETAIL_LABELS, DETAIL_MIN_SIDE} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
@@ -86,7 +87,7 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null),dirty=useRef(false),latest=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null);
+  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null),[qa,setQa]=useState(null);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef(''),costProduct=useRef('');
   // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
   const logCost=row=>{addCost(row);};
@@ -100,7 +101,7 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport,qa});
   latest.current={id:productId,name:productName,data:snapshot()};
   async function applyProduct(product) {
     const d=product?.data||{};
@@ -109,7 +110,7 @@ export default function AutoStudio() {
     const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived===true&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch({...DEFAULT_RETOUCH,...d.retouch}));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
-    setDetailReport(d.detailReport||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
+    setDetailReport(d.detailReport||null);setQa(d.qa||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   // 인자 없이 부르면 ‘화면의 최신 상태’를 저장하되, 저장 안 된 편집이 있을 때만 저장합니다.
@@ -140,7 +141,7 @@ export default function AutoStudio() {
     dirty.current=true;setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport,qa]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -332,6 +333,19 @@ export default function AutoStudio() {
       setStep(`완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.${!onlyId&&!status.openai?' (OpenAI 키가 없어 문구 자동 작성은 건너뛰었습니다.)':''}`);
     });
   }
+  // ---- 자동 점검(014-2): 검증 기준서의 자동 측정 항목(qaCheck.js) ----
+  async function qaOf(data) {
+    const load=async slot=>{if(!slot?.cutout)return null;const e=entryOf(slot)||{};return {matte:e.matte?await pixelsOf(e.matte):null,stage1:e.stage1?await pixelsOf(e.stage1):null,final:await pixelsOf(slot.cutout)};};
+    return checkProduct({front:await load(data.slots?.hero),back:await load(data.slots?.back),details:data.detailReport||null});
+  }
+  async function runQa() {
+    await task(async()=>{
+      setStep('자동 점검 중 (브라우저 계산, 무료)');
+      const r=await qaOf({slots,detailReport});
+      setQa({status:r.status,reasons:r.reasons,checks:r.checks,attempts:0,owner:r.status!=='pass',at:Date.now(),manual:true});
+      setStep(`자동 점검: ${QA_STATUS_LABEL[r.status]}${r.reasons.length?` · ${r.reasons.join(' · ')}`:''}`);
+    });
+  }
   // ---- 옷걸이 v2 디테일컷(014): 보정이 끝난 정면·후면(지금 버전의 2차, 없으면 1차)에서 잘라 냅니다 ----
   // 사장님 결정: 실제 사진만 씀(생성 없음). 원본 기준 긴 변 800px이 안 나오면 키우지 않고 빼고 '해상도 부족'으로 표시합니다.
   // ai: 확신 없는 디테일(단추 없음·소매가 붙음 등)만 Claude 1회로 상자를 받음(선택·유료, 같은 사진은 다시 부르지 않음).
@@ -377,16 +391,16 @@ export default function AutoStudio() {
     });
   }
   // ---- 색감 통일 (브라우저 계산, API 비용 없음) ----
-  async function matchedCutout(src,lab) {
+  async function matchedCutout(src,lab,strength=matchStrength/100) {
     const c=await imageCanvas(src),ctx=c.getContext('2d'),pixels=ctx.getImageData(0,0,c.width,c.height);
-    const shift=colorShift(dominantLab(pixels),lab,matchStrength/100);
+    const shift=colorShift(dominantLab(pixels),lab,strength);
     applyShift(pixels,shift);ctx.putImageData(pixels,0,0);
     return {image:c.toDataURL('image/png'),shift};
   }
   // 1차·2차를 같은 양만큼 옮겨 새 버전으로
-  async function matchedEntry(slot,lab) {
+  async function matchedEntry(slot,lab,strength) {
     const e=entryOf(slot)||{stage1:slot.cutout};
-    const stage1=e.stage1?(await matchedCutout(e.stage1,lab)).image:null,stage2=e.stage2?(await matchedCutout(e.stage2,lab)).image:null;
+    const stage1=e.stage1?(await matchedCutout(e.stage1,lab,strength)).image:null,stage2=e.stage2?(await matchedCutout(e.stage2,lab,strength)).image:null;
     return withEntry(slot,{matte:e.matte||null,stage1,stage2});
   }
   // 컷의 단계(1차·2차·최종)에서 고른 옷 색감을 기준으로. stage=null이면 해제.
@@ -519,11 +533,13 @@ export default function AutoStudio() {
   // (예전 방식: 넓은 구김을 작은 상자로 나눠 LaMa로 지움 → 실제 니트에서 회색 얼룩·후드 끈 지워짐, 보고서 013)
   // closeup(013-C): 확대·디테일 컷은 LaMa에 보내는 상자가 픽셀로 넓어 결 대신 회색을 채우고(원단 디테일의 단추 사이 회색 얼룩), 단추 찾기도
   // 크기 기준이 맞지 않습니다. 그래서 확대 컷의 자동 표시 얼룩은 IOPaint로 보내지 않고 '확인 필요'로 남깁니다(구김 펴기는 함, 직접 표시는 보냄).
-  async function fixRegions(input,regions,{iopaintOk=true,closeup=false}={}) {
+  // spots=false(014-2 다시 편집): 얼룩은 IOPaint로 보내지 않고 구김 그림자 펴기만 합니다.
+  async function fixRegions(input,regions,{iopaintOk=true,closeup=false,spots:allowSpots=true}={}) {
     const img=await pixelsOf(input),plan=planFixes(regions),spots=[],skipped=[...plan.skipped];
     let lab=null;try{lab=dominantLab(img);}catch{}
     for(const r of plan.spot){
-      if(closeup&&!r.manual)skipped.push({region:r,reason:'확대 컷은 얼룩을 IOPaint로 자동 지우지 않음',review:true});
+      if(!allowSpots)skipped.push({region:r,reason:'다시 편집: 얼룩 지우기 없이 그림자 펴기만',review:false});
+      else if(closeup&&!r.manual)skipped.push({region:r,reason:'확대 컷은 얼룩을 IOPaint로 자동 지우지 않음',review:true});
       else if(!r.manual&&lab&&garmentShare(img,r,lab)<GARMENT_SHARE_MIN)skipped.push({region:r,reason:'마네킹·다른 색 부분 위로 보여 건너뜀',review:false});
       else if(!iopaintOk)skipped.push({region:r,reason:'IOPaint가 꺼져 있어 얼룩은 건너뜀',review:true});
       else spots.push(r);
@@ -689,8 +705,10 @@ export default function AutoStudio() {
       const f=colorFlag(deltaE(dominantLab(await pixelsOf(image)),lab));
       return {slot:withEntry(slot,{matte:e.matte||null,stage1:image,stage2:null}),flags:f?[f]:[]};
     },
-    stage2:async(slot,{paid,product})=>{
+    // mode(014-2 다시 편집): 'gentle' = 같은 1차에서 찾은 곳(저장된 결과 재사용, 추가 비용 없음) 중 구김 그림자 펴기만 · 'skip' = 2차 없이 1차를 최종으로
+    stage2:async(slot,{paid,product,mode=null})=>{
       const e=entryOf(slot)||{stage1:slot.cutout},input=e.stage1||slot.cutout,keep=r=>({...withEntry(slot,{matte:e.matte||null,stage1:input,stage2:r}),defects:null});
+      if(mode==='skip')return {slot:keep(null),flags:['다시 편집: 2차 없이 1차를 최종으로']};
       if(paid){
         // 유료 대체: Photoroom 다림질(옷 전체, Claude 호출 없음, 얼룩 AI는 쓰지 않음)
         const res=await api('retouch2',{image:input,options:{iron:true,stains:false}});
@@ -700,8 +718,8 @@ export default function AutoStudio() {
         return {slot:keep(c.toDataURL('image/png')),flags:['무료 엔진이 꺼져 유료(Photoroom 다림질)로 2차 보정 — 원본과 비교해 주세요'],cost:{paid:PHOTOROOM.perCall}};
       }
       // IOPaint가 꺼져 있으면 Claude를 부르기 전에 멈춥니다(대기).
-      const ok=await checkIopaint(iopUrl);setIop(ok);
-      if(!ok.ok)throw Object.assign(new Error('IOPaint에 연결할 수 없습니다.'),{offline:true});
+      // 'gentle'은 IOPaint를 쓰지 않으므로 연결을 확인하지 않습니다.
+      if(mode!=='gentle'){const ok=await checkIopaint(iopUrl);setIop(ok);if(!ok.ok)throw Object.assign(new Error('IOPaint에 연결할 수 없습니다.'),{offline:true});}
       const level='aggressive';let res;
       try {res=await findRegions(input,level);}
       catch(err){if(err.partial)logCost(claudeRow({feature:'defects',product:product.name,cut:slot.label,level,responses:err.partial,boxes:err.partial.reduce((a,r)=>a+r.regions.length,0)}));throw err;}
@@ -709,8 +727,9 @@ export default function AutoStudio() {
       const costs=res.responses.map(r=>claudeCost(r.model,r.usage)),cost={claude:costs.reduce((a,v)=>a+(v||0),0),claudeUnknown:costs.filter(v=>v===null).length};
       const f=regionsFlag(res.regions.length),flags=f?[f]:[];
       const chosen=res.regions.filter(r=>r.confidence>=.3);
-      if(!chosen.length)return {slot:{...slot,defects:null},flags,cost};
-      const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot)});
+      if(!chosen.length)return {slot:mode==='gentle'?keep(null):{...slot,defects:null},flags,cost};
+      const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot),spots:mode!=='gentle'});
+      if(mode==='gentle')return {slot:keep(fix.image),flags:[...flags,...fix.flags],cost};
       return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
     // 옷걸이 v2: 2차까지 끝난 정면·후면에서 디테일컷(014). 실패해도 컷 보정은 그대로 두고 보고서에만 남깁니다.
@@ -718,6 +737,25 @@ export default function AutoStudio() {
       const d=product.data;
       try {const r=await buildDetails(d.slots,d.garment||'long-top',{ai:Boolean(defectOpts.detailAI),product:product.name});return {product:{...product,data:{...d,slots:r.slots,detailReport:r.report}},cost:r.cost};}
       catch(e){return {product:{...product,data:{...d,detailReport:{items:[],skipped:[],error:String(e.message).slice(0,200),at:Date.now()}}}};}
+    }:null,
+    // 자동 점검(014-2, 브라우저 계산): 정면·후면의 누끼·1차·최종과 디테일 보고서로 통과/보류/불합격
+    qa:HANGER_V2?async(product,{attempt})=>{const r=await qaOf(product.data);return {...r,retry:retryPlan(r,attempt+1)};}:null,
+    // 다시 편집(최대 2회): retryPlan이 정한 설정으로 해당 단계만 다시 → 디테일컷 → 최종
+    retry:HANGER_V2?async(product,plan)=>{
+      let p=product;const cost={claude:0,claudeUnknown:0,paid:0},acc=c=>{if(c){cost.claude+=c.claude||0;cost.claudeUnknown+=c.claudeUnknown||0;cost.paid+=c.paid||0;}};
+      const put=(id,slot)=>{p={...p,data:{...p.data,slots:{...p.data.slots,[id]:slot}}};},ids={front:'hero',back:'back'};
+      for(const [c,patch] of Object.entries(plan.stage1)){
+        const id=ids[c],slot=p.data.slots[id];if(!slot?.source)continue;
+        const retouch={...(slot.retouch||{}),...patch},r=await autoSteps.stage1({...slot,retouch},{paid:false,product:p});acc(r.cost);put(id,{...r.slot,retouch});
+        if(id!=='hero'&&p.data.slots.hero?.stage1){const lab=await autoSteps.refLab(p.data.slots.hero),rc=await autoSteps.color(p.data.slots[id],lab);put(id,rc.slot);}
+        const r2=await autoSteps.stage2(p.data.slots[id],{paid:false,product:p});acc(r2.cost);put(id,r2.slot);
+      }
+      for(const [c,mode] of Object.entries(plan.stage2)){if(plan.stage1[c])continue;const id=ids[c];if(!p.data.slots[id]?.source)continue;const r=await autoSteps.stage2(p.data.slots[id],{paid:false,product:p,mode});acc(r.cost);put(id,r.slot);}
+      if(plan.color&&p.data.slots.back?.cutout&&p.data.slots.hero?.cutout){const lab=await autoSteps.refLab(p.data.slots.hero);put('back',await matchedEntry(p.data.slots.back,lab,1));}
+      const d=await autoSteps.details(p);p=d.product;acc(d.cost);
+      const hero=p.data.slots.hero,lab=hero?.stage1?await autoSteps.refLab(hero):null;
+      p=await autoSteps.final(p,lab?{slotId:'hero',label:hero.label,lab}:null);
+      return {product:p,cost};
     }:null,
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
@@ -740,7 +778,7 @@ export default function AutoStudio() {
       try {
         const r=await runAuto(job,{loadProduct:getProduct,saveProduct,steps:autoSteps,save,signal,
           checkFree:async kind=>(await freeEngines())[kind],onProgress:(j,t)=>{setStep(`자동 보정 · ${t}`);onProgress(j,t);}});
-        setStep(`자동 보정 ${job.finished?'완료':'멈춤'} · 완료 ${r.done} · 확인 필요 ${r.review} · 실패 ${r.failed}${r.skipped?` · 건너뜀 ${r.skipped}`:''} · Claude 약 $${r.claude.toFixed(2)}${r.paid?` · 유료 $${r.paid.toFixed(2)}`:''} · ${Math.round(r.elapsed/60)}분`);
+        setStep(`자동 보정 ${job.finished?'완료':'멈춤'} · 완료 ${r.done} · 확인 필요 ${r.review} · 실패 ${r.failed}${r.qa?.length?` · 자동 점검 통과 ${r.qa.filter(q=>q.status==='pass').length}/${r.qa.length}${r.qa.some(q=>q.owner)?` (사장님 확인 필요 ${r.qa.filter(q=>q.owner).length})`:''}`:''}${r.skipped?` · 건너뜀 ${r.skipped}`:''} · Claude 약 $${r.claude.toFixed(2)}${r.paid?` · 유료 $${r.paid.toFixed(2)}`:''} · ${Math.round(r.elapsed/60)}분`);
       } catch(e) {
         if(e.stopped){setStep(e.message);return;}
         throw new Error(`자동 보정이 멈췄습니다: ${e.message}${e.capReached?'':' ‘이어서 하기’를 누르면 남은 것부터 이어서 합니다.'}`);
@@ -777,7 +815,10 @@ export default function AutoStudio() {
       const photos=shopeePhotos(s,fit).filter(x=>x.cutout||x.stage1).map(x=>({slotId:x.id,label:x.label,image:x.image}));
       // 만든 재료의 지문 → 다시 저장해도 재료가 같으면 드라이브에 다시 올리지 않습니다(ZIP은 날짜 때문에 바이트가 매번 달라짐).
       const docFp=await printOf(JSON.stringify({b,theme,title})),zipFp=await printOf(JSON.stringify({name:product.name,channels:AUTO_CHANNELS,photos:channelPhotos(s,fit).map(x=>[x.id,x.image])}));
-      return {files:[{kind:'detail-png',name:n.png,blob:png,fp:'png-'+docFp},{kind:'detail-html',name:n.html,blob:html,fp:'html-'+docFp},{kind:'channels-zip',name:n.zip,blob:zip.blob,fp:'zip-'+zipFp}],photos,notes};
+      const files=[{kind:'detail-png',name:n.png,blob:png,fp:'png-'+docFp},{kind:'detail-html',name:n.html,blob:html,fp:'html-'+docFp},{kind:'channels-zip',name:n.zip,blob:zip.blob,fp:'zip-'+zipFp}];
+      // 자동 점검 결과(014-2) → 상품 폴더에 '점검보고서.csv'(영문 고정 열, 팀장이 읽음)
+      if(d.qa){const csv=qaCsv(product,d.qa);files.push({kind:'qa-csv',name:'점검보고서.csv',blob:new Blob([csv],{type:'text/csv;charset=utf-8'}),fp:'qa-'+await printOf(csv)});if(d.qa.owner)notes.push(`자동 점검 ${QA_STATUS_LABEL[d.qa.status]} — 사장님 확인 필요`);}
+      return {files,photos,notes};
     },
     store:async(product,{files,photos,draft})=>{
       await putOutputs({productId:product.id,name:product.name,draft,files,photos,at:Date.now()});
@@ -940,6 +981,16 @@ export default function AutoStudio() {
         </figure>)}</div>}
         {detailReport?.skipped?.length>0&&<ul className="detail-skipped" aria-label="빠진 디테일">{detailReport.skipped.map(x=><li key={x.id} className={x.review?'review-note':''}>{x.label}: {x.reason}</li>)}</ul>}
         {detailReport?.error&&<p className="review-note">디테일컷을 만들지 못했습니다: {detailReport.error}</p>}
+      </section>}
+      {HANGER_V2&&<section className="qa-panel" aria-label="자동 점검">
+        <h3>자동 점검 <small>검증 기준서(docs/qa/검증기준서.md)의 자동 측정 항목 · 자동 보정이 끝나면 저절로 하고, 보류·불합격이면 설정을 바꿔 최대 2회 다시 편집합니다</small></h3>
+        <span className="btn-with-cost"><button type="button" disabled={!slots.hero.cutout} onClick={runQa}>이 상품 자동 점검</button><Cost k="browser"/></span>
+        {qa&&<div className={`check-result ${qa.status==='pass'?'check-ok':'check-fail'}`} aria-label="자동 점검 결과">
+          <b>{{pass:'✅ 통과',hold:'⚠ 보류',fail:'❌ 불합격'}[qa.status]}</b>{qa.owner?' · 사장님 확인 필요':''}{qa.attempts?` · 다시 편집 ${qa.attempts}회`:''}
+          {qa.reasons?.length>0&&<ul>{qa.reasons.map((r,i)=><li key={i}>{r}</li>)}</ul>}
+          <details><summary>항목별 결과 ({qa.checks?.length||0})</summary><table className="cost-table"><thead><tr><th>컷</th><th>항목</th><th>결과</th><th>값</th><th>기준</th></tr></thead><tbody>
+            {(qa.checks||[]).map((c,i)=><tr key={i} data-check={c.key}><td>{c.cut}</td><td>{c.key}</td><td>{QA_STATUS_LABEL[c.status]}</td><td>{String(c.value)}</td><td>{c.limit}</td></tr>)}</tbody></table></details>
+        </div>}
       </section>}
 
       {!HANGER_V2&&<div className="add-cuts" aria-label="컷 추가">

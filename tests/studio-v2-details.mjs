@@ -17,7 +17,7 @@ try{
   return {front:draw(1.3,{wall:true,buttons:true}),frontCut:draw(1.3,{buttons:true}),back:draw(1.3,{wall:true,buttons:false}),backCut:draw(1.3,{buttons:false}),
    small:draw(.6,{wall:true,buttons:true}),smallCut:draw(.6,{buttons:true}),plain:draw(1.3,{wall:true,buttons:false,gap:false}),plainCut:draw(1.3,{buttons:false,gap:false})};});})();
  // 앱이 사진을 다시 저장해 보내므로(바이트가 달라짐) 누끼 모의 응답은 보낸 순서대로 줍니다.
- const queue=[];let details=0;
+ const queue=[];let details=0,qaStatus='';
  await page.route('**/api/studio?*',async r=>{const a=new URL(r.request().url()).searchParams.get('action');
   if(a==='retouch')return r.fulfill({json:{image:queue.shift()}});
   if(a==='details'){details++;return r.fulfill({json:{details:{placket:{present:false,note:'여밈 없음'},cuff:{present:true,x0:150,y0:780,x1:240,y1:860,note:'소매 끝'}},model:'claude-opus-5-5',usage:{input_tokens:1500,output_tokens:200}}});}
@@ -35,6 +35,13 @@ try{
  const sides=await page.locator('.detail-grid img').evaluateAll(n=>n.map(i=>Math.max(i.naturalWidth,i.naturalHeight)));
  assert.ok(sides.every(v=>v>=800),`긴 변 ${sides}`);
  assert.equal(details,0,'확신하면 Claude 안 부름');
+ // 자동 점검(무료): 결과 상자와 항목별 결과
+ await page.getByRole('button',{name:'이 상품 자동 점검'}).click();await idle();
+ const qaText=await page.getByLabel('자동 점검 결과').innerText();assert.match(qaText,/통과|보류|불합격/);
+ const keys=await page.locator('.qa-panel [data-check]').evaluateAll(n=>n.map(e=>e.dataset.check));
+ for(const k of ['area','edge','islands','color_shift','gray_blotch','buttons','hanger_hook','resolution_smartstore','color_pair','details_review'])assert.ok(keys.includes(k),`점검 항목 ${k}`);
+ const hook=await page.locator('.qa-panel [data-check="hanger_hook"]').first().textContent();assert.match(hook,/통과/,'고리 유지');
+ qaStatus=qaText.split('\n')[0];
  // 상세페이지(소프트 테마): 정면 → 후면 → 디테일 순서로 그려짐
  await page.getByRole('button',{name:'전체 미리보기'}).first().click();await idle();
  assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 소프트/);
@@ -60,5 +67,5 @@ try{
  await page.getByRole('button',{name:'디테일컷 자동 만들기'}).click();await idle();
  assert.equal((await shown()).length,0);assert.match(await page.getByLabel('빠진 디테일').innerText(),/넥라인: 해상도 부족/);
  assert.deepEqual(errors,[]);
- console.log(`PASS: hanger front/back → 5 detail crops (fabric from the back, long side ${Math.min(...sides)}px+), kept after reload with the include checkbox, unsure placket/cuff → review → Claude (mock) once and reused, small photo → 해상도 부족 (no upscaling).`);
+ console.log(`PASS: hanger front/back → 5 detail crops (fabric from the back, long side ${Math.min(...sides)}px+), kept after reload with the include checkbox, unsure placket/cuff → review → Claude (mock) once and reused, small photo → 해상도 부족 (no upscaling); QA panel shows all automatic checks (${qaStatus}, hook kept).`);
 }finally{await browser.close();}
