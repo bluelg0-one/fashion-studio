@@ -43,9 +43,9 @@ try{
  for(const k of ['area','edge','islands','color_shift','gray_blotch','buttons','hanger_hook','resolution_smartstore','color_pair','details_review'])assert.ok(keys.includes(k),`점검 항목 ${k}`);
  const hook=await page.locator('.qa-panel [data-check="hanger_hook"]').first().textContent();assert.match(hook,/통과/,'고리 유지');
  qaStatus=qaText.split('\n')[0];
- // 상세페이지(소프트 테마): 정면 → 후면 → 디테일 순서로 그려짐
+ // 상세페이지(두손 베이직 테마, 015부터 v2 기본): 정면 → 후면 → 디테일 순서로 그려짐
  await page.getByRole('button',{name:'전체 미리보기'}).first().click();await idle();
- assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 소프트/);
+ assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 두손 베이직/);
  const ph=await page.locator('.studio-preview img').first().evaluate(i=>i.naturalHeight);assert.ok(ph>3000,`상세페이지 높이 ${ph}`);
  // 상품 다시 열기 → 남아 있음
  await page.getByLabel('소매 끝 상세페이지에 포함').uncheck();await page.waitForTimeout(1200);
