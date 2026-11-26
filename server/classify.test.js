@@ -44,3 +44,14 @@ test('batched classification: earlier garments are sent as references R1.. and m
  assert.doesNotMatch(plain.calls[0].messages[0].content.at(-1).text,/Reference garments/,'참고 없으면 지시도 없음');
  await assert.rejects(classifyPhotos({photos:[{id:'a',image:img}],references:Array.from({length:25},(_,i)=>({id:'G'+i,image:img}))},{},plain),{status:400});
 });
+test('hanger v2 mode: front/back/unknown only, hanger instructions, duplicate fronts become review (mock)',async()=>{
+ const client=fake({garments:[{id:'g1',description:'아이보리 가디건'}],photos:[{index:1,garment:'g1',shot:'front',confidence:.95,review:false,note:''},{index:2,garment:'g1',shot:'front',confidence:.9,review:false,note:''},{index:3,garment:'g1',shot:'back',confidence:.9,review:false,note:''},{index:4,garment:'g1',shot:'unknown',confidence:.9,review:false,note:''}]});
+ const r=await classifyPhotos({mode:'hanger',photos:[1,2,3,4].map(i=>({id:'p'+i,image:img}))},{},client);
+ const t=client.calls[0].messages[0].content.at(-1).text;
+ assert.match(t,/on a hanger/);assert.match(t,/- back: the back of the garment on the hanger/);assert.doesNotMatch(t,/frontZoom|mannequin/);
+ const schema=JSON.stringify(client.calls[0].output_config.format);assert.match(schema,/"front","back","unknown"/);assert.doesNotMatch(schema,/frontZoom/);
+ assert.deepEqual(r.photos.map(p=>[p.id,p.shot,p.review]),[['p1','front',true],['p2','front',true],['p3','back',false],['p4','unknown',true]]);
+ assert.match(r.photos[0].note,/정면 사진이 2장/);
+ const old=fake({garments:[],photos:[]});await classifyPhotos({photos:[{id:'a',image:img}]},{},old);
+ assert.match(old.calls[0].messages[0].content.at(-1).text,/mannequin/,'mode 없으면 예전 지시');
+});

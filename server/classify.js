@@ -10,17 +10,20 @@ export const MAX_PHOTOS=24;
 export const MAX_REFERENCES=24;
 const MODEL='claude-opus-5-5';
 
-const Result=z.object({
+// 옷걸이 v2(014): 상품마다 옷걸이 정면·후면 2장만 찍습니다. 컷 종류는 정면/후면/모름 3가지만 받습니다(body.mode==='hanger').
+export const SHOTS_V2=['front','back','unknown'];
+const resultOf=shots=>z.object({
   garments:z.array(z.object({id:z.string(),description:z.string()})),
   photos:z.array(z.object({
     index:z.number().int(),
     garment:z.string(),
-    shot:z.enum(SHOTS),
+    shot:z.enum(shots),
     confidence:z.number(),
     review:z.boolean(),
     note:z.string(),
   })),
 });
+const Result=resultOf(SHOTS),ResultV2=resultOf(SHOTS_V2);
 
 const INSTRUCTIONS=`You sort product photos for a women's clothing shop. Photos were taken in a store, usually on a mannequin in front of a wall. Each photo is labeled "Photo N" before it.
 
@@ -37,6 +40,15 @@ const INSTRUCTIONS=`You sort product photos for a women's clothing shop. Photos 
 - detail: other close-up (button, pocket, label, zipper, cuff)
 - unknown: cannot tell
 3. confidence is 0 to 1. Set review=true when you are not sure: similar-colored garments that could be the same or different, fabric close-ups that could belong to several garments, or an unclear shot type. note: one short Korean sentence explaining the doubt, or "" when sure.
+Return every photo exactly once, using its number as index.`;
+const INSTRUCTIONS_V2=`You sort product photos for a women's clothing shop. Each garment was photographed on a hanger in front of a wall: one photo of the front and one of the back. Each photo is labeled "Photo N" before it.
+
+1. Group photos that show the same physical garment (same item, same color). Different colors of the same design are different garments. The front and the back of one garment belong together even though they look different (for example, buttons or a print only on the front). Give each garment an id like "g1" and a short Korean description (color + type, e.g. "카키 브이넥 긴팔티").
+2. Label every photo with one shot type:
+- front: the front of the garment on the hanger (the side with the neckline opening, placket, buttons or front print; the hanger hook faces the viewer as usual)
+- back: the back of the garment on the hanger (plain back, back neckline higher than the front, no placket)
+- unknown: anything else or you cannot tell (close-up, worn by a person, folded, side view, two garments in one photo)
+3. confidence is 0 to 1. Set review=true when you are not sure: front and back look almost the same (plain knit or T-shirt), similar-colored garments that could be the same or different, two photos of the same side, or an unclear photo. note: one short Korean sentence explaining the doubt, or "" when sure.
 Return every photo exactly once, using its number as index.`;
 // 앞 묶음에서 이미 찾은 옷(참고 사진)이 있을 때 덧붙이는 지시
 const REFERENCE_INSTRUCTIONS=`
@@ -67,14 +79,15 @@ export async function classifyPhotos(body,env=process.env,client) {
     if(!m||p.image.length>400000)throw fail('분류용 사진 형식이 올바르지 않습니다.',400);
     content.push({type:'text',text:`Photo ${i+1}`},{type:'image',source:{type:'base64',media_type:`image/${m[1]}`,data:m[2]}});
   });
-  content.push({type:'text',text:INSTRUCTIONS+(refs.length?REFERENCE_INSTRUCTIONS:'')});
+  const hanger=body.mode==='hanger';
+  content.push({type:'text',text:(hanger?INSTRUCTIONS_V2:INSTRUCTIONS)+(refs.length?REFERENCE_INSTRUCTIONS:'')});
   const anthropic=client||new Anthropic({apiKey:env.ANTHROPIC_API_KEY,timeout:120000,maxRetries:1});
   let response;
   try {
     response=await anthropic.beta.messages.parse({
       model:MODEL,
       max_tokens:16000,
-      output_config:{effort:'medium',format:betaZodOutputFormat(Result)},
+      output_config:{effort:'medium',format:betaZodOutputFormat(hanger?ResultV2:Result)},
       // 안전 분류기가 거절하면 서버가 다른 모델로 다시 시도합니다.
       betas:['server-side-fallback-2026-07-01'],
       fallbacks:'default',
@@ -98,6 +111,11 @@ export async function classifyPhotos(body,env=process.env,client) {
     id:photos[p.index-1].id,garment:refId(p.garment)||p.garment,...(refId(p.garment)?{reference:true}:{}),shot:p.shot,confidence:Math.max(0,Math.min(1,p.confidence)),
     review:p.review||p.confidence<.6||p.shot==='unknown',note:p.note,
   }));
+  // 옷걸이 v2: 같은 옷에 정면(또는 후면)이 2장 이상이면 그 사진들은 확인 필요로 둡니다(어느 쪽이 맞는지 사장님 확인).
+  if(hanger){
+    const seenShot=new Map();for(const p of list)if(p.shot!=='unknown'){const k=p.garment+'|'+p.shot;seenShot.set(k,(seenShot.get(k)||0)+1);}
+    for(const p of list)if(p.shot!=='unknown'&&seenShot.get(p.garment+'|'+p.shot)>1){p.review=true;p.note=p.note||`같은 옷에 ${p.shot==='front'?'정면':'후면'} 사진이 2장 이상입니다.`;}
+  }
   // 빠진 사진은 확인 필요로 돌려줍니다.
   photos.forEach((p,i)=>{if(!seen.has(i+1))list.push({id:p.id,garment:out.garments[0]?.id||'g1',shot:'unknown',confidence:0,review:true,note:'분류 결과에서 빠졌습니다.'});});
   return {garments:out.garments,photos:list,model:response.model,usage:usageOf(response)};
