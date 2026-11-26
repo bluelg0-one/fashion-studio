@@ -59,7 +59,8 @@ export default function DetailPageBuilder({ refinedImages = [] }) {
     if (!editPrompt.trim() || !detailContent) return
     setEditing(true)
     try {
-      const prompt = `현재 쇼핑몰 상세페이지를 수정해줘. 수정 요청: "${editPrompt}"\n현재 내용: ${JSON.stringify(detailContent, null, 2)}\n같은 JSON 구조로 수정된 내용만 답해줘.`
+      const { images, ...textContent } = detailContent // 사진 데이터(수 MB)는 문구 수정에 필요 없다
+      const prompt = `현재 쇼핑몰 상세페이지를 수정해줘. 수정 요청: "${editPrompt}"\n현재 내용: ${JSON.stringify(textContent, null, 2)}\n같은 JSON 구조로 수정된 내용만 답해줘.`
       const raw = await callClaude(prompt)
       try {
         const match = raw.match(/\{[\s\S]*\}/)

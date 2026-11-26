@@ -43,7 +43,8 @@ async function fashnRun(modelName, inputs) {
   const start = Date.now();
   while (Date.now() - start < POLL_TIMEOUT) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-    const status = await postJson("/api/fashn", { action: "status", id });
+    // 일시적인 확인 실패로 이미 비용을 낸 작업을 버리지 않도록 다음 확인으로 넘어간다
+    const status = await postJson("/api/fashn", { action: "status", id }).catch(() => ({}));
     if (status.status === "completed") {
       const outputUrl = status.output?.[0];
       if (!outputUrl) throw new Error("결과 이미지 없음");
@@ -157,13 +158,13 @@ function FinetunePanel({ file, onSave, onClose }) {
       let result = base;
       if (type === "bg") {
         setProcLabel("배경 제거 중... (1~3초)");
-        result = await fashnBgRemove(preview);
+        result = await fashnBgRemove(base);
       } else if (type === "mannequin") {
         setProcLabel("마네킹·봉 제거 중... (30~90초)");
-        result = await fashnMannequinRemove(preview);
+        result = await fashnMannequinRemove(base);
       } else if (type === "wrinkle") {
         setProcLabel("주름 펴기 중... (30~60초)");
-        result = await fashnWrinkleFix(preview);
+        result = await fashnWrinkleFix(base);
       }
       setBase(result);
       await refresh(result, filters);
