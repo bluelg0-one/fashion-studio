@@ -120,3 +120,19 @@ test('014 hanger v2: details step runs once per product after 2차 and before fi
  assert.equal(s.db.get('h').data.detailReport.items[0].id,'neckline','디테일 보고가 저장됨');
  assert.ok(Math.abs(r.claude-.08)<1e-9,`2차 2컷 + 디테일 1회 (${r.claude})`);
 });
+
+test('014-2 QA after final: fail → retry with the plan (max 2) → still failing → owner review; pass on first try → no retry',async()=>{
+ const mk=()=>[{id:'q',name:'블랙 니트',data:{slots:{hero:slot('옷걸이 정면'),back:slot('옷걸이 후면')}}},{id:'ok',name:'화이트 셔츠',data:{slots:{hero:slot('옷걸이 정면')}}}];
+ const s=store(mk()),log=[],steps=mockSteps(log),job=planAuto(mk());
+ steps.qa=async(p,{attempt})=>{log.push(`qa:${p.name}:${attempt}`);return p.id==='ok'?{status:'pass',reasons:[],checks:[]}:{status:'fail',reasons:['정면 · 회색으로 바랜 칸 5곳'],checks:[{key:'gray_blotch'}],retry:{label:attempt?'2차 빼고 1차를 최종으로':'그림자 펴기만'}};};
+ steps.retry=async(p,plan)=>{log.push(`retry:${p.name}:${plan.label}`);return {product:p,cost:{claude:0}};};
+ const r=await runAuto(job,{...s,steps});
+ assert.deepEqual(log.filter(x=>/^(qa|retry)/.test(x)),['qa:블랙 니트:0','retry:블랙 니트:그림자 펴기만','qa:블랙 니트:1','retry:블랙 니트:2차 빼고 1차를 최종으로','qa:블랙 니트:2','qa:화이트 셔츠:0']);
+ assert.deepEqual(r.qa.map(q=>[q.product,q.status,q.attempts,q.owner]),[['블랙 니트','fail',2,true],['화이트 셔츠','pass',0,false]]);
+ assert.equal(s.db.get('q').data.qa.owner,true);assert.equal(s.db.get('ok').data.qa.status,'pass');
+ // 다시 편집이 실패하면 멈추지 않고 이유를 남김
+ const s2=store(mk()),j2=planAuto(mk()),st2=mockSteps([]);
+ st2.qa=async()=>({status:'hold',reasons:['후면 · 떨어진 조각 1개'],checks:[],retry:{label:'1차 다시'}});st2.retry=async()=>{throw new Error('BiRefNet 꺼짐');};
+ const r2=await runAuto(j2,{...s2,steps:st2});
+ assert.match(r2.qa[0].reasons.join(),/다시 편집 실패: BiRefNet 꺼짐/);assert.equal(r2.qa[0].owner,true);
+});

@@ -15,9 +15,10 @@ try{
    if(buttons)for(const y of [400,600,800,1000]){g.beginPath();g.arc(K(600),K(y),K(16),0,7);g.fillStyle='#efe6ea';g.fill();g.lineWidth=K(5);g.strokeStyle='#8f6f7c';g.stroke();}
    return c.toDataURL('image/png');};
   return {front:draw(1.3,{wall:true,buttons:true}),frontCut:draw(1.3,{buttons:true}),back:draw(1.3,{wall:true,buttons:false}),backCut:draw(1.3,{buttons:false}),
+   big:draw(2.6,{wall:true,buttons:true}),bigCut:draw(1.5,{buttons:true}),bigBack:draw(2.6,{wall:true,buttons:false}),bigBackCut:draw(1.5,{buttons:false}),
    small:draw(.6,{wall:true,buttons:true}),smallCut:draw(.6,{buttons:true}),plain:draw(1.3,{wall:true,buttons:false,gap:false}),plainCut:draw(1.3,{buttons:false,gap:false})};});})();
  // 앱이 사진을 다시 저장해 보내므로(바이트가 달라짐) 누끼 모의 응답은 보낸 순서대로 줍니다.
- const queue=[];let details=0;
+ const queue=[];let details=0,qaStatus='',bigNote='';
  await page.route('**/api/studio?*',async r=>{const a=new URL(r.request().url()).searchParams.get('action');
   if(a==='retouch')return r.fulfill({json:{image:queue.shift()}});
   if(a==='details'){details++;return r.fulfill({json:{details:{placket:{present:false,note:'여밈 없음'},cuff:{present:true,x0:150,y0:780,x1:240,y1:860,note:'소매 끝'}},model:'claude-opus-5-5',usage:{input_tokens:1500,output_tokens:200}}});}
@@ -31,10 +32,17 @@ try{
  await page.getByRole('button',{name:'디테일컷 자동 만들기'}).click();await idle();
  const shown=()=>page.locator('.detail-grid figure').evaluateAll(n=>n.map(e=>e.dataset.detail));
  assert.deepEqual(await shown(),['neckline','fabric','placket','hem','cuff'],await page.locator('[role=status]').innerText());
- assert.match(await page.locator('[data-detail="fabric"] figcaption').innerText(),/후면에서/);
+ assert.match(await page.locator('[data-detail="fabric"] figcaption').innerText(),/후면 보정본에서/);
  const sides=await page.locator('.detail-grid img').evaluateAll(n=>n.map(i=>Math.max(i.naturalWidth,i.naturalHeight)));
  assert.ok(sides.every(v=>v>=800),`긴 변 ${sides}`);
  assert.equal(details,0,'확신하면 Claude 안 부름');
+ // 자동 점검(무료): 결과 상자와 항목별 결과
+ await page.getByRole('button',{name:'이 상품 자동 점검'}).click();await idle();
+ const qaText=await page.getByLabel('자동 점검 결과').innerText();assert.match(qaText,/통과|보류|불합격/);
+ const keys=await page.locator('.qa-panel [data-check]').evaluateAll(n=>n.map(e=>e.dataset.check));
+ for(const k of ['area','edge','islands','color_shift','gray_blotch','buttons','hanger_hook','resolution_smartstore','color_pair','details_review'])assert.ok(keys.includes(k),`점검 항목 ${k}`);
+ const hook=await page.locator('.qa-panel [data-check="hanger_hook"]').first().textContent();assert.match(hook,/통과/,'고리 유지');
+ qaStatus=qaText.split('\n')[0];
  // 상세페이지(소프트 테마): 정면 → 후면 → 디테일 순서로 그려짐
  await page.getByRole('button',{name:'전체 미리보기'}).first().click();await idle();
  assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 소프트/);
@@ -54,11 +62,31 @@ try{
  assert.equal(details,1);assert.ok((await shown()).includes('cuff'),'Claude 상자로 소매 끝');assert.match(await page.getByLabel('빠진 디테일').innerText(),/Claude: 이 옷에는 없음/);
  await page.getByRole('button',{name:'디테일컷 다시 만들기'}).click();await idle();assert.equal(details,1,'같은 사진은 다시 부르지 않음');
  await page.getByLabel('디테일 위치 Claude로 찾기').uncheck();
+ // 큰 사진(3120×4160): 작업용은 2400px로 줄이고 원본은 따로 보관 → 디테일컷은 원본에서, 보정본과 같은 색(같은 보정 값)
+ await page.getByRole('button',{name:'+ 새 상품'}).click();await idle();
+ await put('hero',fx.big);await put('back',fx.bigBack);queue.push(fx.bigCut,fx.bigBackCut);
+ await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();await idle();
+ await page.getByRole('button',{name:'디테일컷 자동 만들기'}).click();await idle();
+ assert.deepEqual(await shown(),['neckline','fabric','placket','hem','cuff'],await page.locator('[role=status]').innerText());
+ assert.match(await page.locator('[data-detail="fabric"] figcaption').innerText(),/후면 원본에서/);
+ const bigSides=await page.locator('.detail-grid img').evaluateAll(n=>n.map(i=>Math.max(i.naturalWidth,i.naturalHeight)));
+ assert.ok(bigSides.every(v=>v>=800&&v<=2000),`원본 디테일 긴 변 ${bigSides}`);
+ assert.ok(Math.max(...bigSides)>Math.max(...sides),`원본에서 더 크게 (${bigSides} > ${sides})`);
+ // 소재 컷 평균 색 vs 후면 최종 사진 가운데 평균 색(같은 보정 값 → 거의 같음)
+ const dE=await page.evaluate(async()=>{
+  const load=u=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=u;});
+  const mean=(img,x,y,w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.drawImage(img,x,y,w,h,0,0,w,h);const d=g.getImageData(0,0,w,h).data;let r=0,gg=0,b=0,n=0;for(let i=0;i<d.length;i+=4){if(d[i+3]<250)continue;r+=d[i];gg+=d[i+1];b+=d[i+2];n++;}return [r/n,gg/n,b/n];};
+  const fab=await load(document.querySelector('[data-detail="fabric"] img').src);
+  const fin=await load(document.querySelector('[data-slot="back"] .final-zone img').src);
+  const a=mean(fab,fab.naturalWidth*.3,fab.naturalHeight*.3,fab.naturalWidth*.4,fab.naturalHeight*.4),b=mean(fin,fin.naturalWidth*.42,fin.naturalHeight*.45,fin.naturalWidth*.16,fin.naturalHeight*.1);
+  return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);});
+ assert.ok(dE<6,`원본 소재 컷과 보정본 색 차이 RGB ${dE.toFixed(1)}`);
+ bigNote=`original crops ${Math.min(...bigSides)}~${Math.max(...bigSides)}px, color diff RGB ${dE.toFixed(1)}`;
  // 작은 사진 → 모두 해상도 부족(키우지 않음)
  await page.getByRole('button',{name:'+ 새 상품'}).click();await idle();
  await put('hero',fx.small);queue.push(fx.smallCut);await page.getByRole('button',{name:'사진 일괄 누끼·보정 및 문구 제작',exact:true}).click();await idle();
  await page.getByRole('button',{name:'디테일컷 자동 만들기'}).click();await idle();
  assert.equal((await shown()).length,0);assert.match(await page.getByLabel('빠진 디테일').innerText(),/넥라인: 해상도 부족/);
  assert.deepEqual(errors,[]);
- console.log(`PASS: hanger front/back → 5 detail crops (fabric from the back, long side ${Math.min(...sides)}px+), kept after reload with the include checkbox, unsure placket/cuff → review → Claude (mock) once and reused, small photo → 해상도 부족 (no upscaling).`);
+ console.log(`PASS: hanger front/back → 5 detail crops (fabric from the back, long side ${Math.min(...sides)}px+), kept after reload with the include checkbox, unsure placket/cuff → review → Claude (mock) once and reused, small photo → 해상도 부족 (no upscaling); QA panel shows all automatic checks (${qaStatus}, hook kept); 3120×4160 upload keeps the original → ${bigNote}.`);
 }finally{await browser.close();}

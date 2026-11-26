@@ -1,6 +1,6 @@
 // 드라이브 사진 → 앱에서 쓰는 사진. 분류용 작은 사진(썸네일)과 상품용 사진을 따로 받아(메모리 절약) 만듭니다.
 import {downloadFile} from './googleDrive.js';
-import {readPhoto, thumbnail} from './studioImages.js';
+import {readPhoto, readOriginal, thumbnail} from './studioImages.js';
 
 // HEIC(아이폰 사진)는 브라우저가 열 수 있을 때만(사파리 등) JPG로 바꿔 씁니다. 크롬은 대부분 열지 못합니다(실패로 표시).
 export async function toReadableFile(blob,name,mimeType) {
@@ -18,5 +18,7 @@ export async function driveThumb(f) {
   try {return await thumbnail(url);} finally {URL.revokeObjectURL(url);}
 }
 export async function driveFull(f) {return readPhoto(await toReadableFile(await downloadFile(f.id),f.name,f.mimeType));}
+// 옷걸이 v2(014): 작업용 사진 + (크면) 원본 보관용 사진을 한 번 받아서 함께 만듭니다.
+export async function driveFullWithOriginal(f) {const file=await toReadableFile(await downloadFile(f.id),f.name,f.mimeType);return {full:await readPhoto(file),original:await readOriginal(file)};}
 // 묶음 사이 같은 옷 비교용 참고 사진(더 작게)
 export const refThumb=src=>thumbnail(src,256);

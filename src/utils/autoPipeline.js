@@ -1,4 +1,5 @@
 import {HANGER_V2} from './appMode.js';
+import {QA_MAX_RETRY} from './qaCheck.js';
 // 상품 단위 자동 보정 (지시서 010) — 화면과 분리된 순서·상태 관리.
 // 상품마다: ① 모든 컷 자동 수평 → 1차(누끼·받침대·정리·색상 기본값)  ② 색감 통일(대표 정면컷 기준)  ③ 2차(Claude 찾기 ‘적극’ → 작은 상자 분할 → IOPaint)  ④ 최종 확정
 // 실제 처리(사진 계산·엔진 호출)는 deps.steps로 받습니다(AutoStudio.jsx). 단계가 끝날 때마다 상품과 진행 상태를 저장해서
@@ -61,7 +62,8 @@ export function summary(job) {
   const c=autoCounts(job);
   return {done:c.done,review:c.review,failed:c.failed,skipped:c.skipped,claude:job.spent.claude,claudeUnknown:job.spent.claudeUnknown,paid:job.spent.paid,elapsed:job.elapsed,
     reviews:job.products.flatMap(p=>p.cuts.filter(x=>x.status==='review').map(x=>({productId:p.id,product:p.name,slotId:x.slotId,label:x.label,flags:x.flags}))),
-    failures:job.products.flatMap(p=>p.cuts.filter(x=>x.status==='failed').map(x=>({productId:p.id,product:p.name,slotId:x.slotId,label:x.label,error:x.error})))};
+    failures:job.products.flatMap(p=>p.cuts.filter(x=>x.status==='failed').map(x=>({productId:p.id,product:p.name,slotId:x.slotId,label:x.label,error:x.error}))),
+    qa:job.products.filter(p=>p.qa).map(p=>({productId:p.id,product:p.name,...p.qa}))};
 }
 
 // deps:
@@ -131,6 +133,22 @@ export async function runAuto(job,deps) {
         product={...product,data:{...product.data,slots:ss}};await saveProduct(product);
         for(const c of p.cuts)if(todo(c)&&c.step==='final'){c.step='done';c.status=c.flags.length?'review':'done';}
         clock();await save(job);
+        // ⑤ 자동 점검(014-2): 통과 / 보류 / 불합격. 고칠 수 있으면 설정을 바꿔 최대 QA_MAX_RETRY번 다시 편집, 그래도 아니면 '사장님 확인 필요'
+        if(steps.qa){
+          let attempt=0,q;
+          for(;;){
+            check(signal);progress(`${p.name} · 자동 점검${attempt?` (다시 편집 ${attempt}회 뒤)`:''}`);
+            q=await steps.qa(product,{attempt});
+            if(q.status==='pass'||attempt>=QA_MAX_RETRY||!q.retry)break;
+            attempt++;progress(`${p.name} · 점검 ${q.status==='fail'?'불합격':'보류'} → 설정을 바꿔 다시 편집 ${attempt}/${QA_MAX_RETRY} (${q.retry.label})`);
+            try {const r=await steps.retry(product,q.retry);product=r.product;addCost(r.cost);await saveProduct(product);}
+            catch(e){if(e?.stopped||e?.capReached)throw e;q={...q,reasons:[...q.reasons,`다시 편집 실패: ${String(e?.message||e).slice(0,120)}`]};break;}
+          }
+          const qa={status:q.status,reasons:q.reasons,checks:q.checks,attempts:attempt,owner:q.status!=='pass',at:now()};
+          product={...product,data:{...product.data,qa}};await saveProduct(product);
+          p.qa={status:qa.status,attempts:attempt,owner:qa.owner,reasons:qa.reasons};
+          clock();await save(job);
+        }
       }
     }
     job.finished=!allCuts(job).some(todo);

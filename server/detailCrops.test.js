@@ -62,3 +62,24 @@ test('014: pants get waist, fabric and one leg hem; every garment type has a fix
   assert.deepEqual(detailIds('vest'),['neckline','fabric','placket','hem']);
   const none=planDetails({front:null,garment:'long-top'});assert.equal(none.items.length,0);assert.ok(none.skipped.every(s=>s.review));
 });
+import {applyOps, composeCrop, originalBox, frameMap} from '../src/utils/originalCrop.js';
+import {applyTone} from '../src/utils/matte.js';
+import {clearWhite, applyShift} from '../src/utils/colorMatch.js';
+test('014 original crop: recorded ops replay exactly; 2차-changed pixels and the matte alpha come from the scaled 보정본',()=>{
+  const px=()=>{const d=new Uint8ClampedArray(64*64*4);for(let i=0;i<d.length;i+=4){d[i]=200+(i%7);d[i+1]=190;d[i+2]=170+(i%5);d[i+3]=255;}return {width:64,height:64,data:d};};
+  const ops=[{op:'tone',bright:20,vivid:30},{op:'white',a:-1.5,b:-3},{op:'shift',L:2,a:1,b:-1}];
+  const a=px(),b=px();applyOps(a,ops);applyTone(b,{bright:20,vivid:30});clearWhite(b,{a:-1.5,b:-3});applyShift(b,{L:2,a:1,b:-1});
+  assert.deepEqual(a.data,b.data,'같은 값으로 다시 적용');
+  const orig=px(),alpha=px(),s1=px(),s2=px();for(let i=0;i<alpha.data.length;i+=4)alpha.data[i+3]=i<64*4*10?0:255;
+  s2.data[(40*64+40)*4]=20;// 2차가 한 점을 고침
+  const {image,changed}=composeCrop({orig,alpha,s1,s2,ops:[]});
+  assert.equal(image.data[(40*64+40)*4],20,'2차가 바꾼 곳은 보정본 픽셀');assert.equal(image.data[(41*64+41)*4],orig.data[(41*64+41)*4]);
+  assert.equal(image.data[3],0,'누끼 알파');assert.equal(image.data[(20*64)*4+3],255);assert.ok(changed>0&&changed<.001);
+});
+test('014 original crop: final-image box maps back through the centering to original pixels',()=>{
+  const mk=(W,H,x0,y0,x1,y1)=>{const d=new Uint8ClampedArray(W*H*4);for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)d[(y*W+x)*4+3]=255;return {width:W,height:H,data:d};};
+  const matte=mk(300,400,50,40,149,239),final=mk(300,400,75,50,274,449-50);// 2배 확대 + 이동
+  const map=frameMap(matte,final);assert.ok(Math.abs(map.sx-2)<1e-9);
+  const ob=originalBox({x:75,y:50,w:100,h:200},map,4,1200,1600);// 원본은 누끼의 4배
+  assert.deepEqual(ob,{x:200,y:160,w:200,h:400});
+});
