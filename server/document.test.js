@@ -47,3 +47,19 @@ test('014 hanger v2 order: front → texts → back → details in fixed order (
  const s2=on.map(x=>x.kind==='image'?(x.guide?'guide':x.src.split(',')[1]):x.kind==='table'?'table':x.value);
  assert.deepEqual(s2.slice(s2.indexOf('hem')+1,s2.indexOf('Size')),['Model','M','AI 모델 컷'],'켜면 디테일 다음·사이즈 앞, AI 모델 컷 표시');
 });
+test('017 model cuts: included cuts in the chosen order, each with a small "AI 모델 컷" mark under the photo; excluded/none → no Model section',()=>{
+ const slots=initialSlots(true);slots.hero={...slots.hero,image:'data:image/png;base64,H'};
+ const texts={headline:'t',description:'',product:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:''};
+ const cuts=[{id:'a',src:'data:image/jpeg;base64,A',enabled:true},{id:'b',src:'data:image/jpeg;base64,B',enabled:false},{id:'c',src:'data:image/jpeg;base64,C',enabled:true}];
+ for(const layout of [null,'dooson']){
+  const b=documentBlocks({v2:true,layout,slots,texts,garment:'long-top',rows:[newSizeRow()],modelCuts:cuts});
+  const seq=b.map(x=>x.kind==='image'?(x.guide?'guide':x.src.split(',')[1]):x.kind==='table'?'table':x.value);
+  const i=seq.indexOf('Model');assert.ok(i>0,String(layout));
+  assert.deepEqual(seq.slice(i,i+5),['Model','A','AI 모델 컷','C','AI 모델 컷'],`${layout}: 순서·표시`);
+  assert.ok(!seq.includes('B'),'포함 안 한 컷 빠짐');
+  assert.ok(b.filter(x=>x.ai&&x.kind==='image').every(x=>x.label==='AI 모델 컷'));
+  if(layout==='dooson')assert.ok(i>seq.indexOf('Size'),'두손 베이직: INFO·SIZE 뒤');else assert.ok(i<seq.indexOf('Size'),'다른 테마: 사이즈 앞');
+ }
+ const none=documentBlocks({v2:true,slots,texts,garment:'long-top',rows:[newSizeRow()],modelCuts:[{src:'x',enabled:false}]});
+ assert.ok(!none.some(x=>x.section==='model'));
+});
