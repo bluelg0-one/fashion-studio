@@ -11,6 +11,7 @@ export const FEATURES={
   openai_copy:{label:'기타 · OpenAI 상품 문구',group:'other'},
   openai_shopee:{label:'기타 · OpenAI 쇼피 문구',group:'other'},
   openai_edit:{label:'기타 · OpenAI 보정',group:'other'},
+  modelcut:{label:'기타 · AI 모델컷(FASHN·Google, 추정 단가)',group:'other'},
 };
 export const GROUP_LABEL={defects:'수정할 곳 찾기',classify:'자동 분류',other:'기타'};
 export const LEVEL_LABEL={normal:'보통',aggressive:'적극',max:'최대'};
