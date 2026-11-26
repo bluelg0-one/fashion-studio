@@ -15,7 +15,7 @@ export const sanitizeRetouch=r=>r&&{...r,cutout:CUTOUT_ENGINES.includes(r.cutout
 export const CUTOUT_ENGINES=['photoroom','birefnet'];
 // 누끼 뒤 정리(브라우저 계산, 무료) — 엔진 호출과 상관없는 설정이라 Photoroom 재과금 기준(캐시 키)에서 뺍니다.
 // cleanIslands: 떨어진 작은 조각 정리 / cleanMannequinTop: 마네킹 금색 꼭지·목 받침 지우기(사장님 결정: 기본 남김)
-// hangerMode: 'keep'(옷걸이 남기고 반투명 고리만 선명하게, 사장님 결정 기본값) | 'remove'(옷걸이 지우기)
+// hangerMode: 'keep'(옷걸이 남기고 반투명 고리만 선명하게, ?v1 기본값) | 'remove'(옷걸이 지우기, 016 사장님 결정: 옷걸이 v2 새 상품 기본값)
 // 1차 보정 색감 기본값(사장님 결정 2026-11-23): 새로 넣는 사진에만 저장됩니다. 예전에 저장한 사진은 값이 없어 0(그대로)으로 남습니다.
 // 사진마다 ‘밝기·화사하게’ 슬라이더로 조절하거나 ‘색감 보정 끄기’로 0으로 돌릴 수 있습니다.
 export const DEFAULT_TONE={bright:20,vivid:30};
@@ -26,9 +26,12 @@ export const DEFAULT_TONE={bright:20,vivid:30};
 export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','clearFinial','hangerMode','autoLevel','autoLevelBeta','clearWhite'];
 export const DEFAULT_RETOUCH_V1 = {cutout:'photoroom', autoLevelBeta:false, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, clearFinial:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
 // 옷걸이 v2(014) 기본값: 받침대 기둥 지우기·꼭지 위 정리·마네킹 꼭지 지우기·자동 수평을 끕니다(옷걸이 사진에는 받침대·꼭지가 없고,
-// 켜 두면 늘어진 끈·금색 고리를 잘못 지울 수 있음 — 점검 C-2·C-3). 옷걸이는 남기고(고리 끝 살리기·틈의 벽 지우기는 그대로) 흰 옷 맑게는 켬.
-export const V2_RETOUCH = {removeStand:false, clearFinial:false, cleanMannequinTop:false, autoLevelBeta:false, hangerMode:'keep', mannequin:'keep'};
+// 켜 두면 늘어진 끈·금색 고리를 잘못 지울 수 있음 — 점검 C-2·C-3). 흰 옷 맑게는 켬.
+// 016(사장님 결정 변경): 누끼 때 옷걸이도 지웁니다(hangerMode 'remove'). 새 상품에만 적용 — 설정을 저장한 예전 상품은 keepSavedHanger로 그대로 둡니다.
+export const V2_RETOUCH = {removeStand:false, clearFinial:false, cleanMannequinTop:false, autoLevelBeta:false, hangerMode:'remove', mannequin:'keep'};
 export const DEFAULT_RETOUCH = HANGER_V2 ? {...DEFAULT_RETOUCH_V1, ...V2_RETOUCH} : DEFAULT_RETOUCH_V1;
+// 저장된 상품 설정(saved)을 열 때: 설정이 저장된 상품인데 옷걸이 값이 없으면 예전 기본값(남기기)으로 둡니다. 설정이 없는 새 상품은 지금 기본값.
+export const keepSavedHanger = (saved, defaults=DEFAULT_RETOUCH) => saved ? {...defaults, hangerMode:'keep', ...saved} : {...defaults};
 // 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
 export const MANNEQUIN_MODES = [
   {id:'keep', label:'마네킹 그대로 두기'},

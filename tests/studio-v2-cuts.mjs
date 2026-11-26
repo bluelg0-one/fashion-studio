@@ -17,7 +17,7 @@ try{
  assert.equal(await page.getByRole('button',{name:'AI모델컷'}).count(),0,'모델컷 탭 숨김');
  assert.equal(await page.getByText('02 · Fit guide').count(),0,'Fit guide 숨김');
  for(const l of ['자동 수평 (실험)','받침대 기둥 지우기','마네킹 꼭지·목 받침 지우기','마네킹 처리'])assert.equal(await page.getByLabel(l,{exact:true}).count(),0,`${l} 숨김`);
- assert.equal(await page.getByLabel('옷걸이',{exact:true}).first().inputValue(),'keep','옷걸이 남기기');
+ assert.equal(await page.getByLabel('옷걸이',{exact:true}).first().inputValue(),'remove','옷걸이 지우기(016 v2 기본)');
  assert.equal(await page.getByLabel('흰 옷 맑게',{exact:true}).first().isChecked(),true);
  assert.match(await page.locator('h1').innerText(),/옷걸이 v2/);
  assert.deepEqual(errors,[]);

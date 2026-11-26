@@ -49,9 +49,9 @@ test('옷걸이 지우기: 고리·몸통은 지우고 옷 어깨선은 남긴�
  assert.equal(A(img,62,102),255,'어깨');assert.equal(A(img,150,200),255,'옷');
 });
 
-test('검은 옷이면 옷걸이를 옷과 구분할 수 없어 건너뛴다',()=>{
+test('검은 옷이면 옷걸이 몸통을 옷과 구분할 수 없어 남기고, 가는 고리만 모양으로 지운다(016)',()=>{
  const img=hangerShot();rect(img,60,100,240,360,BLACK);
- assert.equal(removeHanger(img),0);assert.ok(A(img,120,95)>0);
+ assert.ok(removeHanger(img)>0);assert.equal(A(img,150,30),0,'고리');assert.ok(A(img,120,95)>0,'몸통(옷과 같은 색)은 남김');assert.equal(A(img,150,200),255,'옷');
 });
 
 // ---- 013-B ----
@@ -88,4 +88,45 @@ test('013-B: wall left in the closed gap between hanger and garment is cleared',
  rect(img,105,65,195,109,WALL);                 // 옷걸이 삼각(사각)과 옷 사이에 남은 벽
  assert.ok(clearWallPockets(img,`rgb(${WALL})`)>0);
  assert.equal(A(img,150,90),0,'틈의 벽');assert.equal(A(img,150,200),255,'옷');assert.equal(A(img,102,80),255,'옷걸이');
+});
+
+// ---- 016: 옷걸이 지우기 기본값 ----
+import {findHook, hangerResidue} from '../src/utils/cleanup.js';
+import {hanging} from './fixtures/hanging.js';
+for(const [name,color] of [['분홍',PINK],['아이보리',[236,228,212]],['흰색',[246,246,244]],['검정',BLACK]])
+test(`016: ${name} 옷 — 고리·목 안쪽 바·어깨 끝 바는 지우고(채우지 않음), 어깨선·넥라인·라벨·끈은 남김, 검은 점은 떨어진 조각 지우기로 정리`,()=>{
+ const img=hanging(color);
+ assert.ok(findHook(img).height>=80,'고리 찾음');
+ removeHanger(img);removeIslands(img);
+ for(const [x,y,what] of [[285,18,'고리 꼭대기'],[272,45,'고리 끝'],[300,80,'줄기'],[300,119,'목 안쪽 바(가운데)'],[256,119,'목 안쪽 바(왼쪽)'],[133,119,'왼쪽 어깨 끝 바'],[466,119,'오른쪽 어깨 끝 바'],[201,95,'검은 점']])assert.equal(A(img,x,y),0,what);
+ for(const [x,y,what] of [[145,113,'왼쪽 어깨선'],[455,113,'오른쪽 어깨선'],[200,112,'어깨 위 끝'],[260,160,'넥라인 안쪽 뒤판'],[300,138,'라벨'],[292,142,'라벨 글자'],[331,785,'끈'],[300,400,'몸판']])assert.equal(A(img,x,y),255,what);
+ assert.equal(hangerResidue(img),0,'남은 고리 없음');
+});
+test('016: 옷걸이 색이 옷과 같으면(검정 옷 + 검정 옷걸이) 고리만 지우고 바는 남김 — 옷을 지우지 않음',()=>{
+ const img=hanging(BLACK,{bar:BLACK});removeHanger(img);
+ assert.equal(A(img,300,80),0,'고리 줄기');assert.equal(A(img,300,400),255,'옷');assert.equal(A(img,145,113),255,'어깨선');
+});
+test('016: 캐미솔 끈(고리 옆의 가는 줄)은 고리로 보지 않음; 남은 고리 비율',()=>{
+ const img=hanging(PINK);rect(img,180,60,183,111,PINK);rect(img,417,60,420,111,PINK);   // 어깨 위로 올라간 끈 2개
+ removeHanger(img);assert.equal(A(img,181,80),255,'왼쪽 끈');assert.equal(A(img,418,80),255,'오른쪽 끈');assert.equal(A(img,300,80),0,'고리');
+ const kept=hanging(PINK);const r=hangerResidue(kept);assert.ok(r>.1&&r<.2,`고리 높이 비율 ${r}`);
+});
+test('016: 고리 없는 옷(둥근 옷깃 꼭대기)은 고리로 보지 않아 아무것도 지우지 않음',()=>{
+ const img=canvas(600,800);
+ for(let y=60;y<=760;y++)for(let x=140;x<=460;x++){const top=60+Math.round(((x-300)/160)**2*52);if(y>=top)rect(img,x,y,x,y,[236,228,212]);}
+ const before=img.data.slice();
+ assert.equal(findHook(img),null);assert.equal(removeHanger(img),0);assert.deepEqual(img.data,before);
+});
+test('016: 옷걸이 바가 안 보이는 사진(후면 등)에서도 고리 아래 라벨은 지우지 않음',()=>{
+ const img=hanging(PINK,{bar:PINK});removeHanger(img);removeIslands(img);
+ assert.equal(A(img,300,80),0,'고리');assert.equal(A(img,300,138),255,'라벨');assert.equal(A(img,292,142),255,'라벨 글자');
+});
+import {keepSavedHanger, DEFAULT_RETOUCH, DEFAULT_RETOUCH_V1} from '../src/utils/retouchPresets.js';
+test('016: v2 new products remove the hanger; products with saved settings keep theirs (old saved settings without the value stay "keep"); ?v1 default unchanged',()=>{
+ assert.equal(DEFAULT_RETOUCH.hangerMode,'remove');assert.equal(DEFAULT_RETOUCH_V1.hangerMode,'keep');
+ assert.equal(keepSavedHanger(undefined).hangerMode,'remove','새 상품');
+ assert.equal(keepSavedHanger({hangerMode:'keep',cutout:'birefnet'}).hangerMode,'keep','저장된 남기기');
+ assert.equal(keepSavedHanger({cutout:'birefnet'}).hangerMode,'keep','값 없이 저장된 예전 설정');
+ assert.equal(keepSavedHanger({hangerMode:'remove'}).hangerMode,'remove');
+ assert.equal(keepSavedHanger({cutout:'birefnet'}).cutout,'birefnet');
 });

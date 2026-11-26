@@ -86,26 +86,107 @@ function garmentTest(img) {
   return (r,g,b)=>{const k=(r<<16)|(g<<8)|b;let v=cache.get(k);if(v===undefined){const l=rgbToLab(r,g,b),c=Math.hypot(l[1],l[2]);let dh=Math.abs(Math.atan2(l[2],l[1])-rh);if(dh>Math.PI)dh=2*Math.PI-dh;v=c>=minC&&dh<=.55;if(cache.size<300000)cache.set(k,v);}return v;};
 }
 
-// 옷걸이 지우기: 맨 위에서 시작하는 '어두운 무채색 또는 가는 선' 덩어리(옷걸이 몸통+고리)를 지웁니다.
-// 옷 색이 어두운 무채색(검정·진회색)이면 옷과 구분할 수 없어 아무것도 하지 않습니다. 지운 픽셀 수를 돌려줍니다.
-export function removeHanger({data,width,height}) {
-  const sh=shoulderRow(data,width,height);if(!sh)return 0;
-  const isG=garmentTest({data,width,height});if(!isG)return 0;
-  const n=width*height,cand=new Uint8Array(n);let garment=0,opaque=0;
-  for(let p=0;p<n;p++){const a=data[p*4+3];if(a<30)continue;const g=isG(data[p*4],data[p*4+1],data[p*4+2]);
-    if(a>=128){opaque++;if(g)garment++;}
-    // 옷걸이 후보 = 옷 색조가 아닌 어두운 픽셀, 또는 어깨선 위의 옷 아닌 픽셀(고리)
-    const y=Math.floor(p/width),c=isNeutral(data[p*4],data[p*4+1],data[p*4+2]);if(!g&&(c.dark||y<sh.row))cand[p]=1;}
-  if(!opaque||garment<opaque*.5)return 0;
-  // 맨 위 불투명 줄의 후보 픽셀에서 시작해 이어진 후보만
-  const seen=new Uint8Array(n),stack=[];
-  for(let y=sh.top;y<Math.min(height,sh.top+4);y++)for(let x=0;x<width;x++){const p=y*width+x;if(cand[p]){seen[p]=1;stack.push(p);}}
-  const region=[];
-  while(stack.length){const p=stack.pop();region.push(p);const x=p%width,y=(p-x)/width;
-    for(const q of [x>0?p-1:-1,x<width-1?p+1:-1,y>0?p-width:-1,y<height-1?p+width:-1])if(q>=0&&!seen[q]&&cand[q]){seen[q]=1;stack.push(q);}}
-  if(!region.length||region.length>opaque*.08)return 0;
-  for(const p of region)data[p*4+3]=0;
-  return region.length;
+// 옷걸이 고리 찾기(모양, 016): 맨 위에서부터 '가늘고 따로 떨어진 줄'(폭이 옷 폭의 3% 이하, 양옆이 투명)을 따라 내려갑니다.
+// 위쪽 줄과 겹치는 줄만 따라가므로 옆에 있는 끈(캐미솔 끈 등)은 건드리지 않고, 넥라인 안쪽에서 옷걸이 바·옷과 붙는 곳에서 멈춥니다.
+// 옷 색과 상관없이(흰·검정 옷도) 찾습니다. 반환 {pixels, x0, x1, y0, y1, height, stem:{x0,x1,y}} 또는 null
+export function findHook({data,width,height}) {
+  let gx0=width,gx1=-1,top=-1,gy1=-1;
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){const a=data[(y*width+x)*4+3];if(a>=30&&top<0)top=y;if(a>=128){if(x<gx0)gx0=x;if(x>gx1)gx1=x;gy1=y;}}
+  if(top<0||gx1<gx0)return null;
+  // 줄 하나의 폭: 줄기는 옷 폭 3% 이하(thin), 고리 윗부분 곡선은 7%까지 허용(wide). 곡선 때문에 앞 줄 범위 ±tol 안에서 따라갑니다.
+  const gw=gx1-gx0+1,maxW=Math.max(4,Math.round(gw*.03)),wideW=Math.max(maxW*2.5,Math.round(gw*.07)),tol=Math.max(3,maxW),on=(x,y)=>data[(y*width+x)*4+3]>=30;
+  const pixels=[];let span=null,last=null,x0=width,x1=-1,thinRows=0;
+  for(let y=top;y<height;y++){
+    const runs=[];let st=-1;
+    for(let x=0;x<=width;x++){const o=x<width&&on(x,y);if(o&&st<0)st=x;if(!o&&st>=0){runs.push([st,x-1]);st=-1;}}
+    // 첫 줄: 가장 위 줄의 가는 줄들. 다음 줄부터는 앞 줄 범위와 겹치는(±tol) 줄만.
+    const near=span?runs.filter(([a,b])=>b>=span[0]-tol&&a<=span[1]+tol):runs;
+    if(!near.length)break;
+    if(near.some(([a,b])=>b-a+1>wideW))break;           // 넓은 줄(옷걸이 바·옷) → 멈춤
+    if(near.every(([a,b])=>b-a+1<=maxW))thinRows++;
+    if(!span&&near.length>3)break;
+    let nx0=width,nx1=-1;
+    for(const [a,b] of near){for(let x=a;x<=b;x++)pixels.push(y*width+x);nx0=Math.min(nx0,a);nx1=Math.max(nx1,b);}
+    if(nx1-nx0+1>gw*.15)break;
+    span=[nx0,nx1];last={x0:nx0,x1:nx1,y};x0=Math.min(x0,nx0);x1=Math.max(x1,nx1);
+  }
+  // 고리 = 가는 줄이 충분히 길게 이어진 것(옷 높이의 3% 또는 8줄 이상). 옷깃 꼭대기의 짧은 곡선은 고리가 아닙니다.
+  if(!last||thinRows<Math.max(8,Math.round((gy1-top+1)*.03)))return null;
+  return {pixels,x0,x1,y0:top,y1:last.y,height:last.y-top+1,stem:last,garment:{x0:gx0,x1:gx1,y1:gy1}};
+}
+const labOf=(d,p)=>rgbToLab(d[p*4],d[p*4+1],d[p*4+2]);
+const dE3=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+const meanLab=list=>{if(!list.length)return null;const s=[0,0,0];for(const l of list){s[0]+=l[0];s[1]+=l[1];s[2]+=l[2];}return s.map(v=>v/list.length);};
+
+// 옷걸이 지우기(016부터 옷걸이 v2 기본값): 고리·목 안쪽에 보이는 옷걸이 바·어깨 끝으로 튀어나온 옷걸이 끝을 지웁니다(알파만, 채우지 않음).
+//  1) 옷이 유채색이면 예전 방식: 맨 위에서 시작하는 '옷 색조가 아닌 어두운 픽셀/어깨선 위 픽셀' 덩어리
+//  2) 모양으로 고리 찾기(findHook) — 흰·검정 옷에서도 동작
+//  3) 고리 아래 끝에 붙은 옷걸이 바: 그 색(옷 대표 색과 ΔE 18 이상 차이)과 비슷하고 옷 색과 다른 픽셀을 어깨 높이 부근까지만 따라 지움
+//  4) 어깨 끝: 옷 바깥쪽(가운데에서 옷 폭 30% 이상)에서 옷걸이 바 색과 같고 투명한 곳에 닿은 덩어리
+// 옷걸이가 가리던 목 안쪽은 생성으로 채우지 않고 투명(흰 배경)으로 둡니다. 옷과 옷걸이 색이 비슷하면(검정 옷 + 검정 옷걸이) 2)만 합니다.
+// 옷 어깨선·넥라인·라벨·끈은 옷 색이거나 옷걸이 색과 달라서 남습니다. 지운 픽셀 수를 돌려줍니다.
+export const HANGER_REMOVE={barMinW:.2,barNear:14,garmentFar:15,seedFar:18,tipNear:12,tipOut:.3,below:.12,maxShare:.08};
+export function removeHanger(img,o=HANGER_REMOVE) {
+  const {data,width,height}=img,n=width*height;
+  let removed=0;const samples=[];
+  const hook=findHook(img);   // 1)이 고리를 먼저 지워도 고리 아래 끝 위치(옷걸이 바 시작점)를 알 수 있게 먼저 찾아 둡니다.
+  // 1) 예전 방식(유채색 옷)
+  const sh0=shoulderRow(data,width,height),isG=sh0&&garmentTest(img);
+  if(isG){
+    const cand=new Uint8Array(n);let garment=0,opaque=0;
+    for(let p=0;p<n;p++){const a=data[p*4+3];if(a<30)continue;const g=isG(data[p*4],data[p*4+1],data[p*4+2]);
+      if(a>=128){opaque++;if(g)garment++;}
+      const y=Math.floor(p/width),c=isNeutral(data[p*4],data[p*4+1],data[p*4+2]);if(!g&&(c.dark||y<sh0.row))cand[p]=1;}
+    if(opaque&&garment>=opaque*.5){
+      const seen=new Uint8Array(n),stack=[],region=[];
+      for(let y=sh0.top;y<Math.min(height,sh0.top+4);y++)for(let x=0;x<width;x++){const p=y*width+x;if(cand[p]){seen[p]=1;stack.push(p);}}
+      while(stack.length){const p=stack.pop();region.push(p);const x=p%width,y=(p-x)/width;
+        for(const q of [x>0?p-1:-1,x<width-1?p+1:-1,y>0?p-width:-1,y<height-1?p+width:-1])if(q>=0&&!seen[q]&&cand[q]){seen[q]=1;stack.push(q);}}
+      if(region.length&&region.length<=opaque*o.maxShare){for(const p of region){if(data[p*4+3]>=128)samples.push(labOf(data,p));data[p*4+3]=0;}removed+=region.length;}
+    }
+  }
+  // 2) 고리(모양)
+  if(hook){for(const p of hook.pixels)if(data[p*4+3]){data[p*4+3]=0;removed++;}}
+  let G;try{const g=dominantLab(img);G=[g.L,g.a,g.b];}catch{return removed;}
+  const sh=shoulderRow(data,width,height);if(!sh)return removed;
+  let opaque=0;for(let p=0;p<n;p++)if(data[p*4+3]>=128)opaque++;
+  const gh=(hook?.garment.y1??height-1)-sh.top+1,limitY=Math.min(height-1,sh.row+Math.round(gh*o.below));
+  // 3) 옷걸이 바 색: 고리 아래 끝 바로 밑의 옷 아닌 픽셀(없으면 1)에서 지운 넓은 부분의 색)
+  //    고리 끝 아래로 세로줄마다 내려가며 처음 만나는 '옷 색이 아닌' 픽셀(옷 높이의 5%까지). 라벨보다 위에 있는 바를 먼저 만납니다.
+  const seeds=[];
+  if(hook){const {x0,x1,y}=hook.stem,win=Math.max(6,Math.round(gh*.05));
+    for(let x=Math.max(0,x0-3);x<=Math.min(width-1,x1+3);x++)for(let yy=y+1;yy<=Math.min(height-1,y+win);yy++){const p=yy*width+x;if(data[p*4+3]>=128&&dE3(labOf(data,p),G)>=o.seedFar){seeds.push(p);break;}}}
+  const refs=[];
+  const seedRef=meanLab(seeds.map(p=>labOf(data,p)));if(seedRef)refs.push(seedRef);
+  const flood=meanLab(samples.filter(l=>dE3(l,G)>=o.seedFar));if(flood)refs.push(flood);
+  if(!refs.length)return removed;
+  const isBar=(p,near)=>{if(data[p*4+3]<30)return false;const l=labOf(data,p);return dE3(l,G)>=o.garmentFar&&refs.some(r=>dE3(l,r)<=near);};
+  const cut=[];
+  if(seeds.length){
+    const seen=new Uint8Array(n),stack=[...seeds];for(const p of seeds)seen[p]=1;
+    while(stack.length){const p=stack.pop();cut.push(p);if(cut.length>opaque*o.maxShare)break;const x=p%width,y=(p-x)/width;
+      for(const q of [x>0?p-1:-1,x<width-1?p+1:-1,y>0?p-width:-1,y<limitY?p+width:-1])if(q>=0&&!seen[q]){seen[q]=1;if(isBar(q,o.barNear))stack.push(q);}}
+    // 옷걸이 바는 목 안쪽을 가로지르는 넓은 띠입니다. 지울 덩어리의 폭이 옷 폭의 20% 미만이면(라벨 같은 작은 것) 지우지 않습니다.
+    let bx0=width,bx1=-1;for(const p of cut){const x=p%width;if(x<bx0)bx0=x;if(x>bx1)bx1=x;}
+    if(cut.length>opaque*o.maxShare||bx1-bx0+1<(sh.x1-sh.x0+1)*o.barMinW)cut.length=0;
+  }
+  // 4) 어깨 끝
+  const cx=(sh.x0+sh.x1)/2,gw=sh.x1-sh.x0+1,seen=new Uint8Array(n);
+  for(let y=Math.max(0,sh.top);y<=limitY;y++)for(let x=0;x<width;x++){
+    const p=y*width+x;if(seen[p]||Math.abs(x-cx)<gw*o.tipOut||!isBar(p,o.tipNear))continue;
+    const comp=[],stack=[p];seen[p]=1;let edge=false;
+    while(stack.length){const q=stack.pop();comp.push(q);const qx=q%width,qy=(q-qx)/width;
+      for(const r of [qx>0?q-1:-1,qx<width-1?q+1:-1,qy>0?q-width:-1,qy<height-1?q+width:-1]){if(r<0){edge=true;continue;}if(data[r*4+3]<30)edge=true;
+        else if(!seen[r]&&(r-(r%width))/width<=limitY&&isBar(r,o.tipNear)){seen[r]=1;stack.push(r);}}}
+    if(edge&&comp.length<=opaque*.02)cut.push(...comp);
+  }
+  for(const p of cut)if(data[p*4+3]){data[p*4+3]=0;removed++;}
+  return removed;
+}
+// 남은 옷걸이(016 자동 점검): 모양으로 찾은 고리 높이 ÷ 옷 높이. 0이면 고리 없음.
+export function hangerResidue(img) {
+  const h=findHook(img);if(!h)return 0;
+  const gh=h.garment.y1-h.y0+1;return gh>0?h.height/gh:0;
 }
 
 // 마네킹 꼭지·목 받침 지우기: 세로줄마다 '옷이 시작하는 높이'를 찾아, 그 위에 있는 마네킹 색(무채색·금색) 픽셀을 지웁니다.
