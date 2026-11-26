@@ -40,7 +40,7 @@ import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
 import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
-const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
+const defaultTexts=()=>({headline:'',description:'',product:'',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
 const defaultShopee=()=>({title:'',description:'',includeSizeChart:true});
 
 async function api(action,body) {

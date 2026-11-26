@@ -10,13 +10,13 @@ test('theme list: soft first, new products start soft, unknown/missing ids fall 
  for(const t of THEME_LIST.filter(t=>t.id!=='basic')){assert.match(t.google,/^family=/);for(const f of Object.values(t.fonts))assert.ok(f.family&&f.weight,t.id);}
 });
 test('basic HTML is unchanged by the theme roles',()=>{
- const blocks=documentBlocks({slots:withPhotos(['hero','frontZoom']),fitEnabled:false,texts,garment:'long-top',rows:[newSizeRow()]});
+ const blocks=documentBlocks({v2:false,slots:withPhotos(['hero','frontZoom']),fitEnabled:false,texts,garment:'long-top',rows:[newSizeRow()]});
  const plain=blocks.map(({role,section,...b})=>b);
  assert.equal(documentHtml(blocks,'t'),documentHtml(plain,'t'));
 });
 test('themed units keep the order: hero → text → fit → detail → size; magazine pairs details',()=>{
  const slots=withPhotos(['hero','fit','frontZoom','frontTop','fabric']);
- const blocks=documentBlocks({slots,fitEnabled:true,texts,garment:'long-top',rows:[{...newSizeRow(),size:'M',chest:'50',length:'60'}]});
+ const blocks=documentBlocks({v2:false,slots,fitEnabled:true,texts,garment:'long-top',rows:[{...newSizeRow(),size:'M',chest:'50',length:'60'}]});
  const minimal=themeUnits(blocks,THEMES.minimal).map(u=>u.type);
  assert.deepEqual(minimal,['hero','headline','body','section','photo','caption','section','label','photo','label','photo','label','photo','section','guide','table','note']);
  const mag=themeUnits(blocks,THEMES.magazine);
@@ -58,7 +58,7 @@ test('theme text wraps at spaces, not in the middle of a word; only over-long wo
 });
 test('size guide text is larger in soft, minimal and magazine (about 12px on a phone); basic and Shopee guides are unchanged',async()=>{
  const {guideSvg}=await import('../src/utils/studioDocument.js');
- const blocks=documentBlocks({slots:withPhotos(['hero']),fitEnabled:false,texts,garment:'long-pants',rows:[newSizeRow()]});
+ const blocks=documentBlocks({v2:false,slots:withPhotos(['hero']),fitEnabled:false,texts,garment:'long-pants',rows:[newSizeRow()]});
  const guideSrc=id=>themeUnits(blocks,THEMES[id]).find(u=>u.type==='guide').src;
  const svg=src=>decodeURIComponent(src.split(',')[1]);
  for(const id of ['soft','minimal','magazine']){

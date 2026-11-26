@@ -57,22 +57,39 @@ export function guideSvg(type,lang='ko',opts={}) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"><rect width="640" height="420" fill="white"/><defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10" fill="none" stroke="#596982"/></marker></defs><g transform="translate(145,0)"><path d="${shapes[type]||shapes['long-top']}" fill="#f4f5f7" stroke="#334155" stroke-width="2.5"/>${marks}</g><text x="320" y="382" text-anchor="middle" fill="#334155" font-size="14" font-family="sans-serif">${lang==='en'?legendEn:legend}</text></svg>`;
 }
 export const guideUrl = (type,lang,opts) => 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(guideSvg(type,lang,opts));
-export function documentBlocks({slots,fitEnabled,texts,garment,rows}) {
+// 옷걸이 v2(014) 상세페이지 순서: 옷걸이 정면 → (제목·설명) → 옷걸이 후면 → 디테일(자동 디테일컷, 정해진 순서) → [모델컷 자리] → 사이즈.
+// 모델컷은 서비스 조사 뒤 결정(사장님): 지금은 자리만 있고 꺼져 있습니다(MODEL_CUT_V2.enabled=false → 아무것도 그리지 않음).
+// 나중에 켜면 'AI 모델 컷' 표시와 함께 디테일 다음, 사이즈 앞에 들어갑니다.
+export const MODEL_CUT_V2 = {enabled:false, label:'AI 모델 컷'};
+const DETAIL_ORDER_V2 = ['neckline','fabric','placket','waist','hem','cuff'];
+export function documentBlocks({slots,fitEnabled,texts,garment,rows,v2=HANGER_V2,modelCut=MODEL_CUT_V2}) {
   const blocks=[];
   // role은 테마(detailThemes.js)가 모양을 정할 때 쓰는 표시입니다. 기본 테마는 쓰지 않습니다.
   const text=(value,size=24,role='body',extra={})=>{if(value?.trim())blocks.push({kind:'text',value,size,role,...extra});};
   const picture=(slot,role='photo')=>{if(slot?.enabled&&slot.image)blocks.push({kind:'image',src:slot.image,label:slot.label,role});};
   picture(slots.hero,'hero');
   text(texts.headline,36,'headline');text(texts.description,24,'body');text(texts.product,20,'product');
+  if(v2){
+    if(slots.back?.enabled&&slots.back.image){text(texts.backTitle||'Back',32,'section',{section:'back'});picture(slots.back,'photo');}
+    const order=d=>{const i=DETAIL_ORDER_V2.indexOf(d.derived.detail);return i<0?99:i;};
+    const details=Object.values(slots).filter(s=>s?.derived?.from&&s.enabled!==false&&s.image).sort((a,b)=>order(a)-order(b));
+    if(details.length){text(texts.detailTitle,32,'section',{section:'detail'});for(const slot of details){text(slot.label,24,'label');picture(slot,'detail');}}
+    if(modelCut?.enabled&&modelCut.slot?.image){text(modelCut.title||'Model',32,'section',{section:'model'});picture(modelCut.slot,'photo');text(modelCut.label,18,'note');}
+    sizeBlocks(blocks,text,texts,garment,rows);
+    return blocks;
+  }
   if(fitEnabled&&slots.fit.image&&slots.fit.enabled){text(texts.fitTitle,32,'section',{section:'fit'});picture(slots.fit);text(texts.fitDescription,22,'caption');}
   const details=Object.values(slots).filter(s=>!['hero','fit'].includes(s.id)&&s.enabled&&s.image);
   if(details.length){text(texts.detailTitle,32,'section',{section:'detail'});for(const slot of details){text(slot.label,24,'label');picture(slot,'detail');}}
+  sizeBlocks(blocks,text,texts,garment,rows);
+  return blocks;
+}
+function sizeBlocks(blocks,text,texts,garment,rows) {
   text(texts.sizeTitle,32,'section',{section:'size'});
   blocks.push({kind:'image',src:guideUrl(garment),label:'치수 측정 가이드',guide:true,role:'guide',garment});
   const fields=sizeFields(garment);
   blocks.push({kind:'table',headers:fields.map(([,label])=>label),rows:rows.map(row=>fields.map(([key])=>row[key]||'—')),role:'table'});
   text(texts.sizeNote,18,'note');
-  return blocks;
 }
 export function documentHtml(blocks,title) {
   const content=blocks.map(b=>b.kind==='text'?`<p style="font-size:${b.size}px">${esc(b.value)}</p>`:b.kind==='image'?`<img src="${esc(b.src)}" alt="${esc(b.label)}">`:`<table><thead><tr>${b.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${b.rows.map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`).join('');

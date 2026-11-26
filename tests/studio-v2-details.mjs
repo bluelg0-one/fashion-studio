@@ -35,6 +35,10 @@ try{
  const sides=await page.locator('.detail-grid img').evaluateAll(n=>n.map(i=>Math.max(i.naturalWidth,i.naturalHeight)));
  assert.ok(sides.every(v=>v>=800),`긴 변 ${sides}`);
  assert.equal(details,0,'확신하면 Claude 안 부름');
+ // 상세페이지(소프트 테마): 정면 → 후면 → 디테일 순서로 그려짐
+ await page.getByRole('button',{name:'전체 미리보기'}).first().click();await idle();
+ assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 소프트/);
+ const ph=await page.locator('.studio-preview img').first().evaluate(i=>i.naturalHeight);assert.ok(ph>3000,`상세페이지 높이 ${ph}`);
  // 상품 다시 열기 → 남아 있음
  await page.getByLabel('소매 끝 상세페이지에 포함').uncheck();await page.waitForTimeout(1200);
  await page.reload();await idle();
