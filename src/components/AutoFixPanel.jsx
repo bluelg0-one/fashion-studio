@@ -1,5 +1,6 @@
 // 상품 단위 자동 보정 화면 (지시서 010). 순서·상태는 utils/autoPipeline.js, 실제 처리는 AutoStudio의 autoSteps.
 import {useEffect, useRef, useState} from 'react';
+import {HANGER_V2} from '../utils/appMode.js';
 import {getProduct} from '../utils/productStore.js';
 import {planAuto, autoCounts, estimateAuto, remainingSeconds, summary, STATUS_LABEL} from '../utils/autoPipeline.js';
 import {loadAutoJob, saveAutoJob, clearAutoJob} from '../utils/importStore.js';
@@ -75,7 +76,7 @@ export default function AutoFixPanel({products,busy,setStep,freeEngines,runAutoJ
   const c=job?autoCounts(job):null,unfinished=job&&!job.finished,sum=job?summary(job):null;
   const toggle=id=>{setPlan(null);setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);};
   return <section className="auto-fix" aria-label="자동 보정" ref={box}>
-    <h3>자동 보정 <small>상품마다 자동 수평 → 1차(누끼·정리·색상) → 색감 통일 → 2차(Claude 찾기 ‘적극’ → IOPaint) → 최종</small></h3>
+    <h3>자동 보정 <small>{HANGER_V2?'상품마다 옷걸이 정면·후면 → 1차(누끼·옷걸이 유지·흰 배경·색상) → 색감 통일(정면 기준) → 2차(Claude 찾기 ‘적극’ → 그림자 펴기·작은 얼룩만 IOPaint, 회전 없음) → 디테일컷 잘라 내기 → 최종':'상품마다 자동 수평 → 1차(누끼·정리·색상) → 색감 통일 → 2차(Claude 찾기 ‘적극’ → IOPaint) → 최종'}</small></h3>
     <details className="auto-pick"><summary>자동 보정할 상품 고르기 ({selected.length}/{products.length})</summary>
       <div className="btn-row"><button type="button" className="subtle" disabled={busy} onClick={()=>{setPlan(null);setSelected(products.map(p=>p.id));}}>모두 선택</button><button type="button" className="subtle" disabled={busy} onClick={()=>{setPlan(null);setSelected([]);}}>모두 해제</button></div>
       <ul>{products.map(p=><li key={p.id}><label><input type="checkbox" aria-label={`자동 보정 ${p.name||'이름 없는 상품'}`} checked={selected.includes(p.id)} disabled={busy} onChange={()=>toggle(p.id)}/> {p.name||'이름 없는 상품'}</label></li>)}</ul>

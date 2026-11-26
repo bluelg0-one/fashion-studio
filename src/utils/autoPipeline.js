@@ -1,3 +1,4 @@
+import {HANGER_V2} from './appMode.js';
 // 상품 단위 자동 보정 (지시서 010) — 화면과 분리된 순서·상태 관리.
 // 상품마다: ① 모든 컷 자동 수평 → 1차(누끼·받침대·정리·색상 기본값)  ② 색감 통일(대표 정면컷 기준)  ③ 2차(Claude 찾기 ‘적극’ → 작은 상자 분할 → IOPaint)  ④ 최종 확정
 // 실제 처리(사진 계산·엔진 호출)는 deps.steps로 받습니다(AutoStudio.jsx). 단계가 끝날 때마다 상품과 진행 상태를 저장해서
@@ -104,7 +105,7 @@ export async function runAuto(job,deps) {
       const run=async(cut,step,work)=>{
         if(!todo(cut)||STEPS.indexOf(cut.step)>STEPS.indexOf(step))return;
         check(signal);
-        const t0=now();cut.status='running';progress(`${p.name} · ${cut.label} · ${{level:'자동 수평',stage1:'1차(누끼·정리·색상)',color:'색감 통일',stage2:'2차(수정할 곳 찾기 → IOPaint)'}[step]}`);
+        const t0=now();cut.status='running';progress(`${p.name} · ${cut.label} · ${{level:HANGER_V2?'준비(회전 없음)':'자동 수평',stage1:'1차(누끼·정리·색상)',color:'색감 통일',stage2:'2차(수정할 곳 찾기 → IOPaint)'}[step]}`);
         try {await work();cut.step=STEPS[STEPS.indexOf(step)+1];cut.status='pending';}
         catch(e){if(e?.stopped||e?.capReached)throw e;cut.status='failed';cut.error=String(e?.message||e).slice(0,200);}
         finally {cut.seconds+=Math.max(0,now()-t0)/1000;clock();await save(job);}
