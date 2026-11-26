@@ -5,6 +5,7 @@ import {rgbToLab, dominantLab} from './colorMatch.js';
 import {findButtons} from './flatten.js';
 import {garmentFrame} from './detailCrops.js';
 import {CHANNELS} from './channelSpecs.js';
+import {hangerResidue} from './cleanup.js';
 
 // 기준값(검증 기준서와 같은 숫자 — 바꾸면 기준서도 함께 고칩니다)
 export const QA={
@@ -15,7 +16,8 @@ export const QA={
   areaMin:.05,areaMax:.85,// 옷 면적 비율(배경이 남았거나 옷이 지워졌는지)
   islandShare:.0005,// 배경 잔여물: 옷과 떨어진 조각(사진의 0.05% 이상) 수, 1개 이상 보류
   buttonsDiff:0,// 단추 수 변화(1차 → 최종): 0이 아니면 불합격
-  hookMin:.012,// 옷걸이 고리: 몸판 위로 옷 높이의 1.2% 이상 솟은 좁은 부분
+  hookMin:.012,// 옷걸이 고리: 몸판 위로 옷 높이의 1.2% 이상 솟은 좁은 부분(옷걸이 남기기 설정일 때)
+  residueMax:.01,// 옷걸이 잔여물(016, 옷걸이 지우기 설정일 때): 맨 위에 남은 가는 고리 높이가 옷 높이의 1% 이상이면 불합격
   channelFill:.88,// 채널 사진에서 옷이 차지하는 긴 변 비율(여백 6%씩)
   upscaleMax:1.25,// 채널 사진을 만들 때 원본 옷을 1.25배까지 키우는 것은 통과, 더 키워야 하면 보류(흐려 보임)
 };
@@ -79,7 +81,7 @@ const r1=v=>Math.round(v*10)/10;
 
 // 컷 하나 점검. cut: {matte(누끼, 원본과 같은 크기), stage1, final(지금 최종), label}
 // 반환: checks[{key,cut,status,value,limit,reason,fix}] (fix: 다시 편집으로 고칠 수 있는 종류)
-export function checkCut({matte=null,stage1=null,final},name='front',o=QA) {
+export function checkCut({matte=null,stage1=null,final,hanger='keep'},name='front',o=QA) {
   const out=[],add=(key,status,value,limit,reason,fix=null)=>out.push({key,cut:name,status,value,limit,reason:status==='pass'||status==='na'?'':reason,fix:status==='pass'||status==='na'?null:fix});
   const area=opaqueShareOf(final);
   add('area',area<o.areaMin||area>o.areaMax?'fail':'pass',r1(area*100),`${o.areaMin*100}~${o.areaMax*100}%`,area<o.areaMin?`옷 면적이 너무 작음(${r1(area*100)}%) — 옷이 지워졌을 수 있음`:`옷 면적이 너무 큼(${r1(area*100)}%) — 배경이 남았을 수 있음`,'stage1');
@@ -96,9 +98,11 @@ export function checkCut({matte=null,stage1=null,final},name='front',o=QA) {
     const bt=buttonChangeOf(stage1,final),diff=bt.lost+bt.added;
     add('buttons',diff>o.buttonsDiff?'fail':'pass',diff,'0',`단추 수 변화: 잃음 ${bt.lost} · 생김 ${bt.added} (2차가 고친 범위 안 1차 ${bt.before}개 → 최종 ${bt.after}개)`,'stage2');
   }
+  // 옷걸이 지우기(016 v2 기본): 최종 사진에 남은 옷걸이(모양으로 찾은 가는 고리)가 없어야 함. 설정으로 더 고칠 수 없어 사장님 확인.
+  if(hanger==='remove'){const r=hangerResidue(final);add('hanger_residue',r>=o.residueMax?'fail':'pass',r1(r*100),`<${o.residueMax*100}%`,`옷걸이 고리가 남음(옷 높이의 ${r1(r*100)}%) — 누끼에서 지우지 못함`,null);}
   if(matte){
-    const was=hasHook(matte),now=hasHook(final);
-    add('hanger_hook',!was?'na':now?'pass':'fail',now?1:0,was?'1':'-','누끼에는 있던 옷걸이 고리가 최종 사진에서 사라짐','hook');
+    if(hanger!=='remove'){const was=hasHook(matte),now=hasHook(final);
+    add('hanger_hook',!was?'na':now?'pass':'fail',now?1:0,was?'1':'-','누끼에는 있던 옷걸이 고리가 최종 사진에서 사라짐','hook');}
     // 해상도·규격: 원본 옷 긴 변이 채널 사진 크기 × 0.88 이상이어야 늘리지 않음
     const f=garmentFrame(matte),side=f?Math.max(f.x1-f.x0+1,f.hemY-f.y0+1):0;
     for(const ch of CHANNELS){

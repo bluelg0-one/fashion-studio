@@ -7,7 +7,7 @@ import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {estimateCanvasTilt, rotateCanvas, borderColor, decideLevel, autoLevelAllowed, coverScale} from '../utils/level.js';
 import {removeIslands, solidifyThin, removeHanger, removeMannequinTop, clearAboveFinial, restoreHook, clearWallPockets} from '../utils/cleanup.js';
 import {GARMENTS, initialSlots, DETAIL_SLOTS, newSizeRow, sizeFields, guideUrl, documentBlocks, documentHtml} from '../utils/studioDocument.js';
-import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE} from '../utils/retouchPresets.js';
+import {DEFAULT_RETOUCH, POST_OPTIONS, sanitizeRetouch, DEFAULT_TONE, keepSavedHanger} from '../utils/retouchPresets.js';
 import {RetouchSettings, cutoutCost} from './RetouchSettings.jsx';
 import {CutRow, SHOT_LABEL} from './CutRow.jsx';
 import {applyTone} from '../utils/matte.js';
@@ -118,7 +118,7 @@ export default function AutoStudio() {
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
     const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived===true&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
-    setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch({...DEFAULT_RETOUCH,...d.retouch}));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
+    setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch(keepSavedHanger(d.retouch)));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
     setDetailReport(d.detailReport||null);setQa(d.qa||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
@@ -347,13 +347,14 @@ export default function AutoStudio() {
   }
   // ---- 자동 점검(014-2): 검증 기준서의 자동 측정 항목(qaCheck.js) ----
   async function qaOf(data) {
-    const load=async slot=>{if(!slot?.cutout)return null;const e=entryOf(slot)||{};return {matte:e.matte?await pixelsOf(e.matte):null,stage1:e.stage1?await pixelsOf(e.stage1):null,final:await pixelsOf(slot.cutout)};};
+    // hanger: 이 컷에 실제로 쓰인 옷걸이 설정(016: 지우기면 '옷걸이 잔여물 없음', 남기기면 '고리 유지'를 점검)
+    const load=async slot=>{if(!slot?.cutout)return null;const e=entryOf(slot)||{};return {matte:e.matte?await pixelsOf(e.matte):null,stage1:e.stage1?await pixelsOf(e.stage1):null,final:await pixelsOf(slot.cutout),hanger:{...keepSavedHanger(data.retouch),...(slot.retouch||{})}.hangerMode||'keep'};};
     return checkProduct({front:await load(data.slots?.hero),back:await load(data.slots?.back),details:data.detailReport||null});
   }
   async function runQa() {
     await task(async()=>{
       setStep('자동 점검 중 (브라우저 계산, 무료)');
-      const r=await qaOf({slots,detailReport});
+      const r=await qaOf({slots,detailReport,retouch});
       setQa({status:r.status,reasons:r.reasons,checks:r.checks,attempts:0,owner:r.status!=='pass',at:Date.now(),manual:true});
       setStep(`자동 점검: ${QA_STATUS_LABEL[r.status]}${r.reasons.length?` · ${r.reasons.join(' · ')}`:''}`);
     });
@@ -714,7 +715,7 @@ export default function AutoStudio() {
   };
   // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
   // 누끼는 무료 BiRefNet(사장님 PC)으로 고정, 유료 대체(paid)일 때만 Photoroom. 나머지 설정은 그 상품·컷의 지금 기본값 그대로.
-  const autoOptions=(slot,data,paid)=>({...sanitizeRetouch({...DEFAULT_RETOUCH,...(data?.retouch||{}),...(slot.retouch||{})}),cutout:paid?'photoroom':'birefnet'});
+  const autoOptions=(slot,data,paid)=>({...sanitizeRetouch({...keepSavedHanger(data?.retouch),...(slot.retouch||{})}),cutout:paid?'photoroom':'birefnet'});
   const autoSteps={
     level:async(slot,{product})=>{
       const options=autoOptions(slot,product.data,false);

@@ -33,10 +33,10 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
       {!HANGER_V2&&<label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>}
       <label>옷걸이<select aria-label={`${prefix}옷걸이`} value={value.hangerMode||'keep'} onChange={e=>set({hangerMode:e.target.value})}>
         <option value="keep">남기기 (반투명해진 고리만 선명하게)</option>
-        <option value="remove">지우기</option>
+        <option value="remove">지우기{HANGER_V2?' (기본)':''} — 고리·목 안쪽 바·어깨 끝, 가렸던 곳은 채우지 않음</option>
       </select></label>
       {HANGER_V2&&<p className="slot-note">옷걸이 v2: 받침대 기둥 지우기·마네킹 꼭지 정리·자동 수평은 쓰지 않습니다(옷걸이 사진에는 없고, 끈·금색 고리를 잘못 지울 수 있음).</p>}
-      <p className="slot-note">옷 색으로 마네킹·옷걸이를 구분합니다. 흰색·회색·검정 옷은 구분할 수 없어 마네킹·옷걸이 지우기를 건너뜁니다.</p>
+      <p className="slot-note">{HANGER_V2?'옷걸이 고리는 모양(가는 줄)으로 찾아 옷 색과 상관없이 지웁니다. 옷걸이 바는 옷과 색이 다를 때만 지웁니다(검정 옷 + 검정 옷걸이는 바가 남을 수 있음).':'옷 색으로 마네킹·옷걸이를 구분합니다. 흰색·회색·검정 옷은 구분할 수 없어 마네킹·옷걸이 지우기를 건너뜁니다.'}</p>
     </div>
     {/* 옷걸이 v2: 생성형 추가 편집(고스트 마네킹·플랫레이·프롬프트)은 없는 모양을 만들 수 있어 숨김(014) */}
     {!HANGER_V2&&value.cutout!=='birefnet'&&<details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>

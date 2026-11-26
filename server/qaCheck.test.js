@@ -68,3 +68,27 @@ test('014-2: QA report CSV has fixed English columns, one row per check, escaped
   assert.equal(lines[0],QA_COLUMNS.join(','));assert.equal(lines.length,r.checks.length+1);
   assert.match(lines[1],/^p1,"아이보리, ""가디건""",2026-11-26T00:00:00.000Z,hold,2,yes,front,area,pass,/);
 });
+
+// ---- 016: 옷걸이 지우기(v2 기본) ----
+import {removeHanger, removeIslands} from '../src/utils/cleanup.js';
+import {planDetails} from '../src/utils/detailCrops.js';
+import {hanging, SILVER, BROWN} from './fixtures/hanging.js';
+test('016: hanger removed → "no hanger left" passes and the hook-kept check is not used; a hook left behind fails without automatic retry',()=>{
+  const f=hanger({k:1.15}),clean=copy(f);removeHanger(clean);removeIslands(clean);
+  const ok=checkCut({matte:clean,stage1:clean,final:clean,hanger:'remove'});
+  assert.equal(ok.find(c=>c.key==='hanger_residue').status,'pass');assert.ok(!ok.some(c=>c.key==='hanger_hook'),'고리 유지 항목 없음');
+  const bad=checkCut({matte:f,stage1:f,final:f,hanger:'remove'}).find(c=>c.key==='hanger_residue');
+  assert.equal(bad.status,'fail');assert.equal(bad.fix,null,'설정으로 못 고침 → 사장님 확인');assert.match(bad.reason,/옷걸이 고리가 남음/);
+  const keep=checkCut({matte:f,stage1:f,final:f});assert.equal(keep.find(c=>c.key==='hanger_hook').status,'pass','남기기 설정은 예전 점검 그대로');assert.ok(!keep.some(c=>c.key==='hanger_residue'));
+});
+test('016: after hanger removal the neckline detail crop has no hanger pixels (hook, bar) and still shows the neckline',()=>{
+  const front=hanging([190,95,115],{k:2.4}),back=hanging([190,95,115],{k:2.4});
+  for(const img of [front,back]){removeHanger(img);removeIslands(img);}
+  const r=planDetails({front,back,garment:'long-top'}),neck=r.items.find(i=>i.id==='neckline');
+  assert.ok(neck,JSON.stringify(r.skipped));
+  const {x,y,w,h}=neck.box;let hangerPx=0,garmentPx=0;
+  const near=(d,i,c)=>Math.abs(d[i]-c[0])+Math.abs(d[i+1]-c[1])+Math.abs(d[i+2]-c[2])<30;
+  for(let yy=Math.max(0,y);yy<Math.min(front.height,y+h);yy++)for(let xx=Math.max(0,x);xx<Math.min(front.width,x+w);xx++){const i=(yy*front.width+xx)*4;if(front.data[i+3]<30)continue;
+    if(near(front.data,i,SILVER)||near(front.data,i,BROWN))hangerPx++;else garmentPx++;}
+  assert.equal(hangerPx,0,'넥라인 컷에 옷걸이 픽셀 없음');assert.ok(garmentPx>w*h*.3,'넥라인 컷에 옷이 담김');
+});
