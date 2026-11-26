@@ -73,7 +73,7 @@ export function planDetails({front,back=null,garment='long-top',scale={},ai=null
   const items=[],skipped=[],ids=detailIds(garment),pants=garment.endsWith('pants');
   const frames={front:front?garmentFrame(front):null,back:back?garmentFrame(back):null};
   const add=(id,from,cx,cy,h0,sure=true,reason=null)=>{
-    const label=DETAIL_LABELS[id],img=from==='front'?front:back,f=frames[from],s=Math.max(1,scale[from]||1),[,maxF]=SIZE[id];
+    const label=DETAIL_LABELS[id],img=from==='front'?front:back,f=frames[from],s=scale[from]||1,[,maxF]=SIZE[id];// s<1: 원본이 보정본보다 큼(원본에서 자름)
     if(!sure){
       const a=ai?.[id];
       if(a&&a.present===false){skipped.push({id,label,reason:'Claude: 이 옷에는 없음',review:false});return;}

@@ -18,7 +18,7 @@ import {listProducts, getProduct, saveProduct, deleteProduct, newProductId} from
 import DrivePanel from './DrivePanel.jsx';
 import DriveImportPanel from './DriveImportPanel.jsx';
 import {assignSlots} from '../utils/driveImport.js';
-import {driveThumb, driveFull, refThumb} from '../utils/drivePhotos.js';
+import {driveThumb, driveFull, driveFullWithOriginal, refThumb} from '../utils/drivePhotos.js';
 import {markImported} from '../utils/importStore.js';
 import {runAuto, levelFlag, areaFlag, opaqueFraction, colorFlag, deltaE, regionsFlag} from '../utils/autoPipeline.js';
 import {claudeCost, PHOTOROOM} from '../utils/pricing.js';
@@ -39,6 +39,8 @@ import CostPanel from './CostPanel.jsx';
 import {addCost} from '../utils/costLog.js';
 import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
 import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
+import {readOriginal} from '../utils/studioImages.js';
+import {frameMap, originalBox, composeCrop, DETAIL_MAX_SIDE} from '../utils/originalCrop.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -56,11 +58,15 @@ async function api(action,body) {
 }
 
 const MAX_VERSIONS=6;
-const PHOTO_FIELDS=['source','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2','auto'];
+const PHOTO_FIELDS=['source','original','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2','auto'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
 const entryOf=slot=>{const v=(slot.versions||[null])[slot.vIndex??0];return typeof v==='string'?{matte:null,stage1:v,stage2:null}:v||null;};
 const entryFields=e=>e?{matte:e.matte||null,stage1:e.stage1||null,stage2:e.stage2||null,cutout:e.stage2||e.stage1||null,status:'done'}:{matte:null,stage1:null,stage2:null,cutout:null,status:'raw'};
+// ops(014): 1차에 적용한 전체 보정 값 [{op:'tone'|'white'|'shift',...}] — 원본 해상도 디테일컷에 같은 값을 다시 씁니다.
+// 같은 1차 위에서 만든 새 버전(2차 등)은 지금 버전의 ops를 그대로 물려받습니다.
 function withEntry(slot,entry) {
+  const cur=entryOf(slot);
+  if(entry.ops===undefined&&cur?.ops&&cur.stage1===entry.stage1)entry={...entry,ops:cur.ops};
   const kept=(slot.versions||[null]).slice(0,(slot.vIndex??0)+1),versions=[...kept,entry].slice(-MAX_VERSIONS);
   return {...slot,...entryFields(entry),versions,vIndex:versions.length-1};
 }
@@ -205,8 +211,10 @@ export default function AutoStudio() {
   async function upload(id,file) {
     await task(async()=>{
       const source=await readPhoto(file),canvas=await imageCanvas(source);
+      // 옷걸이 v2: 정면·후면은 원본(줄이기 전)도 보관 → 디테일컷을 원본 해상도에서 자름(014)
+      const original=HANGER_V2&&(id==='hero'||id==='back')?await readOriginal(file):null;
       const lv=await initialLevel(source,slots[id]?.retouch||retouch,id);
-      patch(id,{source,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,auto:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
+      patch(id,{source,original,...lv,image:whitePhoto(canvas,null,0),cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:{...DEFAULT_TONE},rawCut:null,auto:null,crop:null,derived:false,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0});
       setStep('사진을 넣었습니다. 누끼·보정을 적용하거나 사진을 더 추가하세요.');
     });
   }
@@ -279,13 +287,14 @@ export default function AutoStudio() {
     return c.toDataURL('image/png');
   }
   // 1차 결과 = 누끼 + 색상 보정(밝기·화사함) + 기준 색감 맞춤(다른 컷이 기준일 때) + 중앙 정렬
-  async function buildStage1(matte,{options,tone,slotId,ref=colorRef}) {
+  // ops 배열을 넘기면 적용한 값을 순서대로 담습니다(014 원본 해상도 디테일컷용).
+  async function buildStage1(matte,{options,tone,slotId,ref=colorRef,ops=null}) {
     let c=await imageCanvas(matte);
     const ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
-    applyTone(px,tone||{});
+    applyTone(px,tone||{});if(ops&&(tone?.bright||tone?.vivid))ops.push({op:'tone',bright:tone.bright||0,vivid:tone.vivid||0});
     // 흰·아이보리 옷이면 누런 기를 약하게 덜고 밝은 부분을 살짝 올립니다(013-B, 실물과 다르지 않게 최대 Lab 5·밝기 +3).
-    if(options?.clearWhite!==false)clearWhite(px);
-    if(ref&&ref.slotId!==slotId){try{applyShift(px,colorShift(dominantLab(px),ref.lab,matchStrength/100));}catch{}}
+    if(options?.clearWhite!==false){const w=clearWhite(px);if(ops&&w.applied)ops.push({op:'white',a:w.shift.a,b:w.shift.b});}
+    if(ref&&ref.slotId!==slotId){try{const sh=colorShift(dominantLab(px),ref.lab,matchStrength/100);applyShift(px,sh);if(ops&&(sh.L||sh.a||sh.b))ops.push({op:'shift',...sh});}catch{}}
     ctx.putImageData(px,0,0);
     if(options?.center!==false)c=framePhoto(c,{margin:6,size:[c.width,c.height]});
     return c.toDataURL('image/png');
@@ -315,10 +324,10 @@ export default function AutoStudio() {
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
         costCut.current=slot.label;
         const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
-        const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id});
+        const ops=[],stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id,ops});
         const prev=entryOf(slot);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
-        current={...current,[slot.id]:{...(prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null}),rawCut:raw||slot.rawCut||null}};
+        current={...current,[slot.id]:{...(prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null}),rawCut:raw||slot.rawCut||null}};
         current=await refreshImages(current);
         setSlots(current);
       }
@@ -351,9 +360,15 @@ export default function AutoStudio() {
   // ai: 확신 없는 디테일(단추 없음·소매가 붙음 등)만 Claude 1회로 상자를 받음(선택·유료, 같은 사진은 다시 부르지 않음).
   async function buildDetails(cur,garmentId,{ai=false,product=productName}={}) {
     const hero=cur.hero,back=cur.back,front=hero?.cutout?await pixelsOf(hero.cutout):null,backPx=back?.cutout?await pixelsOf(back.cutout):null;
-    // 1차 정렬(가운데 맞추기)로 옷이 커졌으면, 원본(누끼) 대비 몇 배인지 → 원본 해상도로 판단
-    const scaleOf=async(slot,px)=>{const m=(entryOf(slot)||{}).matte||slot?.matte;if(!m||!px)return 1;const a=garmentFrame(await pixelsOf(m)),b=garmentFrame(px);return a&&b?b.gw/a.gw:1;};
-    const scale={front:await scaleOf(hero,front),back:await scaleOf(back,backPx)};
+    // 보정본 px / 원본 px. 원본(줄이기 전)을 보관했으면 원본 기준(1보다 작을 수 있음 → 원본에서 자름), 없으면 누끼 기준(1 이상, 키우지 않음)
+    const geo={};
+    for(const [k,slot,px] of [['front',hero,front],['back',back,backPx]]){
+      const m=(entryOf(slot)||{}).matte||slot?.matte;if(!m||!px){geo[k]={s:1};continue;}
+      const mp=await pixelsOf(m),map=frameMap(mp,px);if(!map){geo[k]={s:1};continue;}
+      if(slot.original){const oc=await imageCanvas(slot.original),ratio=oc.width/mp.width;geo[k]={s:map.sx/ratio,map,ratio,oc,mp};}
+      else geo[k]={s:Math.max(1,map.sx)};
+    }
+    const scale={front:geo.front.s,back:geo.back.s};
     let plan=planDetails({front,back:backPx,garment:garmentId,scale}),aiUsed=false,cost=null;
     const unsure=front?plan.skipped.filter(x=>x.review).map(x=>x.id):[];
     if(ai&&unsure.length){
@@ -370,13 +385,26 @@ export default function AutoStudio() {
     }
     const next={};
     for(const [k,v] of Object.entries(cur))if(!v?.derived?.from)next[k]=v;
+    const fit=(w,h)=>{const k=Math.min(1,DETAIL_MAX_SIDE/Math.max(w,h));return [Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k))];};
+    const canvasOf=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');g.imageSmoothingQuality='high';return [c,g];};
     for(const it of plan.items){
-      const src=it.from==='front'?hero:back,c=await imageCanvas(src.cutout),s=Math.max(1,scale[it.from]||1),{x,y,w,h}=it.box;
-      const out=document.createElement('canvas');out.width=Math.round(w/s);out.height=Math.round(h/s);
-      const g=out.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(c,x,y,w,h,0,0,out.width,out.height);
-      const id=detailSlotId(it.id),png=out.toDataURL('image/png'),old=cur[id];
+      const src=it.from==='front'?hero:back,G=geo[it.from],{x,y,w,h}=it.box,e=entryOf(src)||{};let png,origin='보정본';
+      if(G.oc){
+        // 원본 해상도: 원본 조각 + 같은 보정 값(ops) + 늘린 누끼 알파 + 2차가 바꾼 곳만 늘린 최종 픽셀
+        const ob=originalBox(it.box,G.map,G.ratio,G.oc.width,G.oc.height),[W,H]=fit(ob.w,ob.h);
+        const grab=async(url,sx,sy,sw,sh)=>{const [c,g]=canvasOf(W,H);g.drawImage(url instanceof HTMLCanvasElement?url:await imageCanvas(url),sx,sy,sw,sh,0,0,W,H);return g.getImageData(0,0,W,H);};
+        const orig=await grab(G.oc,ob.x,ob.y,ob.w,ob.h);
+        const [mx,my]=G.map.toMatte(x,y),alpha=await grab(e.matte,mx,my,w/G.map.sx,h/G.map.sx);
+        const s1=e.stage2&&e.stage1?await grab(e.stage1,x,y,w,h):null,s2=s1?await grab(e.stage2,x,y,w,h):null;
+        const {image}=composeCrop({orig,alpha,s1,s2,ops:e.ops||[]});
+        const [c,g]=canvasOf(W,H);g.putImageData(image,0,0);png=c.toDataURL('image/png');origin='원본';
+      } else {
+        const c=await imageCanvas(src.cutout),s=Math.max(1,G.s||1),[W,H]=fit(w/s,h/s),[out,g]=canvasOf(W,H);
+        g.drawImage(c,x,y,w,h,0,0,W,H);png=out.toDataURL('image/png');
+      }
+      const id=detailSlotId(it.id),old=cur[id],side=it.outSide>DETAIL_MAX_SIDE?DETAIL_MAX_SIDE:it.outSide;
       next[id]={id,label:it.label,enabled:old?.enabled??true,source:null,image:null,cutout:png,stage1:png,stage2:null,matte:null,status:'done',versions:[null],vIndex:0,
-        derived:{from:src.id,detail:it.id,box:it.box,side:out.height,at:Date.now()}};
+        derived:{from:src.id,detail:it.id,box:it.box,side,origin,at:Date.now()}};
     }
     return {slots:next,report:{items:plan.items.map(({id,label,from,outSide})=>({id,label,from,outSide})),skipped:plan.skipped,ai:aiUsed,garment:garmentId,at:Date.now()},cost};
   }
@@ -400,8 +428,9 @@ export default function AutoStudio() {
   // 1차·2차를 같은 양만큼 옮겨 새 버전으로
   async function matchedEntry(slot,lab,strength) {
     const e=entryOf(slot)||{stage1:slot.cutout};
-    const stage1=e.stage1?(await matchedCutout(e.stage1,lab,strength)).image:null,stage2=e.stage2?(await matchedCutout(e.stage2,lab,strength)).image:null;
-    return withEntry(slot,{matte:e.matte||null,stage1,stage2});
+    const m1=e.stage1?await matchedCutout(e.stage1,lab,strength):null,stage1=m1?.image||null,stage2=e.stage2?(await matchedCutout(e.stage2,lab,strength)).image:null;
+    const sh=m1?.shift,ops=[...(e.ops||[]),...(sh&&(sh.L||sh.a||sh.b)?[{op:'shift',...sh}]:[])];
+    return withEntry(slot,{matte:e.matte||null,stage1,stage2,ops});
   }
   // 컷의 단계(1차·2차·최종)에서 고른 옷 색감을 기준으로. stage=null이면 해제.
   async function chooseColorRef(id,stage) {
@@ -417,8 +446,8 @@ export default function AutoStudio() {
   async function matteEdit(id,matte) {
     await task(async()=>{
       const slot=slots[id],options=slot.retouch||retouch;
-      const stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:id});
-      setSlots(await refreshImages({...slots,[id]:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null}}));
+      const ops=[],stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:id,ops});
+      setSlots(await refreshImages({...slots,[id]:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null}}));
       setStep(`${slot.label} · 배경 직접 수정을 적용했습니다 (무료). 2차 보정을 했다면 다시 해 주세요.`);
     });
   }
@@ -427,8 +456,8 @@ export default function AutoStudio() {
       const slot=slots[id],options=slot.retouch||retouch,e=entryOf(slot)||{};
       const base=e.matte||slot.matte;
       if(!base)throw new Error('이 컷은 예전 방식으로 보정되어 색상 보정을 하려면 ‘이 사진 누끼·보정’을 한 번 더 눌러 주세요(같은 사진이면 다시 과금하지 않을 수 있습니다).');
-      const stage1=await buildStage1(base,{options,tone,slotId:id});
-      setSlots(await refreshImages({...slots,[id]:{...withEntry(slot,{matte:base,stage1,stage2:null}),tone,defects:null}}));
+      const ops=[],stage1=await buildStage1(base,{options,tone,slotId:id,ops});
+      setSlots(await refreshImages({...slots,[id]:{...withEntry(slot,{matte:base,stage1,stage2:null,ops}),tone,defects:null}}));
       setStep(`${slot.label} · 색상 보정을 적용했습니다 (밝기 ${tone.bright}, 화사하게 ${tone.vivid}). 2차 보정을 했다면 다시 해 주세요.`);
     });
   }
@@ -623,7 +652,7 @@ export default function AutoStudio() {
       if(!list.length)return;
       if(list.length>24)throw new Error('한 번에 24장까지 분류할 수 있습니다. 나눠서 올려 주세요.');
       const photos=[];
-      for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name});}
+      for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name,file:list[i]});}
       setStep(`Claude가 사진 ${photos.length}장을 옷별·컷별로 분류하는 중`);
       const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb})),...(HANGER_V2?{mode:'hanger'}:{})});
       logCost(claudeRow({feature:'classify',product:'(한꺼번에 올리기)',cut:`사진 ${photos.length}장`,responses:[result],photos:photos.length}));
@@ -636,7 +665,7 @@ export default function AutoStudio() {
         const next=initialSlots();let fit=false;
         for(const {slotId,item} of assignSlots(g.items)){
           const p=byId[item.id];
-          if(await placePhoto(next,slotId,item,p.full,{file:p.name})==='fit')fit=true;
+          if(await placePhoto(next,slotId,item,p.full,{file:p.name},HANGER_V2&&(slotId==='hero'||slotId==='back')?await readOriginal(p.file):null)==='fit')fit=true;
         }
         built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
       }
@@ -654,10 +683,10 @@ export default function AutoStudio() {
     });
   }
   // 분류된 사진 한 장을 칸에 넣습니다(한꺼번에 올리기·드라이브 가져오기 공통). slotId가 없으면 추가 칸을 만듭니다.
-  async function placePhoto(next,slotId,item,full,extra={}) {
+  async function placePhoto(next,slotId,item,full,extra={},original=null) {
     let id=slotId;
     if(!id){id='extra-'+crypto.randomUUID();next[id]={id,label:item.shot==='unknown'?'확인 필요 사진':`${SHOT_LABEL[item.shot]||'추가'}컷`,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'};}
-    next[id]={...next[id],source:full,...await initialLevel(full,retouch,id,item.shot),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,auto:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
+    next[id]={...next[id],source:full,original,...await initialLevel(full,retouch,id,item.shot),image:whitePhoto(await imageCanvas(full),null,0),tone:{...DEFAULT_TONE},rawCut:null,auto:null,status:'raw',enabled:true,shown:true,versions:[null],vIndex:0,ai:{shot:item.shot,confidence:item.confidence,review:item.review,note:item.note,...extra}};
     return id;
   }
   // ---- 드라이브에서 가져오기(009): 화면 밖 흐름(driveImport.js)에 넘기는 함수들 ----
@@ -667,8 +696,8 @@ export default function AutoStudio() {
     const next=old?migrateSlots(old.data?.slots):initialSlots();
     let fit=Boolean(old?.data?.fitEnabled);
     for(const {slotId,item} of assignSlots(items,Object.keys(next).filter(k=>next[k].source))){
-      const full=await driveFull(item);
-      if(await placePhoto(next,slotId,item,full,{file:item.name,driveId:item.id})==='fit')fit=true;
+      const keep=HANGER_V2&&(slotId==='hero'||slotId==='back'),{full,original}=keep?await driveFullWithOriginal(item):{full:await driveFull(item),original:null};
+      if(await placePhoto(next,slotId,item,full,{file:item.name,driveId:item.id},original)==='fit')fit=true;
     }
     const product=old?{...old,data:{...old.data,slots:next,fitEnabled:fit}}:{id:newProductId(),name:description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}};
     await saveProduct(product);await markImported(items,product.id);
@@ -694,16 +723,16 @@ export default function AutoStudio() {
       costProduct.current=product.name;costCut.current=slot.label;
       const options=autoOptions(slot,product.data,paid),warnings=[];
       const {matte,raw,charged}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
-      const stage1=await buildStage1(matte,{options,tone:slot.tone||DEFAULT_TONE,slotId:slot.id,ref:null});
+      const ops=[],stage1=await buildStage1(matte,{options,tone:slot.tone||DEFAULT_TONE,slotId:slot.id,ref:null,ops});
       const f=areaFlag(opaqueFraction(await pixelsOf(matte)));
-      return {slot:{...withEntry(slot,{matte,stage1,stage2:null}),defects:null,rawCut:raw||slot.rawCut||null},
+      return {slot:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null,rawCut:raw||slot.rawCut||null},
         flags:[...(f?[f]:[]),...(paid?['무료 엔진이 꺼져 유료(Photoroom)로 누끼']:[]),...warnings],cost:charged?{paid:PHOTOROOM.perCall}:null};
     },
     refLab:async slot=>{const l=dominantLab(await pixelsOf(entryOf(slot)?.stage1||slot.cutout));return {L:l.L,a:l.a,b:l.b};},
     color:async(slot,lab)=>{
-      const e=entryOf(slot)||{stage1:slot.cutout},{image}=await matchedCutout(e.stage1,lab);
-      const f=colorFlag(deltaE(dominantLab(await pixelsOf(image)),lab));
-      return {slot:withEntry(slot,{matte:e.matte||null,stage1:image,stage2:null}),flags:f?[f]:[]};
+      const e=entryOf(slot)||{stage1:slot.cutout},{image,shift}=await matchedCutout(e.stage1,lab);
+      const f=colorFlag(deltaE(dominantLab(await pixelsOf(image)),lab)),ops=[...(e.ops||[]),...(shift.L||shift.a||shift.b?[{op:'shift',...shift}]:[])];
+      return {slot:withEntry(slot,{matte:e.matte||null,stage1:image,stage2:null,ops}),flags:f?[f]:[]};
     },
     // mode(014-2 다시 편집): 'gentle' = 같은 1차에서 찾은 곳(저장된 결과 재사용, 추가 비용 없음) 중 구김 그림자 펴기만 · 'skip' = 2차 없이 1차를 최종으로
     stage2:async(slot,{paid,product,mode=null})=>{
@@ -883,7 +912,7 @@ export default function AutoStudio() {
   function removePhoto(id) {
     setPreview(null);
     setSlots(current=>{
-      const next={...current,[id]:{...current[id],source:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,raw2:null,auto:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
+      const next={...current,[id]:{...current[id],source:null,original:null,image:null,cutout:null,matte:null,stage1:null,stage2:null,defects:null,tone:null,level:null,workSource:null,rawCut:null,raw2:null,auto:null,crop:null,derived:false,status:'empty',versions:[null],vIndex:0,retouch:null}};
       return next;
     });
   }
@@ -976,7 +1005,7 @@ export default function AutoStudio() {
         <p className="slot-note">{detailIds(garment).map(id=>DETAIL_LABELS[id]).join(' · ')} ({GARMENTS.find(g=>g.id===garment)?.label}) · 원본 기준 긴 변 {DETAIL_MIN_SIDE}px이 안 나오면 키우지 않고 빼고 ‘해상도 부족’으로 표시합니다. 정면·후면을 다시 보정했으면 다시 만들어 주세요.</p>
         {derivedCuts.length>0&&<div className="detail-grid">{derivedCuts.map(s=><figure key={s.id} data-detail={s.derived.detail}>
           <img src={s.image||s.cutout} alt={`${s.label} 디테일컷`}/>
-          <figcaption><b>{s.label}</b> · {s.derived.from==='back'?'후면':'정면'}에서 · {s.derived.side}px
+          <figcaption><b>{s.label}</b> · {s.derived.from==='back'?'후면':'정면'} {s.derived.origin||'보정본'}에서 · {s.derived.side}px
             <label className="check"><input type="checkbox" aria-label={`${s.label} 상세페이지에 포함`} checked={s.enabled!==false} onChange={e=>patch(s.id,{enabled:e.target.checked})}/>상세페이지에 포함</label></figcaption>
         </figure>)}</div>}
         {detailReport?.skipped?.length>0&&<ul className="detail-skipped" aria-label="빠진 디테일">{detailReport.skipped.map(x=><li key={x.id} className={x.review?'review-note':''}>{x.label}: {x.reason}</li>)}</ul>}

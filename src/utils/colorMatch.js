@@ -82,7 +82,9 @@ export const labCss=({L,a,b})=>{const [r,g,bl]=labToRgb(L,a,b);return `rgb(${r},
 //    밝고 무채색에 가까운 픽셀에만 적용(채도 30 이상인 무늬·단추, 어두운 곳은 그대로).
 //  - 밝기: 밝은 부분(L 56~100)을 최대 +3만 올리고 L 97을 넘기지 않습니다(결이 하얗게 날아가지 않게).
 export const CLEAR_WHITE={minL:70,maxC:18,keep:.4,maxShift:5,lift:3,maxL:97};
-export function clearWhite({data,width,height}) {
+// given={a,b}: 이미 계산한 이동값을 그대로 씁니다(014: 원본 해상도 디테일컷에 보정본과 같은 값을 다시 적용).
+export function clearWhite({data,width,height},given=null) {
+  if(given)return applyWhite(data,given.a,given.b),{applied:true,shift:{a:given.a,b:given.b}};
   const Ls=[],Cs=[],px=[];
   const step=Math.max(1,Math.floor(Math.sqrt(width*height/200000)));
   for(let y=0;y<height;y+=step)for(let x=0;x<width;x+=step){const i=(y*width+x)*4;if(data[i+3]<200)continue;const l=rgbToLab(data[i],data[i+1],data[i+2]);Ls.push(l[0]);Cs.push(Math.hypot(l[1],l[2]));px.push(l);}
@@ -92,6 +94,11 @@ export function clearWhite({data,width,height}) {
   const q=Float64Array.from(Ls).sort()[Math.floor(Ls.length*.75)],bright=px.filter(l=>l[0]>=q&&Math.hypot(l[1],l[2])<30);
   const ca=bright.reduce((s,l)=>s+l[1],0)/bright.length,cb=bright.reduce((s,l)=>s+l[2],0)/bright.length;
   let sa=-ca*(1-CLEAR_WHITE.keep),sb=-cb*(1-CLEAR_WHITE.keep);const m=Math.hypot(sa,sb);if(m>CLEAR_WHITE.maxShift){sa*=CLEAR_WHITE.maxShift/m;sb*=CLEAR_WHITE.maxShift/m;}
+  applyWhite(data,sa,sb);
+  const r1=v=>Math.round(v*10)/10;
+  return {applied:true,medianL:r1(mL),medianC:r1(mC),castBefore:{a:r1(ca),b:r1(cb)},castAfter:{a:r1(ca+sa),b:r1(cb+sb)},shift:{a:sa,b:sb}};
+}
+function applyWhite(data,sa,sb) {
   const cache=new Map();
   for(let i=0;i<data.length;i+=4){
     if(data[i+3]===0)continue;
@@ -106,6 +113,4 @@ export function clearWhite({data,width,height}) {
     }
     data[i]=out[0];data[i+1]=out[1];data[i+2]=out[2];
   }
-  const r1=v=>Math.round(v*10)/10;
-  return {applied:true,medianL:r1(mL),medianC:r1(mC),castBefore:{a:r1(ca),b:r1(cb)},castAfter:{a:r1(ca+sa),b:r1(cb+sb)},shift:{a:r1(sa),b:r1(sb)}};
 }

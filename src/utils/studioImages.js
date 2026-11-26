@@ -21,6 +21,21 @@ export async function readPhoto(file) {
     throw new Error('압축 후에도 사진이 큽니다. 더 작은 사진으로 선택하세요.');
   }finally{URL.revokeObjectURL(url);}
 }
+// 옷걸이 v2(014): 디테일컷용 원본 보관. 사진이 작업용 크기(긴 변 2400px)보다 크면 원본 크기 그대로(최대 6000px) JPG 고품질(0.92)로 돌려줍니다.
+// 작업용 사진이 이미 원본 크기이면 null(따로 보관할 필요 없음). 상품당 옷걸이 정면·후면 2장에만 씁니다.
+export const ORIGINAL_MAX_SIDE=6000, ORIGINAL_QUALITY=.92;
+export async function readOriginal(file) {
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type))return null;
+  const url=URL.createObjectURL(file);
+  try {
+    const im=await loadImage(url),side=Math.max(im.width,im.height);
+    if(side<=UPLOAD_MAX_SIDE)return null;
+    const scale=Math.min(1,ORIGINAL_MAX_SIDE/side),c=document.createElement('canvas');
+    c.width=Math.round(im.width*scale);c.height=Math.round(im.height*scale);
+    const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);ctx.imageSmoothingQuality='high';ctx.drawImage(im,0,0,c.width,c.height);
+    return c.toDataURL('image/jpeg',ORIGINAL_QUALITY);
+  }finally{URL.revokeObjectURL(url);}
+}
 export function medianLight(canvas) {
   const {data}=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height),hist=new Uint32Array(256);let count=0;
   for(let i=0;i<data.length;i+=16){const lum=Math.round(.2126*data[i]+.7152*data[i+1]+.0722*data[i+2]);if(data[i+3]>200&&lum>15&&lum<240){hist[lum]++;count++;}}
