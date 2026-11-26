@@ -70,3 +70,4 @@
 .qa-panel{border:1px solid #e3e6eb;border-radius:10px;padding:14px;margin:14px 0}
 .qa-panel h3 small{font-weight:400;color:#667085;margin-left:6px}
 .qa-panel .check-result ul{margin:6px 0;padding-left:18px}
+.dooson-editor h3{font-size:16px;margin:20px 0 6px}.color-links,.dooson-editor .review-note ul{list-style:none;padding:0;margin:8px 0}.color-links li,.dooson-editor .review-note li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}.color-links small,.dooson-editor small{color:#637083}

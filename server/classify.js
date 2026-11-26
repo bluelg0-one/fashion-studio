@@ -12,8 +12,10 @@ const MODEL='claude-opus-5-5';
 
 // 옷걸이 v2(014): 상품마다 옷걸이 정면·후면 2장만 찍습니다. 컷 종류는 정면/후면/모름 3가지만 받습니다(body.mode==='hanger').
 export const SHOTS_V2=['front','back','unknown'];
-const resultOf=shots=>z.object({
-  garments:z.array(z.object({id:z.string(),description:z.string()})),
+// v2(015): 옷마다 design(같은 디자인의 다른 색이면 같은 값)과 color(한국어 색 이름)도 받습니다. 앱은 이것으로 '같은 옷 다른 색상' 연결을 제안만 하고, 연결은 사장님이 확인합니다.
+const garmentOf=v2=>v2?z.object({id:z.string(),description:z.string(),design:z.string(),color:z.string()}):z.object({id:z.string(),description:z.string()});
+const resultOf=(shots,v2=false)=>z.object({
+  garments:z.array(garmentOf(v2)),
   photos:z.array(z.object({
     index:z.number().int(),
     garment:z.string(),
@@ -23,7 +25,7 @@ const resultOf=shots=>z.object({
     note:z.string(),
   })),
 });
-const Result=resultOf(SHOTS),ResultV2=resultOf(SHOTS_V2);
+const Result=resultOf(SHOTS),ResultV2=resultOf(SHOTS_V2,true);
 
 const INSTRUCTIONS=`You sort product photos for a women's clothing shop. Photos were taken in a store, usually on a mannequin in front of a wall. Each photo is labeled "Photo N" before it.
 
@@ -48,6 +50,7 @@ const INSTRUCTIONS_V2=`You sort product photos for a women's clothing shop. Each
 - front: the front of the garment on the hanger (the side with the neckline opening, placket, buttons or front print; the hanger hook faces the viewer as usual)
 - back: the back of the garment on the hanger (plain back, back neckline higher than the front, no placket)
 - unknown: anything else or you cannot tell (close-up, worn by a person, folded, side view, two garments in one photo)
+   Also give each garment a design id like "d1": garments of the same design (same cut, neckline, buttons and details) in different colors share one design id; otherwise each garment has its own design id. color: the garment color in short Korean (e.g. "아이보리", "네이비").
 3. confidence is 0 to 1. Set review=true when you are not sure: front and back look almost the same (plain knit or T-shirt), similar-colored garments that could be the same or different, two photos of the same side, or an unclear photo. note: one short Korean sentence explaining the doubt, or "" when sure.
 Return every photo exactly once, using its number as index.`;
 // 앞 묶음에서 이미 찾은 옷(참고 사진)이 있을 때 덧붙이는 지시
@@ -107,6 +110,7 @@ export async function classifyPhotos(body,env=process.env,client) {
   // R1.. → 브라우저가 보낸 참고 옷 id로 바꿉니다. 새 옷 목록에는 참고 옷을 넣지 않습니다.
   const refId=g=>{const m=/^R(\d+)$/.exec(g||'');return m&&refs[Number(m[1])-1]?refs[Number(m[1])-1].id:null;};
   out.garments=out.garments.filter(g=>!refId(g.id));
+  if(hanger)out.garments=out.garments.map(g=>({id:g.id,description:g.description,design:String(g.design||'').slice(0,20),color:String(g.color||'').slice(0,20)}));
   const list=out.photos.filter(p=>p.index>=1&&p.index<=photos.length&&!seen.has(p.index)&&seen.add(p.index)).map(p=>({
     id:photos[p.index-1].id,garment:refId(p.garment)||p.garment,...(refId(p.garment)?{reference:true}:{}),shot:p.shot,confidence:Math.max(0,Math.min(1,p.confidence)),
     review:p.review||p.confidence<.6||p.shot==='unknown',note:p.note,

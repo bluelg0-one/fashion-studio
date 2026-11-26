@@ -6,10 +6,26 @@
 // 글꼴을 받지 못하면(인터넷 끊김 등) 시스템 기본 글꼴로 그리고, 화면에 그 사실을 알립니다.
 import {loadImage} from './studioImages.js';
 import {guideUrl} from './studioDocument.js';
+import {HANGER_V2} from './appMode.js';
 
 const SERIF_KR='"Noto Serif KR", "Nanum Myeongjo", serif', SANS_KR='"Noto Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
 
 export const THEMES={
+  // 두손 베이직(015): 흰 바탕·넓은 여백·얇은 산세리프·영문 대문자 소제목, 사진은 가로를 꽉 채워 한 줄에 한 장, 둥근 카드 없음.
+  // layout:'dooson' → studioDocument.documentBlocks가 DOOSON·소개·COLOR CHOICE·INFO가 있는 순서로 블록을 만듭니다(옷걸이 v2에서만).
+  dooson:{
+    id:'dooson',label:'두손 베이직',desc:'흰 바탕, 넓은 여백, 얇은 산세리프, 영문 대문자 소제목. 사진은 가로를 꽉 채워 한 장씩.',
+    layout:'dooson',brand:true,
+    google:'family=Noto+Sans+KR:wght@300;400;500',
+    fonts:{title:{family:SANS_KR,weight:300},body:{family:SANS_KR,weight:400},en:{family:SANS_KR,weight:500},head:{family:SANS_KR,weight:500},brand:{family:SANS_KR,weight:500}},
+    bg:'#ffffff',text:'#1f1f1f',soft:'#3d3d3d',muted:'#666666',line:'#e3e3e3',accent:'#1f1f1f',
+    pad:80,gap:48,align:'center',radius:0,
+    hero:{bleed:true,maxH:1300,top:28},photo:{maxH:1300,card:null,bleed:true},
+    brand:{size:30,ls:10},headline:{font:'title',size:44,lh:1.45,ls:0},intro:{size:32,lh:1.7},tagline:{size:28,lh:1.6,ls:2},
+    body:{size:32,lh:1.75},product:{size:28,lh:1.7},caption:{size:28,lh:1.7},note:{size:27,lh:1.7},
+    tag:{size:28,ls:2,upper:false},section:{style:'caps',size:30,ls:8},table:{style:'lines',size:28},info:{size:30},
+    colors:{cols:3,gap:20,name:28},bigGuide:true,pairs:false,
+  },
   basic:{id:'basic',label:'기본',desc:'지금까지 쓰던 모양 그대로입니다.'},
   minimal:{
     id:'minimal',label:'미니멀 화이트',desc:'넓은 여백, 얇은 세리프 제목, 무채색. 차분하고 고급스럽게.',
@@ -44,8 +60,13 @@ export const THEMES={
 };
 // 목록 순서: 사장님이 고른 소프트 무드를 맨 앞에. 새로 만드는 상품은 소프트 무드로 시작합니다.
 // (테마 정보가 없는 예전 상품은 themeOf()가 '기본'으로 열어 이미 만든 상세페이지가 바뀌지 않습니다.)
-export const THEME_LIST=['soft','minimal','magazine','basic'].map(id=>THEMES[id]);
-export const NEW_PRODUCT_THEME='soft';
+// 옷걸이 v2(015): 두손 베이직을 맨 앞에 두고 새 상품의 기본값으로 씁니다. ?v1(마네킹)에서는 예전 목록·기본값(소프트) 그대로입니다.
+export const themeList=(v2=HANGER_V2)=>(v2?['dooson','soft','minimal','magazine','basic']:['soft','minimal','magazine','basic']).map(id=>THEMES[id]);
+export const newProductTheme=(v2=HANGER_V2)=>v2?'dooson':'soft';
+export const THEME_LIST=themeList();
+export const NEW_PRODUCT_THEME=newProductTheme();
+// documentBlocks에 넘길 구성(layout): 두손 베이직만 'dooson', 나머지는 null(예전 순서)
+export const layoutOf=id=>themeOf(id).layout||null;
 export const themeOf=id=>THEMES[id]||THEMES.basic;
 
 // ── 글꼴 받기 ───────────────────────────────────────────────
@@ -89,6 +110,9 @@ export function themeUnits(blocks,theme) {
       for(let k=0;k<photos.length;k+=2)units.push(photos.length-k===1?{type:'photo',src:photos[k].src,alt:photos[k].alt,label:photos[k].label}:{type:'pair',items:photos.slice(k,k+2)});
       continue;
     }
+    if(role==='brand'){if(theme.brand)units.push({type:'brand',value:b.value});continue;}
+    if(role==='colors'){units.push({type:'colors',items:b.items});continue;}
+    if(role==='info'){units.push({type:'info',rows:b.rows});continue;}
     if(role==='hero')units.push({type:'hero',src:b.src,alt:b.label});
     else if(role==='photo'||role==='detail')units.push({type:'photo',src:b.src,alt:b.label});
     // 소프트·미니멀은 그림 안 글자를 키운 치수 그림을 씁니다(폰에서 약 12px).
@@ -155,6 +179,10 @@ function sectionUnit(ctx,t,u) {
     const title=textUnit(ctx,t,{value:u.value,font:'en',size:st.size,lh:1.3,color:t.text});
     return {height:title.height+30,draw:(c,y)=>{title.draw(c,y);c.fillStyle=t.text;c.fillRect((WIDTH-36)/2,y+title.height+18,36,1);}};
   }
+  if(st.style==='caps'){
+    const title=textUnit(ctx,t,{value:u.value,font:'en',size:st.size,lh:1.3,ls:st.ls||6,color:t.text,upper:true});
+    return {height:title.height,draw:(c,y)=>title.draw(c,y)};
+  }
   if(st.style==='pill'){
     const f=t.fonts.title;setFont(ctx,f,st.size,1);const lines=wrap(ctx,u.value,inner-60);
     const w=Math.min(inner,Math.max(...lines.map(l=>ctx.measureText(l).width))+64),h=lines.length*st.size*1.4+26;
@@ -164,6 +192,33 @@ function sectionUnit(ctx,t,u) {
   const num=textUnit(ctx,t,{value:String(u.index).padStart(2,'0'),font:'num',size:st.num||22,lh:1.3,color:t.muted});
   const title=textUnit(ctx,t,{value:u.value,font:'en',size:st.size,lh:1.08,ls:-1,color:t.text});
   return {height:num.height+6+title.height+22,draw:(c,y)=>{num.draw(c,y);title.draw(c,y+num.height+6);c.fillStyle=t.line;c.fillRect(t.pad,y+num.height+6+title.height+14,inner,4);}};
+}
+
+// COLOR CHOICE(015): 같은 옷 다른 색상의 정면 사진을 작게 모아 보여 주고 아래에 색 이름을 씁니다. 한 줄에 최대 3장(4장이면 2장씩).
+export const colorColumns=(n,max=3)=>n===4?2:Math.min(max,n);
+async function colorsUnit(ctx,t,items) {
+  const st=t.colors||{cols:3,gap:20,name:28},cols=colorColumns(items.length,st.cols),inner=WIDTH-t.pad*2,colW=(inner-st.gap*(cols-1))/cols,boxH=Math.round(colW*4/3);
+  const ims=await Promise.all(items.map(x=>loadImage(x.src)));
+  const names=items.map(x=>textUnit(ctx,t,{value:x.name||' ',font:'body',size:st.name,lh:1.5,ls:1,color:t.soft,width:colW,align:'center'}));
+  const rowsN=Math.ceil(items.length/cols),nameH=Math.max(...names.map(n=>n.height)),rowH=boxH+14+nameH;
+  return {height:rowsN*rowH+(rowsN-1)*st.gap,draw:(c,y)=>{
+    items.forEach((x,k)=>{const r=Math.floor(k/cols),col=k%cols,inRow=Math.min(cols,items.length-r*cols),off=(inner-(inRow*colW+(inRow-1)*st.gap))/2;
+      const bx=t.pad+off+col*(colW+st.gap),by=y+r*(rowH+st.gap),im=ims[k],s=Math.min(colW/im.naturalWidth,boxH/im.naturalHeight),w=im.naturalWidth*s,h=im.naturalHeight*s;
+      c.fillStyle='#ffffff';c.fillRect(bx,by,colW,boxH);c.drawImage(im,bx+(colW-w)/2,by+(boxH-h)/2,w,h);
+      names[k].draw(c,by+boxH+14,bx);});
+  }};
+}
+// INFO(015): 소재·세탁·핏 짧은 표(왼쪽 항목 이름, 오른쪽 입력값). 머리글 줄은 없습니다.
+function infoUnit(ctx,t,rows) {
+  const size=(t.info||t.table).size,inner=WIDTH-t.pad*2,keyW=Math.round(inner*.24),valW=inner-keyW-16,lh=size*1.6;
+  setFont(ctx,t.fonts.body,size);
+  const cells=rows.map(([k,v])=>[wrap(ctx,k,keyW),wrap(ctx,v,valW)]),heights=cells.map(([a,b])=>Math.max(a.length,b.length)*lh+30);
+  return {height:heights.reduce((a,b)=>a+b,0),draw:(c,y)=>{
+    let top=y;c.fillStyle=t.text;c.fillRect(t.pad,y,inner,1);
+    cells.forEach(([k,v],r)=>{setFont(c,t.fonts.head,size);c.fillStyle=t.text;k.forEach((line,l)=>c.fillText(line,t.pad,top+15+l*lh+(lh-size)/2));
+      setFont(c,t.fonts.body,size);c.fillStyle=t.soft;v.forEach((line,l)=>c.fillText(line,t.pad+keyW+16,top+15+l*lh+(lh-size)/2));
+      top+=heights[r];c.fillStyle=t.line;c.fillRect(t.pad,top-1,inner,1);});
+  }};
 }
 
 function tableUnit(ctx,t,u) {
@@ -191,9 +246,14 @@ function tableUnit(ctx,t,u) {
 async function layoutUnit(ctx,t,u) {
   switch(u.type){
     case 'hero':return photoUnit(t,u.src,{bleed:t.hero.bleed,maxH:t.hero.maxH,card:t.photo.card});
-    case 'photo':{const p=await photoUnit(t,u.src,{maxH:t.photo.maxH,card:t.photo.card});if(!u.label)return p;const l=textUnit(ctx,t,{value:u.label,font:'body',size:t.tag.size,lh:1.6,ls:t.tag.ls,color:t.muted,upper:t.tag.upper});return {height:p.height+12+l.height,draw:(c,y)=>{p.draw(c,y);l.draw(c,y+p.height+12);}};}
+    case 'photo':{const p=await photoUnit(t,u.src,{bleed:Boolean(t.photo.bleed),maxH:t.photo.maxH,card:t.photo.card});if(!u.label)return p;const l=textUnit(ctx,t,{value:u.label,font:'body',size:t.tag.size,lh:1.6,ls:t.tag.ls,color:t.muted,upper:t.tag.upper});return {height:p.height+12+l.height,draw:(c,y)=>{p.draw(c,y);l.draw(c,y+p.height+12);}};}
     case 'guide':return photoUnit(t,u.src,{maxH:t.bigGuide?620:420,card:t.photo.card});
     case 'pair':return pairUnit(ctx,t,u.items);
+    case 'colors':return colorsUnit(ctx,t,u.items);
+    case 'info':return infoUnit(ctx,t,u.rows);
+    case 'brand':return textUnit(ctx,t,{value:u.value,font:'brand',size:t.brand.size,lh:1.3,ls:t.brand.ls,color:t.text,upper:true});
+    case 'intro':return textUnit(ctx,t,{value:u.value,font:'body',size:(t.intro||t.body).size,lh:(t.intro||t.body).lh,color:t.soft});
+    case 'tagline':return textUnit(ctx,t,{value:u.value,font:'body',size:(t.tagline||t.tag).size,lh:(t.tagline||{lh:1.6}).lh,ls:(t.tagline||t.tag).ls,color:t.muted});
     case 'section':return sectionUnit(ctx,t,u);
     case 'table':return tableUnit(ctx,t,u);
     case 'headline':return textUnit(ctx,t,{value:u.value,font:'title',size:t.headline.size,lh:t.headline.lh,ls:t.headline.ls,color:t.text});
@@ -211,7 +271,7 @@ const spaceBefore=(t,u,prev)=>!prev?(t.hero.bleed&&u.type==='hero'?0:t.pad*.6+(u
 const units_text=blocks=>blocks.filter(b=>b.role==='section').map((_,i)=>String(i+1).padStart(2,'0')).join('')+'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 export async function renderThemed(blocks,themeId) {
   const t=themeOf(themeId);
-  const text=blocks.map(b=>[b.value,b.headers?.join(''),b.rows?.flat().join(''),b.kind==='image'?b.label:''].filter(Boolean).join('')).join('')+units_text(blocks);
+  const text=blocks.map(b=>[b.value,b.headers?.join(''),b.rows?.flat().join(''),b.items?.map(x=>x.name).join(''),b.kind==='image'?b.label:''].filter(Boolean).join('')).join('')+units_text(blocks);
   const fontsOk=await ensureThemeFonts(t,text);
   await document.fonts.ready;
   const measure=document.createElement('canvas').getContext('2d'),units=themeUnits(blocks,t),laid=[];
@@ -256,13 +316,21 @@ ${card?`.hero,.photo,.guide{background:${t.card};border-radius:${t.radius}px;pad
 ${st.style==='rule'?`.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.3;margin:0}.section:after{content:'';display:block;width:36px;height:1px;background:${t.text};margin:18px auto 0}`:''}
 ${st.style==='pill'?`.section h2{display:inline-block;${css(F.title)};font-size:${fs(st.size)};letter-spacing:1px;background:${t.accent};color:#fff;border-radius:999px;padding:13px 32px;margin:0}`:''}
 ${st.style==='big'?`.section .num{${css(F.num)};font-size:${fs(st.num||22)};color:${t.muted}}.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.08;letter-spacing:-1px;margin:6px 0 0;padding-bottom:14px;border-bottom:4px solid ${t.line}}`:''}
+${t.brand?`main{padding-top:${t.pad*.6}px}`:''}
+.brand{${css(F.brand||F.head)};font-size:${fs(t.brand?.size||30)};letter-spacing:${t.brand?.ls||0}px;text-transform:uppercase;color:${t.text};margin:0 0 ${t.gap*.6}px}
+.intro{font-size:${fs(t.intro?.size||t.body.size)};line-height:${t.intro?.lh||t.body.lh};color:${t.soft}}
+.tagline{font-size:${fs(t.tagline?.size||t.tag.size)};line-height:${t.tagline?.lh||1.6};letter-spacing:${t.tagline?.ls||0}px;color:${t.muted}}
+${t.photo.bleed?`.photo{margin-left:-${t.pad}px;margin-right:-${t.pad}px}.photo img{width:100%}`:''}
+${st.style==='caps'?`.section h2{${css(F.en)};font-size:${fs(st.size)};line-height:1.3;letter-spacing:${st.ls||6}px;text-transform:uppercase;margin:0}`:''}
+.colors{display:flex;flex-wrap:wrap;justify-content:center;gap:${t.colors?.gap||20}px}.colors figure{margin:0;flex:0 0 calc((100% - ${(t.colors?.gap||20)*2}px)/3)}.colors.c2 figure{flex-basis:calc((100% - ${t.colors?.gap||20}px)/2)}.colors .sw{aspect-ratio:3/4;background:#fff;display:flex;align-items:center;justify-content:center}.colors img{max-width:100%;max-height:100%;object-fit:contain}.colors figcaption{margin-top:14px;font-size:${fs(t.colors?.name||28)};letter-spacing:1px;color:${t.soft};line-height:1.5}
+.info{width:100%;border-collapse:collapse;text-align:left;font-size:${fs(t.info?.size||28)};border-top:1px solid ${t.text}}.info th,.info td{text-align:left;padding:15px 0;border-bottom:1px solid ${t.line};vertical-align:top;line-height:1.6}.info th{width:24%;padding-right:16px;color:${t.text}}.info td{color:${t.soft};white-space:pre-wrap}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;text-align:left}.pair figure{margin:0}.pair img{width:100%;height:auto;max-height:560px;object-fit:contain;background:#fff}.pair figcaption{margin-top:12px}
 table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${fs(tb.size)}}
 td,th{padding:13px 6px;text-align:center;overflow-wrap:anywhere;color:${t.soft}}th{color:${t.text};${css(F.head)}}
 ${tb.style==='lines'?`table{border-top:1px solid ${t.text}}th{border-bottom:1px solid ${t.text}}td{border-bottom:1px solid ${t.line}}`:''}
 ${tb.style==='card'?`.tablewrap{background:${t.card};border-radius:${t.radius}px;padding:20px}th{background:${t.accentSoft}}th:first-child{border-radius:14px 0 0 14px}th:last-child{border-radius:0 14px 14px 0}tr+tr td{border-top:1px solid ${t.line}}`:''}
 ${tb.style==='bold'?`th{background:${t.text};color:#fff}td{border-bottom:1px solid #dddddd}`:''}
-@media(max-width:600px){main{padding-left:20px;padding-right:20px}${t.hero.bleed?'.hero{margin-left:-20px;margin-right:-20px}':''}}`;
+@media(max-width:600px){main{padding-left:20px;padding-right:20px}${t.hero.bleed?'.hero{margin-left:-20px;margin-right:-20px}':''}${t.photo.bleed?'.photo{margin-left:-20px;margin-right:-20px}':''}}`;
   const label=v=>`<p class="label">${esc(v)}</p>`;
   const html=units.map(u=>{
     switch(u.type){
@@ -273,6 +341,9 @@ ${tb.style==='bold'?`th{background:${t.text};color:#fff}td{border-bottom:1px sol
       case 'section':return `<div class="section">${st.style==='big'?`<div class="num">${String(u.index).padStart(2,'0')}</div>`:''}<h2>${esc(u.value)}</h2></div>`;
       case 'table':return `<div class="tablewrap u"><table><thead><tr>${u.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${u.rows.map(r=>`<tr>${r.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
       case 'label':return label(u.value);
+      case 'brand':return `<p class="brand">${esc(u.value)}</p>`;
+      case 'colors':return `<div class="colors u${colorColumns(u.items.length,t.colors?.cols)===2?' c2':''}">${u.items.map(x=>`<figure><div class="sw"><img src="${esc(x.src)}" alt="${esc(x.name)}"></div><figcaption>${esc(x.name)}</figcaption></figure>`).join('')}</div>`;
+      case 'info':return `<div class="u"><table class="info"><tbody>${u.rows.map(([k,v])=>`<tr><th scope="row">${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table></div>`;
       default:return `<p class="${esc(u.type)}">${esc(u.value)}</p>`;
     }
   }).join('\n');

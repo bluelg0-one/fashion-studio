@@ -25,7 +25,8 @@ async function run(mode,work) {
 }
 export async function listProducts() {
   const all=await run('readonly',store=>store.getAll())||[];
-  return all.map(({id,name,updatedAt})=>({id,name,updatedAt})).sort((a,b)=>b.updatedAt-a.updatedAt);
+  // colorGroup·design·colorName(015): '같은 옷 다른 색상' 연결과 자동 분류 제안에 씁니다.
+  return all.map(({id,name,updatedAt,data})=>({id,name,updatedAt,colorGroup:data?.colorGroup||null,design:data?.design||'',colorName:data?.texts?.colorName||''})).sort((a,b)=>b.updatedAt-a.updatedAt);
 }
 export const getProduct=id=>run('readonly',store=>store.get(id));
 export const saveProduct=product=>run('readwrite',store=>store.put({...product,updatedAt:Date.now()}));

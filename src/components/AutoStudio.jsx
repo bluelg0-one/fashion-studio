@@ -31,7 +31,8 @@ import {shopeePhotos} from '../utils/shopeeExport.js';
 import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
-import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME} from '../utils/detailThemes.js';
+import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME, layoutOf} from '../utils/detailThemes.js';
+import {colorChoice, colorMembers, colorSuggestions, linkColor, unlinkColor} from '../utils/colorChoice.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
 import {HANGER_V2} from '../utils/appMode.js';
@@ -43,7 +44,7 @@ import {readOriginal} from '../utils/studioImages.js';
 import {frameMap, originalBox, composeCrop, DETAIL_MAX_SIDE} from '../utils/originalCrop.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
-const defaultTexts=()=>({headline:'',description:'',product:'',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
+const defaultTexts=()=>({headline:'',description:'',product:'',intro:'',tagline:'',colorName:'',material:'',care:'',fitNote:'',colorTitle:'Color choice',infoTitle:'Info',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
 const defaultShopee=()=>({title:'',description:'',includeSizeChart:true});
 
 async function api(action,body) {
@@ -57,6 +58,8 @@ async function api(action,body) {
   return result;
 }
 
+// COLOR CHOICE(015)용 저장소 접근. 연결 상품 정면 사진은 긴 변 720px JPG로 줄여 넣습니다.
+const colorStore={list:listProducts,get:getProduct,save:saveProduct,shrink:src=>thumbnail(src,720)};
 const MAX_VERSIONS=6;
 const PHOTO_FIELDS=['source','original','image','cutout','crop','derived','status','versions','vIndex','retouch','ai','defects','matte','stage1','stage2','tone','shown','level','workSource','rawCut','raw2','auto'];
 // 버전 한 칸 = {matte(원본과 위치가 같은 누끼), stage1(1차 결과), stage2(2차 결과)}. 예전 버전(문자열)은 1차 결과로 봅니다.
@@ -660,14 +663,15 @@ export default function AutoStudio() {
       const groups=result.garments.map(g=>({...g,items:result.photos.filter(p=>p.garment===g.id)})).filter(g=>g.items.length);
       const orphans=result.photos.filter(p=>!result.garments.some(g=>g.id===p.garment));
       if(orphans.length){if(groups.length)groups[0].items.push(...orphans.map(p=>({...p,review:true})));else groups.push({id:'g1',description:'분류 안 된 사진',items:orphans});}
-      const built=[];
+      const built=[],batchTag='up-'+Date.now().toString(36);
       for(const g of groups){
         const next=initialSlots();let fit=false;
         for(const {slotId,item} of assignSlots(g.items)){
           const p=byId[item.id];
           if(await placePhoto(next,slotId,item,p.full,{file:p.name},HANGER_V2&&(slotId==='hero'||slotId==='back')?await readOriginal(p.file):null)==='fit')fit=true;
         }
-        built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}});
+        // design·color(015): 같은 디자인 다른 색 '연결 제안'용(이번 올리기 안에서만 비교). 연결은 사장님이 화면에서 확인합니다.
+        built.push({name:g.description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME,...(g.design?{design:`${batchTag}-${g.design}`}:{}),...(g.color?{texts:{colorName:g.color}}:{})}});
       }
       const currentEmpty=!Object.values(slots).some(s=>s.source);
       let first=null;
@@ -691,7 +695,7 @@ export default function AutoStudio() {
   }
   // ---- 드라이브에서 가져오기(009): 화면 밖 흐름(driveImport.js)에 넘기는 함수들 ----
   // 옷 하나 = 상품 하나. 같은 옷 사진이 나중에 더 오면(실패 후 다시 시도 등) 이미 만든 상품의 빈 칸·추가 칸에 넣습니다.
-  async function createImportedProduct({description,items,existing}) {
+  async function createImportedProduct({description,items,existing,design='',color=''}) {
     const old=existing?await getProduct(existing):null;
     const next=old?migrateSlots(old.data?.slots):initialSlots();
     let fit=Boolean(old?.data?.fitEnabled);
@@ -699,7 +703,7 @@ export default function AutoStudio() {
       const keep=HANGER_V2&&(slotId==='hero'||slotId==='back'),{full,original}=keep?await driveFullWithOriginal(item):{full:await driveFull(item),original:null};
       if(await placePhoto(next,slotId,item,full,{file:item.name,driveId:item.id},original)==='fit')fit=true;
     }
-    const product=old?{...old,data:{...old.data,slots:next,fitEnabled:fit}}:{id:newProductId(),name:description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME}};
+    const product=old?{...old,data:{...old.data,slots:next,fitEnabled:fit}}:{id:newProductId(),name:description,data:{slots:next,fitEnabled:fit,docTheme:NEW_PRODUCT_THEME,...(design?{design}:{}),...(color?{texts:{colorName:color}}:{})}};
     await saveProduct(product);await markImported(items,product.id);
     return product.id;
   }
@@ -833,7 +837,8 @@ export default function AutoStudio() {
       const d=product.data,g=d.garment||'long-top',rows=(d.sizeRows||{})[g]||[newSizeRow()],texts={...defaultTexts(),...d.texts},theme=themeOf(d.docTheme||NEW_PRODUCT_THEME).id;
       const s=migrateSlots(d.slots),fit=Boolean(d.fitEnabled);
       if(!s.hero?.image)throw new Error('대표 정면샷이 없어 상세페이지를 만들 수 없습니다.');
-      const b=documentBlocks({slots:s,fitEnabled:fit,texts,garment:g,rows});
+      const colors=layoutOf(theme)?await colorChoice({id:product.id,group:d.colorGroup,name:product.name,colorName:texts.colorName,image:s.hero?.image},colorStore):[];
+      const b=documentBlocks({slots:s,fitEnabled:fit,texts,garment:g,rows,layout:layoutOf(theme),colors,name:product.name});
       const png=theme==='basic'?await renderDocument(b):(await renderThemed(b,theme)).blob;
       const title=texts.headline||product.name||'의류 상세페이지';
       const html=new Blob([theme==='basic'?documentHtml(b,title):themedHtml(b,title,theme)],{type:'text/html;charset=utf-8'});
@@ -922,7 +927,23 @@ export default function AutoStudio() {
   function editSize(index,key,value) {
     setSizeRows(current=>({...current,[garment]:rows.map((row,i)=>i===index?{...row,[key]:value}:row)}));setPreview(null);
   }
-  const blocks=()=>documentBlocks({slots,fitEnabled,texts,garment,rows});
+  // 두손 베이직(015): COLOR CHOICE에 넣을 연결 상품의 정면 최종본을 저장소에서 읽어 옵니다(작은 사진으로 줄임).
+  const blocks=async()=>{
+    const layout=layoutOf(docTheme),group=products.find(p=>p.id===productId)?.colorGroup||null;
+    const colors=layout?await colorChoice({id:productId,group,name:productName,colorName:texts.colorName,image:slots.hero?.image},colorStore):[];
+    return documentBlocks({slots,fitEnabled,texts,garment,rows,layout,colors,name:productName});
+  };
+  const myGroup=products.find(p=>p.id===productId)?.colorGroup||null,myDesign=products.find(p=>p.id===productId)?.design||'';
+  const linked=colorMembers(products,{id:productId,group:myGroup}),suggested=colorSuggestions(products,{id:productId,group:myGroup,design:myDesign});
+  async function changeColorLink(targetId,on) {
+    await task(async()=>{
+      await saveNow();
+      if(on){const g=await linkColor({id:productId,group:myGroup},targetId,colorStore);const me=await getProduct(productId);if(me)await saveProduct({...me,data:{...me.data,colorGroup:g}});}
+      else await unlinkColor(targetId,colorStore);
+      setProducts(await listProducts());setPreview(null);
+      setStep(on?'같은 옷 다른 색상으로 연결했습니다. 연결된 상품의 정면 최종본이 COLOR CHOICE에 나옵니다.':'색상 연결을 끊었습니다.');
+    });
+  }
   async function exportPng(previewOnly=false) {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
     await task(async()=>{
@@ -930,7 +951,8 @@ export default function AutoStudio() {
       try {
         // 기본 테마는 예전 렌더러 그대로, 나머지는 테마 렌더러(글꼴을 못 받으면 기본 글꼴로 그리고 알림)
         let blob,fontsOk=true;
-        if(docTheme==='basic')blob=await renderDocument(blocks());else ({blob,fontsOk}=await renderThemed(blocks(),docTheme));
+        const b=await blocks();
+        if(docTheme==='basic')blob=await renderDocument(b);else ({blob,fontsOk}=await renderThemed(b,docTheme));
         if(previewUrl.current)URL.revokeObjectURL(previewUrl.current);
         previewUrl.current=URL.createObjectURL(blob);setPreview(previewUrl.current);
         if(!previewOnly)downloadBlob(blob,'의류-상세페이지.png');
@@ -939,10 +961,10 @@ export default function AutoStudio() {
       }finally{setPreviewBusy(false);}
     });
   }
-  function exportHtml() {
+  async function exportHtml() {
     if(!slots.hero.image){setError('대표 정면샷을 먼저 넣어주세요.');return;}
-    const title=texts.headline||'의류 상세페이지';
-    downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
+    const title=texts.headline||'의류 상세페이지',b=await blocks();
+    downloadBlob(new Blob([docTheme==='basic'?documentHtml(b,title):themedHtml(b,title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
   const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:HANGER_V2?null:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:HANGER_V2?null:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
@@ -1058,6 +1080,20 @@ export default function AutoStudio() {
       </section>
       {!HANGER_V2&&<section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
         {fitEnabled&&<><label>Fit guide 제목<input maxLength={100} value={texts.fitTitle} onChange={e=>setText('fitTitle',e.target.value)}/></label><label>모델 설명<textarea maxLength={1500} value={texts.fitDescription} onChange={e=>setText('fitDescription',e.target.value)} placeholder="확인된 모델 키·착용 사이즈 등을 입력하세요."/></label><p className="slot-note">모델 사진은 위 ‘컷별 보정’의 모델컷 줄에서 넣고 보정합니다.</p></>}
+      </section>}
+      {HANGER_V2&&docTheme==='dooson'&&<section className="editor-section dooson-editor" aria-label="두손 베이직 구성"><h2>두손 베이직 · 상단 · 색상 · 정보</h2>
+        <p className="slot-note">비워 둔 칸은 상세페이지에서 빠집니다. 확인된 내용만 입력하세요(앱이 지어내지 않습니다).</p>
+        <label>소개 한 줄 (상품명 아래)<input maxLength={120} value={texts.intro} onChange={e=>setText('intro',e.target.value)}/></label>
+        <label>정면 사진 아래 영문 문구 (선택)<input maxLength={80} value={texts.tagline} placeholder="예: Everyday soft knit" onChange={e=>setText('tagline',e.target.value)}/></label>
+        <h3>COLOR CHOICE · 같은 옷 다른 색상</h3>
+        <label>이 상품 색 이름<input maxLength={30} value={texts.colorName} placeholder="예: 아이보리" onChange={e=>setText('colorName',e.target.value)}/></label>
+        {linked.length?<ul className="color-links" aria-label="연결된 색상">{linked.map(p=><li key={p.id}>{p.colorName||p.name} <small>({p.name})</small> <button type="button" className="subtle" onClick={()=>changeColorLink(p.id,false)}>연결 끊기</button></li>)}</ul>:<p className="slot-note">연결된 다른 색상이 없습니다. 2색 이상 연결하고 각 상품에 정면 사진이 있어야 COLOR CHOICE가 나옵니다.</p>}
+        {suggested.length>0&&<div className="review-note" aria-label="색상 연결 제안">자동 분류가 같은 디자인의 다른 색으로 본 상품입니다. 같은 옷이 맞는지 확인하고 연결하세요.<ul>{suggested.map(p=><li key={p.id}>{p.colorName||p.name} <small>({p.name})</small> <button type="button" onClick={()=>changeColorLink(p.id,true)}>연결</button></li>)}</ul></div>}
+        <label>다른 상품 연결<select aria-label="색상으로 연결할 상품" value="" onChange={e=>{if(e.target.value)changeColorLink(e.target.value,true);}}><option value="">상품 선택…</option>{products.filter(p=>p.id!==productId&&!linked.some(l=>l.id===p.id)).map(p=><option key={p.id} value={p.id}>{p.name}{p.colorName?` · ${p.colorName}`:''}</option>)}</select></label>
+        <h3>INFO</h3>
+        <label>소재<input maxLength={200} value={texts.material} placeholder="예: 면 100% (라벨 확인값)" onChange={e=>setText('material',e.target.value)}/></label>
+        <label>세탁<input maxLength={200} value={texts.care} placeholder="예: 손세탁, 건조기 사용 금지" onChange={e=>setText('care',e.target.value)}/></label>
+        <label>핏<input maxLength={200} value={texts.fitNote} placeholder="예: 여유 있는 기본 핏" onChange={e=>setText('fitNote',e.target.value)}/></label>
       </section>}
       <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>디테일 사진은 위 ‘컷별 보정’에서 넣고 보정합니다. 사진이 없는 컷은 상세페이지에서 빠집니다.</p>
       </section>
