@@ -44,9 +44,11 @@ try{
  const hook=await page.locator('.qa-panel [data-check="hanger_residue"]').first().textContent();assert.match(hook,/통과/,'옷걸이 잔여물 없음(016)');
  qaStatus=qaText.split('\n')[0];
  // 상세페이지(두손 베이직 테마, 015부터 v2 기본): 정면 → 후면 → 디테일 순서로 그려짐
+ await page.getByRole('tab',{name:'상세페이지',exact:true}).click();
  await page.getByRole('button',{name:'전체 미리보기'}).first().click();await idle();
  assert.match(await page.locator('[role=status]').innerText(),/미리보기입니다 · 테마: 두손 베이직/);
  const ph=await page.locator('.studio-preview img').first().evaluate(i=>i.naturalHeight);assert.ok(ph>3000,`상세페이지 높이 ${ph}`);
+ await page.getByRole('tab',{name:'원본 보정',exact:true}).click();
  // 상품 다시 열기 → 남아 있음
  await page.getByLabel('소매 끝 상세페이지에 포함').uncheck();await page.waitForTimeout(1200);
  await page.reload();await idle();
