@@ -62,18 +62,36 @@ export const guideUrl = (type,lang,opts) => 'data:image/svg+xml;charset=utf-8,'+
 // 나중에 켜면 'AI 모델 컷' 표시와 함께 디테일 다음, 사이즈 앞에 들어갑니다.
 export const MODEL_CUT_V2 = {enabled:false, label:'AI 모델 컷'};
 const DETAIL_ORDER_V2 = ['neckline','fabric','placket','waist','hem','cuff'];
-export function documentBlocks({slots,fitEnabled,texts,garment,rows,v2=HANGER_V2,modelCut=MODEL_CUT_V2}) {
+// 두손 베이직(015) INFO 표: 사장님이 입력한 칸만 줄로 만듭니다(비면 줄 없음, 모두 비면 INFO 없음).
+export const INFO_FIELDS=[['material','소재'],['care','세탁'],['fitNote','핏']];
+export function documentBlocks({slots,fitEnabled,texts,garment,rows,v2=HANGER_V2,modelCut=MODEL_CUT_V2,layout=null,colors=[],name=''}) {
   const blocks=[];
   // role은 테마(detailThemes.js)가 모양을 정할 때 쓰는 표시입니다. 기본 테마는 쓰지 않습니다.
   const text=(value,size=24,role='body',extra={})=>{if(value?.trim())blocks.push({kind:'text',value,size,role,...extra});};
   const picture=(slot,role='photo')=>{if(slot?.enabled&&slot.image)blocks.push({kind:'image',src:slot.image,label:slot.label,role});};
+  const derivedDetails=()=>{const order=d=>{const i=DETAIL_ORDER_V2.indexOf(d.derived.detail);return i<0?99:i;};return Object.values(slots).filter(s=>s?.derived?.from&&s.enabled!==false&&s.image).sort((a,b)=>order(a)-order(b));};
+  // 두손 베이직(015): DOOSON → 상품명 → 소개 한 줄 → 정면(크게) → 영문 문구 → 후면 → COLOR CHOICE(2색 이상) → DETAIL(설명 없음) → SIZE → INFO → [모델컷 자리, 꺼짐]
+  if(v2&&layout==='dooson'){
+    text(texts.brand||'DOOSON',30,'brand');
+    text(texts.headline||name,44,'headline');text(texts.intro,32,'intro');
+    picture(slots.hero,'hero');text(texts.tagline,28,'tagline');
+    picture(slots.back,'photo');
+    const swatches=(colors||[]).filter(c=>c?.src);
+    if(swatches.length>=2){text(texts.colorTitle||'Color choice',30,'section',{section:'colors'});blocks.push({kind:'colors',role:'colors',items:swatches.map(c=>({src:c.src,name:String(c.name||''),current:Boolean(c.current)}))});}
+    const list=derivedDetails();
+    if(list.length){text(texts.detailTitle||'Detail',30,'section',{section:'detail'});for(const slot of list)picture(slot,'detail');}
+    sizeBlocks(blocks,text,{...texts,sizeTitle:texts.sizeTitle||'Size'},garment,rows);
+    const info=INFO_FIELDS.filter(([k])=>texts[k]?.trim()).map(([k,label])=>[label,texts[k].trim()]);
+    if(info.length){text(texts.infoTitle||'Info',30,'section',{section:'info'});blocks.push({kind:'table',role:'info',headers:['항목','내용'],rows:info});}
+    if(modelCut?.enabled&&modelCut.slot?.image){text(modelCut.title||'Model',30,'section',{section:'model'});picture(modelCut.slot,'photo');text(modelCut.label,18,'note');}
+    return blocks;
+  }
   picture(slots.hero,'hero');
   text(texts.headline,36,'headline');text(texts.description,24,'body');text(texts.product,20,'product');
   if(v2){
     if(slots.back?.enabled&&slots.back.image){text(texts.backTitle||'Back',32,'section',{section:'back'});picture(slots.back,'photo');}
-    const order=d=>{const i=DETAIL_ORDER_V2.indexOf(d.derived.detail);return i<0?99:i;};
-    const details=Object.values(slots).filter(s=>s?.derived?.from&&s.enabled!==false&&s.image).sort((a,b)=>order(a)-order(b));
-    if(details.length){text(texts.detailTitle,32,'section',{section:'detail'});for(const slot of details){text(slot.label,24,'label');picture(slot,'detail');}}
+    const list=derivedDetails();
+    if(list.length){text(texts.detailTitle,32,'section',{section:'detail'});for(const slot of list){text(slot.label,24,'label');picture(slot,'detail');}}
     if(modelCut?.enabled&&modelCut.slot?.image){text(modelCut.title||'Model',32,'section',{section:'model'});picture(modelCut.slot,'photo');text(modelCut.label,18,'note');}
     sizeBlocks(blocks,text,texts,garment,rows);
     return blocks;
