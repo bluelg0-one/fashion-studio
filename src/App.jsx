@@ -35,14 +35,15 @@ export default function App() {
         </div>
 
         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', background: 'rgba(255,255,255,0.08)', padding: '4px 12px', borderRadius: 12 }}>
-          보정완료 {refinedImages.filter(i => i.status === 'done').length}장 · 최종확정 {refinedImages.filter(i => i.approved).length}장
+          보정완료 {refinedImages.filter(i => i.status === 'done').length}장 · 최종확정 {refinedImages.filter(i => i.finalized).length}장
         </div>
       </header>
 
       <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
-        {activeTab === 0 && <PhotoEditor images={refinedImages} setImages={setRefinedImages} />}
-        {activeTab === 1 && <TryOnStudio refinedImages={refinedImages} />}
-        {activeTab === 2 && <DetailPageBuilder refinedImages={refinedImages} />}
+        {/* 탭을 옮겨도 작업 결과가 사라지지 않도록 숨기기만 한다 */}
+        <div hidden={activeTab !== 0}><PhotoEditor files={refinedImages} setFiles={setRefinedImages} onFilesReady={() => setActiveTab(1)} /></div>
+        <div hidden={activeTab !== 1}><TryOnStudio refinedImages={refinedImages} /></div>
+        <div hidden={activeTab !== 2}><DetailPageBuilder refinedImages={refinedImages} /></div>
       </main>
     </div>
   )

@@ -1,45 +1,8 @@
 import { useState, useRef } from 'react'
-import { fileToDataUrl, downloadImage } from '../utils/api.js'
-
-// 이미지를 압축해서 크기 줄이기
-async function compressImage(dataUrl, maxWidth = 800, quality = 0.8) {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      let width = img.width
-      let height = img.height
-      if (width > maxWidth) {
-        height = Math.round((height * maxWidth) / width)
-        width = maxWidth
-      }
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL('image/jpeg', quality))
-    }
-    img.src = dataUrl
-  })
-}
+import { fileToDataUrl, downloadImage, compressImage, postJson } from '../utils/api.js'
 
 async function callTryOnAPI(payload) {
-  const response = await fetch('/api/tryon', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-
-  // JSON 파싱 오류 방지
-  const text = await response.text()
-  let data
-  try {
-    data = JSON.parse(text)
-  } catch {
-    throw new Error('서버 응답 오류: ' + text.slice(0, 100))
-  }
-
-  if (!response.ok) throw new Error(data.error || `오류 (${response.status})`)
+  const data = await postJson('/api/tryon', payload)
   return data.url
 }
 
@@ -63,7 +26,7 @@ export default function TryOnStudio({ refinedImages = [] }) {
   const modelFileRef = useRef()
   const garmentFileRef = useRef()
 
-  const approvedImages = refinedImages.filter(i => i.approved || i.status === 'done')
+  const approvedImages = refinedImages.filter(i => i.corrected && (i.finalized || i.status === 'done'))
 
   const handleModelUpload = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -177,9 +140,9 @@ export default function TryOnStudio({ refinedImages = [] }) {
               <div style={{ fontSize: 11, fontWeight: 600, color: '#555', marginBottom: 6 }}>1차 보정된 사진에서 선택</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, maxHeight: 130, overflowY: 'auto' }}>
                 {approvedImages.map(img => (
-                  <div key={img.id} onClick={() => setSelectedGarment({ id: img.id, url: img.editedUrl, name: img.name })}
+                  <div key={img.id} onClick={() => setSelectedGarment({ id: img.id, url: img.corrected, name: img.name })}
                     style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `2px solid ${selectedGarment?.id === img.id ? '#1a1a2e' : '#e8e8e8'}` }}>
-                    <img src={img.editedUrl} alt="" style={{ width: '100%', height: 60, objectFit: 'cover', display: 'block' }} />
+                    <img src={img.corrected} alt="" style={{ width: '100%', height: 60, objectFit: 'cover', display: 'block' }} />
                     {selectedGarment?.id === img.id && (
                       <div style={{ background: '#1a1a2e', color: '#fff', fontSize: 9, textAlign: 'center', padding: '1px 0' }}>✓</div>
                     )}

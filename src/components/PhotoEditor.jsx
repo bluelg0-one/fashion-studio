@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { applyImageFilters, downloadImage } from "../utils/api";
+import { applyImageFilters, downloadImage, compressImage, postJson } from "../utils/api";
 
 // ────────────────────────────────────────────────────────────
 // 상수
@@ -26,40 +26,24 @@ const CORRECTION_OPTIONS = [
 ];
 
 const DEFAULT_FILTERS = { brightness: 100, contrast: 100, saturation: 100 };
-const FASHN_API      = "https://api.fashn.ai/v1";
 const POLL_INTERVAL  = 2500;
 const POLL_TIMEOUT   = 150000;
 
 // ────────────────────────────────────────────────────────────
-// FASHN 공통 폴링
+// FASHN 공통 폴링 (API 키는 서버 api/fashn.js 에만 있음)
 // ────────────────────────────────────────────────────────────
 async function fashnRun(modelName, inputs) {
-  const apiKey = import.meta.env.VITE_FASHN_API_KEY;
-  if (!apiKey) throw new Error("VITE_FASHN_API_KEY 미설정");
-
-  const res = await fetch(`${FASHN_API}/run`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({ model_name: modelName, inputs }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.detail || err?.error || `FASHN 오류 (${res.status})`);
-  }
-  const { id, error } = await res.json();
-  if (error) throw new Error(error);
+  // shortcut: 서버 요청 한도(4.5MB) 때문에 가로 2048px로 줄임. 더 큰 원본이 필요하면 파일 직접 업로드 방식으로 바꿀 것.
+  const image = await compressImage(inputs.image, 2048, 0.92);
+  const { id, error } = await postJson("/api/fashn", { action: "run", model_name: modelName, inputs: { ...inputs, image } });
+  if (error) throw new Error(typeof error === "string" ? error : JSON.stringify(error));
+  if (!id) throw new Error("FASHN 작업 ID 없음");
 
   // 폴링
   const start = Date.now();
   while (Date.now() - start < POLL_TIMEOUT) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
-    const statusRes = await fetch(`${FASHN_API}/status/${id}`, {
-      headers: { "Authorization": `Bearer ${apiKey}` },
-    });
-    const status = await statusRes.json();
+    const status = await postJson("/api/fashn", { action: "status", id });
     if (status.status === "completed") {
       const outputUrl = status.output?.[0];
       if (!outputUrl) throw new Error("결과 이미지 없음");
@@ -73,7 +57,7 @@ async function fashnRun(modelName, inputs) {
         reader.readAsDataURL(blob);
       });
     }
-    if (status.status === "failed") throw new Error(status.error || "FASHN 처리 실패");
+    if (status.status === "failed") throw new Error(typeof status.error === "string" ? status.error : JSON.stringify(status.error || "FASHN 처리 실패"));
   }
   throw new Error("FASHN 타임아웃 (2분 30초 초과)");
 }
@@ -151,21 +135,26 @@ async function fashnWrinkleFix(dataUrl) {
 // 미세 수정 모달
 // ────────────────────────────────────────────────────────────
 function FinetunePanel({ file, onSave, onClose }) {
+  // base = 필터 적용 전 AI 보정본. 필터는 항상 base에 한 번만 적용한다(중복 적용 방지).
+  const startBase = file.base || file.original;
   const [filters,    setFilters]    = useState({ ...file.filters });
+  const [base,       setBase]       = useState(startBase);
   const [preview,    setPreview]    = useState(file.corrected);
   const [processing, setProcessing] = useState(false);
   const [procLabel,  setProcLabel]  = useState("");
 
+  const refresh = async (src, f) => setPreview(await applyImageFilters(src, f.brightness, f.contrast, f.saturation));
+
   const handleFilter = async (key, val) => {
     const next = { ...filters, [key]: val };
     setFilters(next);
-    setPreview(await applyImageFilters(file.corrected, next.brightness, next.contrast, next.saturation));
+    await refresh(base, next);
   };
 
   const applyExtra = async (type) => {
     setProcessing(true);
     try {
-      let result = preview;
+      let result = base;
       if (type === "bg") {
         setProcLabel("배경 제거 중... (1~3초)");
         result = await fashnBgRemove(preview);
@@ -176,7 +165,8 @@ function FinetunePanel({ file, onSave, onClose }) {
         setProcLabel("주름 펴기 중... (30~60초)");
         result = await fashnWrinkleFix(preview);
       }
-      setPreview(result);
+      setBase(result);
+      await refresh(result, filters);
     } catch (e) {
       alert("오류: " + e.message);
     }
@@ -237,14 +227,15 @@ function FinetunePanel({ file, onSave, onClose }) {
           </div>
 
           <button style={{ ...S.btn, fontSize: 11, color: "#666" }}
-            onClick={() => { setPreview(file.corrected); setFilters({ ...file.filters }); }}>
+            onClick={() => { setBase(startBase); setPreview(file.corrected); setFilters({ ...file.filters }); }}>
             ↩ 원본으로 되돌리기
           </button>
         </div>
         <div style={S.modalFooter}>
           <button style={S.btn} onClick={onClose}>취소</button>
           <button style={{ ...S.btn, ...S.btnGreen }}
-            onClick={() => onSave({ ...file, filters, corrected: preview, finalized: true })}>
+            disabled={processing}
+            onClick={() => onSave({ ...file, filters, base, corrected: preview, finalized: true })}>
             ✅ 저장 완료
           </button>
         </div>
@@ -256,9 +247,8 @@ function FinetunePanel({ file, onSave, onClose }) {
 // ────────────────────────────────────────────────────────────
 // 메인 컴포넌트
 // ────────────────────────────────────────────────────────────
-export default function PhotoEditor({ onFilesReady }) {
+export default function PhotoEditor({ files, setFiles, onFilesReady }) {
   const fileInputRef = useRef(null);
-  const [files,          setFiles]          = useState([]);
   const [activeFileId,   setActiveFileId]   = useState(null);
   const [finetuneTarget, setFinetuneTarget] = useState(null);
   const [corrOptions,    setCorrOptions]    = useState({ bg_remove: true, mannequin_remove: false, wrinkle_fix: false });
@@ -269,7 +259,7 @@ export default function PhotoEditor({ onFilesReady }) {
   const addFiles = useCallback((fileList) => {
     const newFiles = Array.from(fileList).map((f) => ({
       id: crypto.randomUUID(), name: f.name, file: f,
-      original: null, corrected: null,
+      original: null, base: null, corrected: null,
       filters: { ...DEFAULT_FILTERS },
       status: "pending", finalized: false, selected: true,
     }));
@@ -281,7 +271,7 @@ export default function PhotoEditor({ onFilesReady }) {
     });
     setFiles((prev) => [...prev, ...newFiles]);
     setActiveFileId((prev) => prev ?? newFiles[0]?.id);
-  }, []);
+  }, [setFiles]);
 
   const handleDrop = useCallback((e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }, [addFiles]);
   const toggleSelect = (id) => setFiles((prev) => prev.map((f) => f.id === id ? { ...f, selected: !f.selected } : f));
@@ -316,12 +306,13 @@ export default function PhotoEditor({ onFilesReady }) {
           result = await fashnWrinkleFix(result);
         }
 
-        // STEP 3: 밝기/대비/채도
+        // STEP 3: 밝기/대비/채도 (필터 전 결과는 base로 보관)
+        const base = result;
         const { brightness, contrast, saturation } = item.filters;
-        result = await applyImageFilters(result, brightness, contrast, saturation);
+        result = await applyImageFilters(base, brightness, contrast, saturation);
 
         setFiles((prev) => prev.map((f) =>
-          f.id === item.id ? { ...f, corrected: result, status: "done" } : f
+          f.id === item.id ? { ...f, base, corrected: result, status: "done" } : f
         ));
       } catch (e) {
         setErrorLog((prev) => [...prev, `❌ ${item.name}: ${e.message}`]);
@@ -341,8 +332,8 @@ export default function PhotoEditor({ onFilesReady }) {
   const sendToNext     = () => {
     const finals = files.filter((f) => f.finalized && f.corrected);
     if (!finals.length) return alert("최종 확정된 파일이 없습니다.");
-    onFilesReady?.(finals);
     alert(`✅ ${finals.length}장을 다음 단계로 전달했습니다.`);
+    onFilesReady?.(finals);
   };
 
   const activeFile    = files.find((f) => f.id === activeFileId);
@@ -509,10 +500,12 @@ export default function PhotoEditor({ onFilesReady }) {
                   onChange={async (e) => {
                     const val  = Number(e.target.value);
                     const next = { ...activeFile.filters, [key]: val };
-                    const base = activeFile.corrected || activeFile.original;
+                    const base = activeFile.base || activeFile.original;
+                    setFiles((prev) => prev.map((f) => f.id === activeFile.id ? { ...f, filters: next } : f));
                     const filtered = await applyImageFilters(base, next.brightness, next.contrast, next.saturation);
+                    // 슬라이더를 빠르게 움직이면 계산이 늦게 끝난 옛 값이 덮어쓰지 않도록 확인
                     setFiles((prev) => prev.map((f) =>
-                      f.id === activeFile.id ? { ...f, filters: next, corrected: filtered } : f
+                      f.id === activeFile.id && f.filters === next ? { ...f, corrected: filtered } : f
                     ));
                   }} style={S.slider} />
                 <span style={S.sliderVal}>{activeFile.filters[key]}%</span>

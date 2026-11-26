@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { callClaude, fileToBase64 } from '../utils/api.js'
+import { callClaude } from '../utils/api.js'
 
 const MODEL_PRESETS = [
   { id: 'seoa', name: '서아', style: '20대 한국 여성, 청초하고 여성스러운 스타일', emoji: '👩' },
@@ -33,11 +33,7 @@ export default function DetailPageBuilder({ refinedImages = [] }) {
   const generateDetailPage = async () => {
     setGenerating(true)
     try {
-      const approvedImgs = refinedImages.filter(i => i.approved || i.status === 'done')
-      let imageBase64 = null
-      if (approvedImgs.length > 0 && approvedImgs[0].file) {
-        imageBase64 = await fileToBase64(approvedImgs[0].file)
-      }
+      const approvedImgs = refinedImages.filter(i => i.corrected && (i.finalized || i.status === 'done'))
       const currentSizes = sizeInfo[config.category] || []
       const prompt = `여성 의류 쇼핑몰 상세페이지 내용을 생성해줘.
 상품명: ${config.productName || '여성 의류'}, 가격: ${config.price || '미정'}, 소재: ${config.fabric || '혼방'}, 특징: ${config.features || ''}, 카테고리: ${config.category}, AI 모델: ${model.name}
@@ -45,13 +41,13 @@ export default function DetailPageBuilder({ refinedImages = [] }) {
 반드시 아래 JSON 형식으로만 답해줘:
 {"headline":"감성적인 헤드라인 20자이내","subheadline":"부드러운 부제목 30자이내","story":"상품 스토리 2-3문장 감성적으로","points":["특징1","특징2","특징3","특징4"],"modelDesc":"${model.name} 모델 착용 스타일링 설명 2문장","styling":"스타일링 추천","care":["세탁법1","세탁법2","보관법"],"hashtags":["#태그1","#태그2","#태그3","#태그4","#태그5"]}`
 
-      const raw = await callClaude(prompt, imageBase64)
+      const raw = await callClaude(prompt, approvedImgs[0]?.corrected)
       let content = { headline: '감각적인 여성 의류', subheadline: '일상을 특별하게 만드는 스타일', story: '섬세한 디테일과 편안한 착용감으로 완성된 아이템입니다.', points: ['고급 소재', '편안한 핏', '다양한 스타일링', '시즌리스'], modelDesc: '자연스럽고 우아한 실루엣으로 매력을 극대화합니다.', styling: '데님과 매치하거나 슬랙스와 함께 연출해보세요.', care: ['손세탁 권장', '그늘에서 건조', '중온 다림질'], hashtags: ['#여성패션', '#데일리룩', '#신상', '#쇼핑몰', '#오오티디'] }
       try {
         const match = raw.match(/\{[\s\S]*\}/)
         if (match) content = { ...content, ...JSON.parse(match[0]) }
       } catch (_) {}
-      setDetailContent({ ...content, images: approvedImgs.slice(0, 4).map(i => i.editedUrl), sizes: sizeInfo[config.category], category: config.category, productName: config.productName, price: config.price, fabric: config.fabric })
+      setDetailContent({ ...content, images: approvedImgs.slice(0, 4).map(i => i.corrected), sizes: sizeInfo[config.category], category: config.category, productName: config.productName, price: config.price, fabric: config.fabric })
     } catch (err) {
       alert('상세페이지 생성 오류: ' + err.message)
     } finally {
