@@ -14,7 +14,7 @@ try{
  assert.equal(await page.getByLabel('hero 사진 제목').inputValue(),'옷걸이 정면');assert.equal(await page.getByLabel('back 사진 제목').inputValue(),'옷걸이 후면');
  assert.equal(await page.getByLabel('back 칸 숨기기').count(),0,'필수 컷은 숨길 수 없음');
  assert.equal(await page.locator('.add-cuts').count(),0,'컷 추가 숨김');
- assert.equal(await page.getByRole('button',{name:'AI모델컷'}).count(),0,'모델컷 탭 숨김');
+ assert.equal(await page.getByRole('tab',{name:'AI모델컷'}).count(),0,'예전 AI모델컷 탭 없음');assert.deepEqual(await page.getByRole('tab').allInnerTexts(),['원본 보정','모델컷','상세페이지'],'017 3개 탭');
  assert.equal(await page.getByText('02 · Fit guide').count(),0,'Fit guide 숨김');
  for(const l of ['자동 수평 (실험)','받침대 기둥 지우기','마네킹 꼭지·목 받침 지우기','마네킹 처리'])assert.equal(await page.getByLabel(l,{exact:true}).count(),0,`${l} 숨김`);
  assert.equal(await page.getByLabel('옷걸이',{exact:true}).first().inputValue(),'remove','옷걸이 지우기(016 v2 기본)');
@@ -25,7 +25,7 @@ try{
  const v1=await open(base+'/?v1');
  assert.deepEqual(await v1.page.locator('.cut-row').evaluateAll(n=>n.map(e=>e.dataset.slot)),['hero']);
  assert.equal(await v1.page.locator('.add-cuts button').count(),11);
- assert.equal(await v1.page.getByRole('button',{name:'AI모델컷'}).count(),1);
+ assert.equal(await v1.page.getByRole('tab',{name:'AI모델컷'}).count(),1);
  assert.equal(await v1.page.getByLabel('받침대 기둥 지우기',{exact:true}).count(),1);
  assert.deepEqual(v1.errors,[]);
  console.log('PASS: v2 shows only 옷걸이 정면·후면, hides add-cut/model tab/Fit guide/stand/finial/auto-level/mannequin options, keeps hanger + white clear; ?v1 shows the old mannequin screen.');

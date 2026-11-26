@@ -19,14 +19,14 @@ try{
  await page.goto(process.env.STUDIO_TEST_URL || 'http://127.0.0.1:3001');
  await page.waitForTimeout(500);
  assert.equal(configCalls,0,'탭을 열기 전에는 상태도 묻지 않음');
- await page.getByRole('button',{name:'AI모델컷',exact:true}).click();
+ await page.getByRole('tab',{name:'AI모델컷',exact:true}).click();
  // 키가 없으면: 실제 상태 표시, 생성 버튼 꺼짐
  await page.getByText('키 없음 (서버 설정 필요)').waitFor();
  const gen=page.getByRole('button',{name:/FASHN 유료 · 4장 생성/});
  assert.equal(await gen.isDisabled(),true);
  await page.getByText('서버에 FASHN_API_KEY가 없어').waitFor();
  // 키가 있으면(다시 열기)
- key=true;await page.reload();await page.getByRole('button',{name:'AI모델컷',exact:true}).click();
+ key=true;await page.reload();await page.getByRole('tab',{name:'AI모델컷',exact:true}).click();
  await page.getByText('키 설정됨 · 유료').waitFor();
  assert.equal(await gen.isDisabled(),false);
  assert.ok(await page.getByText('FASHN 크레딧 차감(단가 미확인)').first().isVisible());
@@ -48,7 +48,7 @@ try{
  assert.equal(dialogs.length,before,'재사용만 할 때는 비용 확인 창 없음');
  assert.equal(await page.getByText('저장된 결과 재사용 · 추가 비용 없음').count(),4);
  // 새로고침 후에도 재사용(브라우저에 저장)
- await page.reload();await page.getByRole('button',{name:'AI모델컷',exact:true}).click();await page.getByText('키 설정됨 · 유료').waitFor();
+ await page.reload();await page.getByRole('tab',{name:'AI모델컷',exact:true}).click();await page.getByText('키 설정됨 · 유료').waitFor();
  await page.getByLabel('모델컷 의류 사진 선택').setInputFiles({name:'garment.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
  await gen.click();await page.getByText('생성된 모델컷 (4장)').waitFor({timeout:10000});
  assert.equal(runs,4,'새로고침 후에도 재사용');

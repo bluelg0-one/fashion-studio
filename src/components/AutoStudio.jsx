@@ -32,6 +32,8 @@ import ShopeePanel from './ShopeePanel.jsx';
 import InstagramPanel from './InstagramPanel.jsx';
 import ChannelExportPanel from './ChannelExportPanel.jsx';
 import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME, layoutOf} from '../utils/detailThemes.js';
+import ModelCutStudio from './ModelCutStudio.jsx';
+import ModelCutList from './ModelCutList.jsx';
 import {colorChoice, colorMembers, colorSuggestions, linkColor, unlinkColor} from '../utils/colorChoice.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
@@ -84,7 +86,9 @@ function migrateSlots(saved) {
   return out;
 }
 // 버전 이동은 브라우저에 저장된 결과만 바꾸므로 API 호출·과금이 없습니다.
-export default function AutoStudio() {
+// view(017, 옷걸이 v2): 'retouch'(원본 보정) | 'modelcut'(모델컷) | 'page'(상세페이지). 한 컴포넌트가 상태를 들고 있어 탭을 옮겨도 상품·작업이 유지됩니다. ?v1은 'all'.
+export default function AutoStudio({view='all'}) {
+  const show=part=>!HANGER_V2||view==='all'||view===part;
   const [ready,setReady]=useState(null),[credits,setCredits]=useState(null),[retouch,setRetouch]=useState(DEFAULT_RETOUCH),[slots,setSlots]=useState(initialSlots),[fitEnabled,setFitEnabled]=useState(false);
   const [garment,setGarment]=useState('long-top'),[sizeRows,setSizeRows]=useState({});
   const [texts,setTexts]=useState(defaultTexts),[shopee,setShopee]=useState(defaultShopee),[instagram,setInstagram]=useState(defaultInstagram),[docTheme,setDocTheme]=useState('basic');
@@ -96,7 +100,7 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null),dirty=useRef(false),latest=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null),[qa,setQa]=useState(null);
+  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null),[qa,setQa]=useState(null),[modelCuts,setModelCuts]=useState([]);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef(''),costProduct=useRef('');
   // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
   const logCost=row=>{addCost(row);};
@@ -110,7 +114,7 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport,qa});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport,qa,modelCuts});
   latest.current={id:productId,name:productName,data:snapshot()};
   async function applyProduct(product) {
     const d=product?.data||{};
@@ -119,7 +123,7 @@ export default function AutoStudio() {
     const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived===true&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch(keepSavedHanger(d.retouch)));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
-    setDetailReport(d.detailReport||null);setQa(d.qa||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
+    setDetailReport(d.detailReport||null);setQa(d.qa||null);setModelCuts(Array.isArray(d.modelCuts)?d.modelCuts:[]);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   // 인자 없이 부르면 ‘화면의 최신 상태’를 저장하되, 저장 안 된 편집이 있을 때만 저장합니다.
@@ -150,7 +154,7 @@ export default function AutoStudio() {
     dirty.current=true;setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport,qa]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport,qa,modelCuts]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -839,7 +843,7 @@ export default function AutoStudio() {
       const s=migrateSlots(d.slots),fit=Boolean(d.fitEnabled);
       if(!s.hero?.image)throw new Error('대표 정면샷이 없어 상세페이지를 만들 수 없습니다.');
       const colors=layoutOf(theme)?await colorChoice({id:product.id,group:d.colorGroup,name:product.name,colorName:texts.colorName,image:s.hero?.image},colorStore):[];
-      const b=documentBlocks({slots:s,fitEnabled:fit,texts,garment:g,rows,layout:layoutOf(theme),colors,name:product.name});
+      const b=documentBlocks({slots:s,fitEnabled:fit,texts,garment:g,rows,layout:layoutOf(theme),colors,name:product.name,modelCuts:d.modelCuts||[]});
       const png=theme==='basic'?await renderDocument(b):(await renderThemed(b,theme)).blob;
       const title=texts.headline||product.name||'의류 상세페이지';
       const html=new Blob([theme==='basic'?documentHtml(b,title):themedHtml(b,title,theme)],{type:'text/html;charset=utf-8'});
@@ -932,8 +936,13 @@ export default function AutoStudio() {
   const blocks=async()=>{
     const layout=layoutOf(docTheme),group=products.find(p=>p.id===productId)?.colorGroup||null;
     const colors=layout?await colorChoice({id:productId,group,name:productName,colorName:texts.colorName,image:slots.hero?.image},colorStore):[];
-    return documentBlocks({slots,fitEnabled,texts,garment,rows,layout,colors,name:productName});
+    return documentBlocks({slots,fitEnabled,texts,garment,rows,layout,colors,name:productName,modelCuts});
   };
+  // 모델컷 탭에서 고른 컷을 '이 상품의 모델컷'으로 저장(017). aiGenerated·원본 결과 주소·엔진·구도·자른 위치를 함께 남깁니다.
+  function saveModelCut(cut) {
+    setModelCuts(cur=>[...cur,{id:'mc-'+(crypto.randomUUID?.()||Date.now().toString(36)),enabled:true,aiGenerated:true,at:new Date().toISOString(),...cut}]);setPreview(null);
+    setStep('모델컷을 이 상품에 저장했습니다. 상세페이지 탭의 ‘AI 모델 컷’에서 순서와 포함 여부를 고르세요.');
+  }
   const myGroup=products.find(p=>p.id===productId)?.colorGroup||null,myDesign=products.find(p=>p.id===productId)?.design||'';
   const linked=colorMembers(products,{id:productId,group:myGroup}),suggested=colorSuggestions(products,{id:productId,group:myGroup,design:myDesign});
   async function changeColorLink(targetId,on) {
@@ -981,8 +990,8 @@ export default function AutoStudio() {
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
     <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작{HANGER_V2?' · 옷걸이 v2':''}</h1><p>{HANGER_V2?'옷걸이 정면 → 옷걸이 후면 → 디테일(정면·후면에서 자동으로 잘라 냄) → Size 순서로 구성합니다.':'대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.'}</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
-    <div className="studio-toolbar"><label className="theme-pick">디자인 테마<select aria-label="상세페이지 디자인 테마" value={docTheme} disabled={busy} onChange={e=>{setDocTheme(e.target.value);setPreview(null);}}>{THEME_LIST.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select><small>{themeOf(docTheme).desc}</small></label><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
-    <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · BiRefNet(내 PC) {bir?.ok&&bir.ready?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
+    {show('page')&&<div className="studio-toolbar"><label className="theme-pick">디자인 테마<select aria-label="상세페이지 디자인 테마" value={docTheme} disabled={busy} onChange={e=>{setDocTheme(e.target.value);setPreview(null);}}>{THEME_LIST.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select><small>{themeOf(docTheme).desc}</small></label><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>}
+    {show('retouch')&&<details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · BiRefNet(내 PC) {bir?.ok&&bir.ready?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
       <table className="cost-table"><thead><tr><th>기능</th><th>사용 모델</th><th>비용</th></tr></thead><tbody>
         {[['배경 지우기 (누끼) · 기본','photoroom'],['배경 지우기 (누끼) · 무료 선택','birefnet'],['Photoroom 생성형 추가 편집 (선택)','photoroomAI'],['사진 한꺼번에 올리기 (옷별·컷별 분류)','claudeClassify'],['얼룩·구김 자동 찾기','claudeDefects'],['얼룩·구김 지우기 (다림질 포함)','iopaint'],['상품 문구·쇼피 영문 문구','openai'],['얼룩·구김 직접 표시','browser'],['색감·일관성 맞추기 · PNG 압축 · ZIP','browser'],['상품 저장 (다른 컴퓨터와 이어서 작업)','gdrive']].map(([f,k])=><tr key={f}><td>{f}</td><td>{COST[k][0]}</td><td>{COST[k][1]}</td></tr>)}
       </tbody></table>
@@ -997,24 +1006,24 @@ export default function AutoStudio() {
       </ol>
       <div className="btn-row"><label className="iop-url">IOPaint 주소<input aria-label="IOPaint 주소" value={iopUrl} onChange={e=>{setIopUrl(e.target.value);setIopaintUrl(e.target.value);}}/></label>
         <button type="button" onClick={async()=>{setIop(null);setBir(null);const [a,b]=await Promise.all([checkIopaint(iopUrl),checkBirefnet()]);setIop(a);setBir(b);}}>다시 확인</button></div>
-    </details>
-    <CostPanel level={defectOpts.level||DEFAULT_DEFECT_LEVEL} onLowerLevel={()=>{setDefectOpts({level:'normal'});setStep('수정할 곳 찾기 민감도를 ‘보통’(사진당 1회 호출)으로 낮췄습니다. 다시 올리려면 각 사진의 수정할 곳 찾기에서 바꾸세요.');}}/>
+    </details>}
+    {show('retouch')&&<CostPanel level={defectOpts.level||DEFAULT_DEFECT_LEVEL} onLowerLevel={()=>{setDefectOpts({level:'normal'});setStep('수정할 곳 찾기 민감도를 ‘보통’(사진당 1회 호출)으로 낮췄습니다. 다시 올리려면 각 사진의 수정할 곳 찾기에서 바꾸세요.');}}/>}
     <section className="product-bar" aria-label="상품 목록">
       <label>상품 선택<select aria-label="상품 선택" disabled={busy} value={productId||''} onChange={e=>switchProduct(e.target.value)}>{products.map(p=><option key={p.id} value={p.id}>{p.name||'이름 없는 상품'}</option>)}</select></label>
       <label>상품 이름<input aria-label="상품 이름" disabled={busy} maxLength={80} value={productName} onChange={e=>setProductName(e.target.value)}/></label>
       <button type="button" disabled={busy} onClick={addProduct}>+ 새 상품</button>
-      <label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label><Cost k="claudeClassify"/>
-      <button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>
-      <DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)} onAutoFix={ids=>setAutoRequest({ids,at:Date.now()})}/>
+      {show('retouch')&&<><label className="file-button primary bulk-upload">사진 한꺼번에 올리기 (자동 분류)<input aria-label="사진 한꺼번에 올리기" type="file" multiple accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={e=>{const f=Array.from(e.target.files||[]);e.target.value='';if(f.length)bulkUpload(f);}}/></label><Cost k="claudeClassify"/></>}
+      {show('retouch')&&<button type="button" className="subtle" disabled={busy||!productId} onClick={removeProduct}>상품 삭제</button>}
+      {show('retouch')&&<DriveImportPanel ready={ready} busy={busy} task={task} setStep={setStep} deps={importDeps} onFinished={importFinished} openProduct={id=>switchProduct(id)} onAutoFix={ids=>setAutoRequest({ids,at:Date.now()})}/>}
       <span className="save-state" aria-live="polite">{{saving:'저장 중…',pending:'저장 대기',saved:'자동 저장됨',error:'저장 안 됨'}[saveState]||''}</span>
     </section>
-    <AutoFixPanel products={products} busy={busy} setStep={setStep} freeEngines={freeEngines} runAutoJob={runAutoJob} runSaveJob={runSaveJob} approveDetail={approveDetail} openProduct={id=>switchProduct(id)} request={autoRequest}/>
-    <DrivePanel clientId={ready?.googleClientId} productId={productId} localSavedAt={localSavedAt} busy={busy} task={task} setStep={setStep}
-      flush={()=>saveNow()} onLoaded={async id=>{clearTimeout(saveTimer.current);await applyProduct(await getProduct(id));setProducts(await listProducts());}}/>
-    <p className="session-note">‘사진 한꺼번에 올리기’: 여러 옷이 섞인 사진을 최대 24장까지 올리면 Claude가 같은 옷끼리 묶어 상품을 만들고 컷 종류별 칸에 넣습니다(분류 1회당 Claude API 요금 발생). 옷마다 첫 컷을 정면 전체로 찍으면 더 정확합니다. </p>
-    <p className="session-note">상품은 이 브라우저에 자동 저장됩니다(총 {products.length}개). 다른 컴퓨터에서 이어서 작업하려면 위 ‘구글 드라이브 저장’을 쓰세요.</p>
+    {show('retouch')&&<AutoFixPanel products={products} busy={busy} setStep={setStep} freeEngines={freeEngines} runAutoJob={runAutoJob} runSaveJob={runSaveJob} approveDetail={approveDetail} openProduct={id=>switchProduct(id)} request={autoRequest}/>}
+    {show('retouch')&&<DrivePanel clientId={ready?.googleClientId} productId={productId} localSavedAt={localSavedAt} busy={busy} task={task} setStep={setStep}
+      flush={()=>saveNow()} onLoaded={async id=>{clearTimeout(saveTimer.current);await applyProduct(await getProduct(id));setProducts(await listProducts());}}/>}
+    {show('retouch')&&<p className="session-note">‘사진 한꺼번에 올리기’: 여러 옷이 섞인 사진을 최대 24장까지 올리면 Claude가 같은 옷끼리 묶어 상품을 만들고 컷 종류별 칸에 넣습니다(분류 1회당 Claude API 요금 발생). 옷마다 첫 컷을 정면 전체로 찍으면 더 정확합니다. </p>}
+    {show('retouch')&&<p className="session-note">상품은 이 브라우저에 자동 저장됩니다(총 {products.length}개). 다른 컴퓨터에서 이어서 작업하려면 위 ‘구글 드라이브 저장’을 쓰세요.</p>}
     <p role="status" aria-live="polite">{step}</p>{error&&<p role="alert" className="studio-error">{error}</p>}
-    <fieldset disabled={busy} className="cut-section" aria-label="컷별 보정">
+    {show('retouch')&&<fieldset disabled={busy} className="cut-section" aria-label="컷별 보정">
       <h2>컷별 보정 <small>원본 → 1차 보정 → 2차 보정 → 최종 완성본</small></h2>
       {colorRef&&<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>색감 기준: <b>{colorRef.label}</b> ({{stage1:'1차',stage2:'2차',final:'최종'}[colorRef.stage]||'최종'}) · 다른 컷은 보정할 때 이 색감으로 맞춰집니다 <button type="button" className="subtle tiny" onClick={()=>chooseColorRef(null,null)}>기준 해제</button></p>}
       {cutList.map(slot=><CutRow key={slot.id} slot={slot} {...cutProps}/>)}
@@ -1050,14 +1059,14 @@ export default function AutoStudio() {
         {hiddenCuts.map(s=><button key={s.id} type="button" aria-label={`${s.id} 컷 추가`} onClick={()=>addCut(s.id)}>+ {s.label}</button>)}
         <button type="button" disabled={Object.keys(slots).length>=18} onClick={()=>addCut('__new')}>+ 직접 이름 정하기</button>
       </div>}
-    </fieldset>
-    <div className="studio-workspace"><fieldset disabled={busy} className="studio-editor">
-      <section className="editor-section"><h2>상품 정보와 공통 보정</h2>
+    </fieldset>}
+    {(show('retouch')||show('page'))&&<div className={`studio-workspace${HANGER_V2&&view==='retouch'?' single':''}`}><fieldset disabled={busy} className="studio-editor">
+      <section className="editor-section"><h2>{HANGER_V2&&view==='page'?'상품 정보':HANGER_V2&&view==='retouch'?'옷 종류와 공통 보정':'상품 정보와 공통 보정'}</h2>
         <label>옷 종류<select aria-label="옷 종류" value={garment} onChange={e=>changeGarment(e.target.value)}>{GARMENTS.map(g=><option key={g.id} value={g.id}>{g.label}</option>)}</select></label>
-        <label>상품 정보<textarea value={texts.product} maxLength={3000} placeholder="확인된 소재·색상·상품 정보만 입력하세요." onChange={e=>setText('product',e.target.value)}/></label>
+        {show('page')&&<><label>상품 정보<textarea value={texts.product} maxLength={3000} placeholder="확인된 소재·색상·상품 정보만 입력하세요." onChange={e=>setText('product',e.target.value)}/></label>
         <label>상품 제목<input value={texts.headline} maxLength={200} onChange={e=>setText('headline',e.target.value)}/></label>
-        <label>상품 설명<textarea value={texts.description} maxLength={4000} onChange={e=>setText('description',e.target.value)}/></label>
-        <RetouchSettings value={retouch} onChange={setRetouch} status={ready} bir={bir} title="누끼·보정 설정 (모든 컷 기본값)"/>
+        <label>상품 설명<textarea value={texts.description} maxLength={4000} onChange={e=>setText('description',e.target.value)}/></label></>}
+        {show('retouch')&&<><RetouchSettings value={retouch} onChange={setRetouch} status={ready} bir={bir} title="누끼·보정 설정 (모든 컷 기본값)"/>
         <p className="slot-note">컷마다 다르게 하려면 각 컷의 ‘1차 보정 설정’에서 바꾸세요.</p>
         {credits&&Number.isFinite(credits.available)&&credits.available<=3&&<p className="review-note">Photoroom 남은 이미지가 {credits.available}장입니다. 사진 1장 보정에 1장이 사용됩니다.</p>}
         <label>공통 밝기 · {brightness}%<input aria-label="공통 밝기" type="range" min="0" max="8" value={brightness} onChange={e=>setBrightness(Number(e.target.value))}/></label>
@@ -1077,12 +1086,12 @@ export default function AutoStudio() {
           <p className="slot-note">누끼·보정된 컷에만 적용됩니다. 한 번에 바꾸는 양에 한계를 둬서 색이 크게 틀어지지 않으며, 각 컷의 ‘이전으로’로 되돌릴 수 있습니다. 같은 컷에 여러 번 누르면 조금씩 더 맞춰집니다.</p>
         </div>
         <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k={cutoutCost(retouch)}/><Cost k="openai"/></span>
-        <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
+        <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p></>}
       </section>
       {!HANGER_V2&&<section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
         {fitEnabled&&<><label>Fit guide 제목<input maxLength={100} value={texts.fitTitle} onChange={e=>setText('fitTitle',e.target.value)}/></label><label>모델 설명<textarea maxLength={1500} value={texts.fitDescription} onChange={e=>setText('fitDescription',e.target.value)} placeholder="확인된 모델 키·착용 사이즈 등을 입력하세요."/></label><p className="slot-note">모델 사진은 위 ‘컷별 보정’의 모델컷 줄에서 넣고 보정합니다.</p></>}
       </section>}
-      {HANGER_V2&&docTheme==='dooson'&&<section className="editor-section dooson-editor" aria-label="두손 베이직 구성"><h2>두손 베이직 · 상단 · 색상 · 정보</h2>
+      {show('page')&&HANGER_V2&&docTheme==='dooson'&&<section className="editor-section dooson-editor" aria-label="두손 베이직 구성"><h2>두손 베이직 · 상단 · 색상 · 정보</h2>
         <p className="slot-note">비워 둔 칸은 상세페이지에서 빠집니다. 확인된 내용만 입력하세요(앱이 지어내지 않습니다).</p>
         <label>소개 한 줄 (상품명 아래)<input maxLength={120} value={texts.intro} onChange={e=>setText('intro',e.target.value)}/></label>
         <label>정면 사진 아래 영문 문구 (선택)<input maxLength={80} value={texts.tagline} placeholder="예: Everyday soft knit" onChange={e=>setText('tagline',e.target.value)}/></label>
@@ -1096,7 +1105,8 @@ export default function AutoStudio() {
         <label>세탁<input maxLength={200} value={texts.care} placeholder="예: 손세탁, 건조기 사용 금지" onChange={e=>setText('care',e.target.value)}/></label>
         <label>핏<input maxLength={200} value={texts.fitNote} placeholder="예: 여유 있는 기본 핏" onChange={e=>setText('fitNote',e.target.value)}/></label>
       </section>}
-      <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>디테일 사진은 위 ‘컷별 보정’에서 넣고 보정합니다. 사진이 없는 컷은 상세페이지에서 빠집니다.</p>
+      {show('page')&&HANGER_V2&&<ModelCutList cuts={modelCuts} onChange={next=>{setModelCuts(next);setPreview(null);}}/>}
+      {show('page')&&<><section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>디테일 사진은 위 ‘컷별 보정’에서 넣고 보정합니다. 사진이 없는 컷은 상세페이지에서 빠집니다.</p>
       </section>
       <section className="editor-section size-editor"><h2>04 · Size</h2><label>Size 제목<input maxLength={100} value={texts.sizeTitle} onChange={e=>setText('sizeTitle',e.target.value)}/></label>
         <img className="size-guide" src={guideUrl(garment)} alt={`${GARMENTS.find(g=>g.id===garment).label} 치수 가이드`}/>
@@ -1107,7 +1117,8 @@ export default function AutoStudio() {
       </section>
       <ShopeePanel logCost={logCost} shopee={shopee} setShopee={setShopee} slots={slots} fitEnabled={fitEnabled} garment={garment} rows={rows} texts={texts} ready={ready} task={task} setStep={setStep} api={api} productName={productName}/>
       <InstagramPanel instagram={instagram} setInstagram={setInstagram} slots={slots} fitEnabled={fitEnabled} rows={rows} texts={texts} task={task} setStep={setStep} productName={productName}/>
-      <ChannelExportPanel slots={slots} fitEnabled={fitEnabled} task={task} setStep={setStep} productName={productName}/>
-    </fieldset><aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside></div>
+      <ChannelExportPanel slots={slots} fitEnabled={fitEnabled} task={task} setStep={setStep} productName={productName}/></>}
+    </fieldset>{show('page')&&<aside className="studio-preview"><h2>완성 상세페이지</h2><p>편집 후 ‘전체 미리보기’를 누르면 저장되는 이미지와 같은 구성을 확인할 수 있습니다.</p>{pendingCount>0&&<p className="review-note">보정 전 사진 {pendingCount}장이 포함되어 있습니다. 배경 제거가 필요하면 보정을 먼저 실행하세요.</p>}{previewBusy?<p>미리보기를 만들고 있습니다…</p>:preview?<img src={preview} alt="완성 상세페이지 미리보기"/>:<div className="preview-placeholder"><span>01 대표 정면샷</span><span>02 Fit guide · 선택</span><span>03 Detail</span><span>04 Size</span><button disabled={busy||!slots.hero.image} onClick={()=>exportPng(true)}>전체 미리보기</button></div>}</aside>}</div>}
+    {HANGER_V2&&<div className="modelcut-tab" style={{display:view==='modelcut'?'block':'none'}}><ModelCutStudio active={view==='modelcut'} product={{id:productId,name:productName,garment,front:slots.hero?.cutout||null,back:slots.back?.cutout||null}} onSaveCut={saveModelCut} savedCount={modelCuts.length}/></div>}
   </div>;
 }

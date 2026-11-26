@@ -50,6 +50,7 @@ try{
  await pick('네이비');await finish(fx.nFc,fx.nBc);
  // 참고(015 시험 중 발견, 014 범위): 어두운 네이비에 밝은 단추는 단추 찾기가 놓쳐 '단추·여밈'이 빠질 수 있습니다 → 팀장 보고. 여기서는 화면에 나온 디테일 수만 맞춥니다.
  const navyDetails=await shown();
+ await page.getByRole('tab',{name:'상세페이지',exact:true}).click();   // 017: 상세페이지 편집은 상세페이지 탭
  // 새 상품 기본 테마 = 두손 베이직, 입력칸이 보임, 색 이름은 분류값
  assert.equal(await page.getByLabel('상세페이지 디자인 테마').inputValue(),'dooson');
  const editor=page.getByLabel('두손 베이직 구성');

@@ -15,27 +15,30 @@ try{
  await page.goto(url);
  const idle=()=>page.waitForFunction(()=>!document.querySelector('.studio-editor').disabled);
  const saved=()=>page.waitForFunction(()=>document.querySelector('.save-state')?.textContent==='자동 저장됨');
+ // 옷걸이 v2(017)는 탭으로 나뉨: 사진은 '원본 보정', 문구·쇼피는 '상세페이지'. ?v1은 탭이 없어 그대로.
+ const go=async n=>{const t=page.getByRole('tab',{name:n,exact:true});if(await t.count())await t.click();};
  await idle();
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'상품 1');
  const tall=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=600;c.height=900;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,600,900);x.fillStyle='#235';x.fillRect(150,100,300,700);return c.toDataURL('image/png').split(',')[1];});
  await page.getByLabel('hero 사진 선택',{exact:true}).setInputFiles({name:'a.png',mimeType:'image/png',buffer:Buffer.from(tall,'base64')});await idle();
- await page.getByLabel('상품 제목',{exact:true}).fill('스트라이프 긴팔티');
+ await go('상세페이지');await page.getByLabel('상품 제목',{exact:true}).fill('스트라이프 긴팔티');
  await page.getByLabel('상품 이름').fill('스트라이프 티');
  await page.getByLabel('1행 사이즈').fill('FREE');await page.getByLabel('1행 가슴단면').fill('48');await page.getByLabel('1행 총장').fill('62');
  await saved();
  // 새로고침해도 그대로
  await page.reload();await idle();
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'스트라이프 티');
+ await go('상세페이지');
  assert.equal(await page.getByLabel('상품 제목',{exact:true}).inputValue(),'스트라이프 긴팔티');
- assert.equal(await page.locator('[data-slot="hero"] .final-zone img').count(),1);
  assert.equal(await page.getByLabel('1행 가슴단면').inputValue(),'48');
+ await go('원본 보정');assert.equal(await page.locator('[data-slot="hero"] .final-zone img').count(),1);
  // 새 상품은 빈 상태, 다시 돌아오면 복원
  await page.getByRole('button',{name:'+ 새 상품'}).click();await idle();
  assert.equal(await page.getByLabel('상품 이름').inputValue(),'상품 2');
  assert.equal(await page.locator('[data-slot="hero"] .final-zone img').count(),0);
  assert.equal(await page.getByLabel('상품 선택').locator('option').count(),2);
  const firstId=await page.getByLabel('상품 선택').locator('option',{hasText:'스트라이프 티'}).getAttribute('value');
- await page.getByLabel('상품 선택').selectOption(firstId);await idle();
+ await page.getByLabel('상품 선택').selectOption(firstId);await idle();await go('상세페이지');
  assert.equal(await page.getByLabel('상품 제목',{exact:true}).inputValue(),'스트라이프 긴팔티');
  // 쇼피 영문 문구 + ZIP
  await page.getByRole('button',{name:'영문 상품명·설명 자동 작성'}).click();await idle();
@@ -52,7 +55,7 @@ try{
  const listing=await zip.file(names.find(n=>n.endsWith('listing.txt'))).async('string');
  assert.match(listing,/Women's Striped Long Sleeve Tee/);assert.match(listing,/Size \| Chest \(flat\) \| Length/);assert.match(listing,/FREE \| 48 \| 62/);
  // 삭제
- page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'상품 삭제'}).click();await idle();
+ await go('원본 보정');page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'상품 삭제'}).click();await idle();
  assert.equal(await page.getByLabel('상품 선택').locator('option').count(),1);
  console.log(`PASS: autosave & restore after reload, separate products, switch back, English copy, ZIP with ${images.length} square JPGs (<=2MB, >=800px) incl. size chart, listing.txt, delete.`);
 }finally{await browser.close();}

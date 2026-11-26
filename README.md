@@ -213,7 +213,7 @@ npm run dev
 - **저장**: 이 브라우저의 IndexedDB `fashion-studio-costs`(상품 저장소와 따로라 상품을 지워도 남음). 구글 드라이브가 연결돼 있으면 작업 폴더의 `두손_앱_비용기록.csv`에 덧붙입니다(drive.file 권한, 앱이 만든 파일만). 연결 전 기록은 연결되면 한꺼번에 올립니다. CSV 열(영문 고정): `timestamp, product, cut, feature, model, sensitivity, calls, input_tokens, output_tokens, cost_usd, boxes, cached`. 드라이브에는 ‘덧붙이기’가 없어 파일을 읽어 새 줄을 붙여 다시 올립니다.
 - **통계**: 오늘·이번 주(월요일부터)·이번 달 합계($·원), 기능별·민감도별 합계와 사진당 평균(실제 호출 기준), 민감도별 ‘$1당 찾은 곳 수’, 최근 30일 하루 막대, 최근 기록 30줄, CSV 다운로드. 환율은 설정(기본 1,400원·가정).
 - **월 예산(원, 기본 50,000원 · 사장님 결정)**: 칸을 비우면 경고를 끕니다. 이번 달 합계가 80% 이상이면 노란 경고, 100% 이상이면 빨간 경고와 ‘민감도를 보통으로 낮추기’ 버튼(누르면 수정할 곳 찾기 민감도가 보통 = 사진당 1회로 바뀜). 자동으로 막지는 않습니다.
-- 기록하지 않는 것: AI 모델컷 탭(FASHN, 단가 미확인)은 이번 범위가 아니라 기록하지 않습니다. 실제 청구 금액은 Claude Console·Photoroom 대시보드가 기준입니다.
+- AI 모델컷(017부터 기록, 항목 `modelcut`): 엔진별 **추정** 단가 × 받은 장수(FASHN 약 $0.075/장 — 1크레딧 가정·장당 크레딧 수 미확인, Google 가상 피팅 $0.06/장). 같은 설정 재사용은 기록하지 않습니다. 실제 청구 금액은 Claude Console·Photoroom·FASHN·Google Cloud 대시보드가 기준입니다.
 
 ## 일관성 맞추기
 
@@ -229,6 +229,22 @@ npm run dev
 - ‘쇼피 등록 묶음 다운로드 (ZIP)’: 사진을 흰 배경 정사각형 JPG(800~1600px, 2MB 이하)로 바꾸고 대표 → 모델컷 → 디테일 → 영문 사이즈표 순서로 최대 9장 담습니다. `listing.txt`(상품명·설명·사이즈표·사진 순서)와 `listing.json`이 함께 들어갑니다. 파일 이름은 영문입니다.
 - 사진 기준(1:1, 800px 이상, 2MB 이하, 최대 9장)은 판매자 가이드 기준값이며 `src/utils/shopeeExport.js`의 `SHOPEE_IMAGE`에서 바꿉니다.
 - 쇼피 Open Platform 승인 후 ‘쇼피에 바로 등록’(KRSC Global Product API)을 추가할 예정입니다.
+
+## 옷걸이 v2 3개 탭과 모델컷 (017)
+
+옷걸이 v2 화면 맨 위가 **[원본 보정] [모델컷] [상세페이지]** 탭입니다(`src/App.jsx`). 한 AutoStudio(`view` 값)가 상품·사진·문구 상태를 들고 있어 탭을 옮겨도 같은 상품·입력이 유지되고, 상품 선택은 세 탭에서 같은 상품을 가리킵니다. `?v1`은 예전 '상세페이지 제작 / AI모델컷' 그대로입니다.
+- **원본 보정**: 상품 선택·한꺼번에 올리기·드라이브 가져오기/저장·정면/후면 칸·1차/2차·자동 보정·자동 점검·디테일컷·옷 종류와 보정 설정·일관성 맞추기·비용 통계·사용 도구.
+- **모델컷**: 아래 'AI 모델컷'의 화면을 재사용합니다(`ModelCutStudio`에 `product` 전달).
+  - 의류: 원본 보정 탭의 보정 끝난 옷걸이 정면 최종본이 기본이고, 후면도 고를 수 있습니다.
+  - **구도**(`src/utils/modelCut.js`): 옷 종류로 자동 → 상의 '상반신·얼굴 없음(턱 아래~골반)', 긴바지 '하반신(허리~발목)', 반바지 '허리~무릎 아래', 원피스 '어깨~밑단·얼굴 없음'. 바꿀 수 있고 '전신(얼굴 포함)'도 있습니다. FASHN 요청 문구 맨 앞에 구도 지시(`no face…`)를 넣고 장면의 'full body shot'은 뺍니다. 얼굴 없는 구도에서는 얼굴 고정 기본 꺼짐.
+  - **엔진 선택**: FASHN / Google 가상 피팅(Vertex AI Virtual Try-On). 엔진마다 장당 예상 비용·확인 창(구도·예상 금액)·같은 설정 재사용·원본 나란히 보기·비용 기록이 같습니다. Google은 '사람 사진 + 옷 사진' 방식이라 구도별 **기본 모델 사진**(상반신·하반신·원피스, 이 브라우저에만 저장)이 필요합니다 — 직접 올리거나 FASHN 결과의 'Google 기본 모델로 저장'.
+  - **이 상품 모델컷으로 저장**: 얼굴 자동 자르기(위쪽 피부색 덩어리 → 상반신·원피스는 턱 아래, 하반신은 얼굴 아래·높이 42% 아래부터, 자르면 항상 '확인 필요') → '위쪽 자르기' 슬라이더로 조절 → 원본 의류와 나란히 확인 → 상품 데이터 `modelCuts`에 저장(사진 긴 변 최대 2000px JPG, `aiGenerated:true`, 원본 결과 주소, 엔진·구도·자른 비율, 긴 변 1000px 미만이면 해상도 부족 표시).
+  - 키가 없으면: FASHN은 탭 위에 'Vercel에 FASHN_API_KEY가 필요합니다' + 생성 버튼 꺼짐, Google은 선택지가 꺼지고 필요한 변수 이름을 안내합니다.
+- **상세페이지**: 테마·미리보기·PNG/HTML·문구·두손 베이직·Detail·Size·채널 내보내기·인스타·쇼피 + **AI 모델 컷 목록**(포함 체크·위로/아래로·삭제). 포함한 컷은 고른 순서로 'Model' 소제목 아래 들어가고 **사진마다 아래에 작게 'AI 모델 컷'**이 붙습니다(두손 베이직은 INFO 다음, 다른 테마는 디테일 다음·사이즈 앞).
+- **서버**(`api/modelshot.js`): 엔진 표 `ENGINES`(엔진마다 `ready`·`run`·`status`)로 바꿔 끼웁니다. `config`는 `{fashn, google, styleroom}` 키 유무만 돌려줍니다.
+  - Google 환경변수: `GOOGLE_VTO_CREDENTIALS`(서비스 계정 키 JSON 전체), `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`(기본 us-central1), `GOOGLE_VTO_MODEL`(기본 virtual-try-on-001). 서비스 계정 역할: Vertex AI 사용자. 접근 토큰은 Node 기본 crypto로 서명해 받습니다(새 패키지 없음, 1시간 재사용). 키·토큰은 응답·로그에 넣지 않습니다.
+  - 호출 형식(공식 문서는 이 작업 환경에서 열리지 않아 검색 요약 기준, 원문 미확인): `{지역}-aiplatform.googleapis.com/v1/projects/{프로젝트}/locations/{지역}/publishers/google/models/{모델}:predict`, `personImage`·`productImages`(base64), `sampleCount`. 응답이 바로 오므로 `run`이 결과를 돌려줍니다(앱은 1장씩 요청).
+- 검사: `server/modelshot.test.js`(Google 모의), `server/modelCut.test.js`(구도·자르기·비용), `tests/studio-v2-tabs.mjs`(브라우저: 탭·상태 유지·모델컷 저장 → 상세페이지 반영·키 없음).
 
 ## AI 모델컷 탭 (FASHN · 유료)
 

@@ -71,3 +71,4 @@
 .qa-panel h3 small{font-weight:400;color:#667085;margin-left:6px}
 .qa-panel .check-result ul{margin:6px 0;padding-left:18px}
 .dooson-editor h3{font-size:16px;margin:20px 0 6px}.color-links,.dooson-editor .review-note ul{list-style:none;padding:0;margin:8px 0}.color-links li,.dooson-editor .review-note li{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px}.color-links small,.dooson-editor small{color:#637083}
+.studio-workspace.single{grid-template-columns:minmax(0,1fr)}.mc-list{list-style:none;padding:0;margin:0;display:grid;gap:12px}.mc-list li{display:grid;grid-template-columns:110px 1fr;gap:12px;align-items:start;border:1px solid #dce2e9;border-radius:8px;padding:10px}.mc-list img{width:110px;height:146px;object-fit:cover;background:#fff;border-radius:6px}.mc-list small{color:#637083}
