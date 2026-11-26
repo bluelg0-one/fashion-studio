@@ -84,7 +84,8 @@ export async function runImport(job,deps) {
     onClassified(result,batch);
     // 이 묶음의 새 옷 → 전체 번호(G1, G2…). 참고 옷과 같으면 그 번호 그대로.
     const local={};
-    for(const g of result.garments||[]){const id=`G${++job.nextG}`;local[g.id]=id;job.garments[id]={description:g.description,ref:null,last:0};}
+    // design(015): 같은 묶음 안에서만 비교할 수 있는 값이라 묶음 번호를 붙여 저장합니다(다른 묶음끼리는 제안하지 않음).
+    for(const g of result.garments||[]){const id=`G${++job.nextG}`;local[g.id]=id;job.garments[id]={description:g.description,ref:null,last:0,...(g.design?{design:`${job.id}-${b}-${g.design}`}:{}),...(g.color?{color:g.color}:{})};}
     const byId=Object.fromEntries(batch.map(f=>[f.id,f]));
     for(const p of result.photos||[]){
       const f=byId[p.id];if(!f)continue;
@@ -106,7 +107,7 @@ export async function runImport(job,deps) {
     const gid=ids[i],items=groups[gid];
     progress(`상품 만드는 중 · ${i+1}/${ids.length} ${job.garments[gid]?.description||''}`);
     try {
-      const productId=await createProduct({garmentId:gid,description:job.garments[gid]?.description||'이름 없는 옷',items,existing:job.products[gid]||null});
+      const productId=await createProduct({garmentId:gid,description:job.garments[gid]?.description||'이름 없는 옷',items,existing:job.products[gid]||null,design:job.garments[gid]?.design||'',color:job.garments[gid]?.color||''});
       job.products[gid]=productId;
       for(const f of items){f.status='done';f.productId=productId;f.thumb=f.review?f.thumb:null;}
     } catch(e){if(e?.stopped)throw e;for(const f of items){f.status='failed';f.stage='product';f.error=errText(e);}}
