@@ -55,3 +55,16 @@ test('hanger v2 mode: front/back/unknown only, hanger instructions, duplicate fr
  const old=fake({garments:[],photos:[]});await classifyPhotos({photos:[{id:'a',image:img}]},{},old);
  assert.match(old.calls[0].messages[0].content.at(-1).text,/mannequin/,'mode 없으면 예전 지시');
 });
+import {findDetailBoxes} from './classify.js';
+test('014 detail boxes (mock): only the asked parts, present=false kept, boxes clamped, low effort, usage returned',async()=>{
+ const client=fake({details:[{id:'cuff',present:true,x0:120,y0:900,x1:80,y1:1100,note:'왼쪽 소매'},{id:'placket',present:false,x0:0,y0:0,x1:0,y1:0,note:'여밈 없음'},{id:'hem',present:true,x0:1,y0:1,x1:900,y1:999,note:'안 물어봄'}]});
+ const r=await findDetailBoxes({image:img,width:1200,height:1600,ids:['cuff','placket','bogus']},{},client);
+ const p=client.calls[0],t=p.messages[0].content.at(-1).text;
+ assert.match(t,/1200x1600/);assert.match(t,/- cuff:/);assert.match(t,/- placket:/);assert.doesNotMatch(t,/- hem:|bogus/);assert.match(t,/nothing is generated/);
+ assert.equal(p.output_config.effort,'low');
+ assert.deepEqual(r.details.cuff,{present:true,x0:80,x1:120,y0:900,y1:1000,note:'왼쪽 소매'});
+ assert.deepEqual(r.details.placket,{present:false,note:'여밈 없음'});assert.equal(r.details.hem,undefined);
+ assert.deepEqual(r.usage,{input_tokens:10,output_tokens:5,cache_read_input_tokens:0,cache_creation_input_tokens:0});
+ await assert.rejects(findDetailBoxes({image:img,ids:[]},{},client),{status:400});
+ await assert.rejects(findDetailBoxes({image:img,ids:['cuff']},{}),{status:503});
+});

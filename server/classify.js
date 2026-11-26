@@ -189,3 +189,47 @@ export async function findDefects(body,env=process.env,client) {
     .filter(r=>r.x1-r.x0>=2&&r.y1-r.y0>=2).slice(0,DEFECT_LIMIT[level]);
   return {regions,model:response.model,level,usage:usageOf(response)};
 }
+
+// ---- 옷걸이 v2(014) 디테일 위치 찾기 (Claude 비전, 선택·유료) ----
+// 무료 계산(옷 영역 비율·단추 찾기)으로 확신하지 못한 디테일만 묻습니다. 상자만 받고, 사진은 앱이 실제 사진에서 잘라 냅니다(생성 없음).
+export const DETAIL_IDS=['neckline','fabric','placket','waist','hem','cuff'];
+const DETAIL_TEXT={neckline:'the neckline and collar area',fabric:'a plain area of the fabric that shows the weave or knit texture (no buttons, seams or prints)',placket:'the button placket or other front closure (buttons, zipper, snaps) with two or three fasteners',waist:'the waistband and its closure (button, zipper, drawstring)',hem:'the bottom hem of the garment',cuff:'one sleeve end (cuff)'};
+const DetailBoxes=z.object({details:z.array(z.object({id:z.enum(DETAIL_IDS),present:z.boolean(),x0:z.number().int(),y0:z.number().int(),x1:z.number().int(),y1:z.number().int(),note:z.string()}))});
+export function detailInstructions(ids,W,H) {
+  return `This is a real product photo of one garment hanging on a hanger, background removed to white. The shop will cut close-up detail photos out of this exact photo (nothing is generated). For each requested part, give one tight box around it, or present=false if this garment does not have it or it is not visible:
+${ids.map(id=>`- ${id}: ${DETAIL_TEXT[id]}`).join('\n')}
+Coordinates: the image is ${W||'?'}x${H||'?'} pixels; give each box in a 0-1000 scale of width (x) and height (y), with x0<x1 and y0<y1. When present=false, use 0 for all coordinates. note: one short Korean phrase. Return each requested id exactly once.`;
+}
+export async function findDetailBoxes(body,env=process.env,client) {
+  if(!env.ANTHROPIC_API_KEY&&!client)throw fail('현재 실행 환경에 ANTHROPIC_API_KEY가 연결되지 않았습니다.',503);
+  const m=typeof body.image==='string'&&body.image.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if(!m||body.image.length>2500000)throw fail('사진 형식이 올바르지 않습니다.',400);
+  const ids=(Array.isArray(body.ids)?body.ids:[]).filter(id=>DETAIL_IDS.includes(id));
+  if(!ids.length)throw fail('찾을 디테일이 없습니다.',400);
+  const W=Number(body.width)||0,H=Number(body.height)||0;
+  const anthropic=client||new Anthropic({apiKey:env.ANTHROPIC_API_KEY,timeout:120000,maxRetries:1});
+  let response;
+  try {
+    response=await anthropic.beta.messages.parse({
+      model:MODEL,max_tokens:4000,
+      output_config:{effort:'low',format:betaZodOutputFormat(DetailBoxes)},
+      betas:['server-side-fallback-2026-07-01'],fallbacks:'default',
+      messages:[{role:'user',content:[{type:'image',source:{type:'base64',media_type:`image/${m[1]}`,data:m[2]}},{type:'text',text:detailInstructions(ids,W,H)}]}],
+    });
+  } catch(e) {
+    if(e instanceof Anthropic.AuthenticationError)throw fail('Claude API 키 인증에 실패했습니다.',401);
+    if(e instanceof Anthropic.RateLimitError)throw fail('Claude API 요청 한도에 도달했습니다. 잠시 후 다시 시도하세요.',429);
+    if(e instanceof Anthropic.BadRequestError)throw fail(`Claude API 요청 오류: ${String(e.message).slice(0,200)}`,400);
+    if(e instanceof Anthropic.APIError)throw fail(`Claude API 오류 (${e.status??'연결'}). 잠시 후 다시 시도하세요.`,502);
+    throw e;
+  }
+  if(response.stop_reason==='refusal')throw fail('Claude가 이 사진 검사를 거절했습니다.',422);
+  if(!response.parsed_output)throw fail('디테일 위치 결과를 읽지 못했습니다. 다시 시도하세요.',502);
+  const clamp=v=>Math.max(0,Math.min(1000,v)),out={};
+  for(const d of response.parsed_output.details){
+    if(!ids.includes(d.id)||out[d.id])continue;
+    const b={x0:clamp(Math.min(d.x0,d.x1)),x1:clamp(Math.max(d.x0,d.x1)),y0:clamp(Math.min(d.y0,d.y1)),y1:clamp(Math.max(d.y0,d.y1))};
+    out[d.id]=d.present&&b.x1-b.x0>=5&&b.y1-b.y0>=5?{present:true,...b,note:d.note}:{present:false,note:d.note};
+  }
+  return {details:out,model:response.model,usage:usageOf(response)};
+}

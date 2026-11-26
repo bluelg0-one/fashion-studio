@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
-import {cutoutBounds} from '../utils/detailCrops.js';
+import {cutoutBounds, planDetails, garmentFrame, detailSlotId, detailIds, DETAIL_LABELS, DETAIL_MIN_SIDE} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {estimateCanvasTilt, rotateCanvas, borderColor, decideLevel, autoLevelAllowed, coverScale} from '../utils/level.js';
@@ -67,7 +67,8 @@ function withEntry(slot,entry) {
 function migrateSlots(saved) {
   const base=initialSlots(),out={};
   for(const [k,v] of Object.entries(base)){const o=saved?.[k];out[k]=o?{...v,...o,label:o.source?o.label:v.label}:v;}
-  for(const [k,v] of Object.entries(saved||{}))if(!(k in base)&&v?.source)out[k]=v;
+  // 옷걸이 v2 자동 디테일컷(derived.from)은 원본 사진이 없어도 남깁니다(014 점검 C-1).
+  for(const [k,v] of Object.entries(saved||{}))if(!(k in base)&&(v?.source||v?.derived?.from))out[k]=v;
   for(const v of Object.values(out))if(v.source&&!v.cutout&&entryOf(v)){const {status,...f}=entryFields(entryOf(v));Object.assign(v,f);}
   for(const v of Object.values(out))if(v.source&&!v.stage1&&v.cutout){const e=entryOf(v);Object.assign(v,{stage1:e?.stage1||v.cutout,stage2:e?.stage2||null,matte:e?.matte||null});}
   return out;
@@ -85,7 +86,7 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null),dirty=useRef(false),latest=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const [autoRequest,setAutoRequest]=useState(null);
+  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef(''),costProduct=useRef('');
   // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
   const logCost=row=>{addCost(row);};
@@ -99,16 +100,16 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport});
   latest.current={id:productId,name:productName,data:snapshot()};
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;dirty.current=false;clearTimeout(saveTimer.current);
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
-    const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
+    const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived===true&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch({...DEFAULT_RETOUCH,...d.retouch}));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
-    setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
+    setDetailReport(d.detailReport||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   // 인자 없이 부르면 ‘화면의 최신 상태’를 저장하되, 저장 안 된 편집이 있을 때만 저장합니다.
@@ -139,7 +140,7 @@ export default function AutoStudio() {
     dirty.current=true;setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -329,6 +330,50 @@ export default function AutoStudio() {
       if(warnings.length)setError(warnings.join('\n'));
       refreshCredits();
       setStep(`완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.${!onlyId&&!status.openai?' (OpenAI 키가 없어 문구 자동 작성은 건너뛰었습니다.)':''}`);
+    });
+  }
+  // ---- 옷걸이 v2 디테일컷(014): 보정이 끝난 정면·후면(지금 버전의 2차, 없으면 1차)에서 잘라 냅니다 ----
+  // 사장님 결정: 실제 사진만 씀(생성 없음). 원본 기준 긴 변 800px이 안 나오면 키우지 않고 빼고 '해상도 부족'으로 표시합니다.
+  // ai: 확신 없는 디테일(단추 없음·소매가 붙음 등)만 Claude 1회로 상자를 받음(선택·유료, 같은 사진은 다시 부르지 않음).
+  async function buildDetails(cur,garmentId,{ai=false,product=productName}={}) {
+    const hero=cur.hero,back=cur.back,front=hero?.cutout?await pixelsOf(hero.cutout):null,backPx=back?.cutout?await pixelsOf(back.cutout):null;
+    // 1차 정렬(가운데 맞추기)로 옷이 커졌으면, 원본(누끼) 대비 몇 배인지 → 원본 해상도로 판단
+    const scaleOf=async(slot,px)=>{const m=(entryOf(slot)||{}).matte||slot?.matte;if(!m||!px)return 1;const a=garmentFrame(await pixelsOf(m)),b=garmentFrame(px);return a&&b?b.gw/a.gw:1;};
+    const scale={front:await scaleOf(hero,front),back:await scaleOf(back,backPx)};
+    let plan=planDetails({front,back:backPx,garment:garmentId,scale}),aiUsed=false,cost=null;
+    const unsure=front?plan.skipped.filter(x=>x.review).map(x=>x.id):[];
+    if(ai&&unsure.length){
+      const key='details:'+unsure.join(',')+':'+hero.cutout;
+      let res=cache.current.get(key),cached=Boolean(res);
+      if(!res){
+        const status=await api('status');setReady(status);
+        if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 없어 디테일 위치를 찾을 수 없습니다. ‘Claude로 위치 찾기’를 끄고 다시 하세요.');
+        res=await api('details',{...(await inspectImage(hero.cutout)),ids:unsure});cache.current.set(key,res);
+      }
+      logCost(claudeRow({feature:'details',product,cut:hero.label,responses:[res],boxes:Object.keys(res.details||{}).length,cached}));
+      cost=cached?null:{claude:claudeCost(res.model,res.usage)||0,claudeUnknown:claudeCost(res.model,res.usage)==null?1:0};
+      plan=planDetails({front,back:backPx,garment:garmentId,scale,ai:res.details});aiUsed=true;
+    }
+    const next={};
+    for(const [k,v] of Object.entries(cur))if(!v?.derived?.from)next[k]=v;
+    for(const it of plan.items){
+      const src=it.from==='front'?hero:back,c=await imageCanvas(src.cutout),s=Math.max(1,scale[it.from]||1),{x,y,w,h}=it.box;
+      const out=document.createElement('canvas');out.width=Math.round(w/s);out.height=Math.round(h/s);
+      const g=out.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(c,x,y,w,h,0,0,out.width,out.height);
+      const id=detailSlotId(it.id),png=out.toDataURL('image/png'),old=cur[id];
+      next[id]={id,label:it.label,enabled:old?.enabled??true,source:null,image:null,cutout:png,stage1:png,stage2:null,matte:null,status:'done',versions:[null],vIndex:0,
+        derived:{from:src.id,detail:it.id,box:it.box,side:out.height,at:Date.now()}};
+    }
+    return {slots:next,report:{items:plan.items.map(({id,label,from,outSide})=>({id,label,from,outSide})),skipped:plan.skipped,ai:aiUsed,garment:garmentId,at:Date.now()},cost};
+  }
+  async function makeDetails() {
+    await task(async()=>{
+      if(!slots.hero.cutout)throw new Error('먼저 옷걸이 정면을 누끼·보정해 주세요.');
+      setStep('정면·후면에서 디테일컷을 잘라 내는 중 (브라우저 계산, 무료)');
+      const r=await buildDetails(slots,garment,{ai:Boolean(defectOpts.detailAI)});
+      setSlots(await refreshImages(r.slots));setDetailReport(r.report);
+      const review=r.report.skipped.filter(x=>x.review).length;
+      setStep(`디테일컷 ${r.report.items.length}장을 만들었습니다${r.report.skipped.length?` · 빠짐 ${r.report.skipped.length}(${r.report.skipped.map(x=>`${x.label}: ${x.reason}`).join(' · ')})`:''}${review?' · 위치 확인이 필요한 디테일은 ‘Claude로 위치 찾기’를 켜고 다시 누를 수 있습니다(유료)':''}.`);
     });
   }
   // ---- 색감 통일 (브라우저 계산, API 비용 없음) ----
@@ -668,6 +713,12 @@ export default function AutoStudio() {
       const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot)});
       return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
+    // 옷걸이 v2: 2차까지 끝난 정면·후면에서 디테일컷(014). 실패해도 컷 보정은 그대로 두고 보고서에만 남깁니다.
+    details:HANGER_V2?async product=>{
+      const d=product.data;
+      try {const r=await buildDetails(d.slots,d.garment||'long-top',{ai:Boolean(defectOpts.detailAI),product:product.name});return {product:{...product,data:{...d,slots:r.slots,detailReport:r.report}},cost:r.cost};}
+      catch(e){return {product:{...product,data:{...d,detailReport:{items:[],skipped:[],error:String(e.message).slice(0,200),at:Date.now()}}}};}
+    }:null,
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
       const next=await refreshImages(data.slots,{colorRef:colorRefNew,frame:{enabled:false,ratio:'3:4',margin:6,...data.frame}});
@@ -828,7 +879,8 @@ export default function AutoStudio() {
   // 옷걸이 v2: 옷걸이 정면·후면 2칸은 항상 보입니다. 자동 디테일컷(derived)은 아래 '디테일컷' 줄에 따로 보입니다.
   const visible=s=>s.id==='hero'||(HANGER_V2&&s.id==='back')||(!s.derived?.from&&(Boolean(s.source)||Boolean(s.shown)));
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));
-  const hiddenCuts=Object.values(slots).filter(s=>s.id!=='fit'&&!visible(s));
+  const hiddenCuts=Object.values(slots).filter(s=>s.id!=='fit'&&!s.derived?.from&&!visible(s));
+  const derivedCuts=detailIds(garment).map(id=>slots[detailSlotId(id)]).filter(s=>s?.derived?.from);
   function addCut(id) {
     if(id==='__new'){const nid='extra-'+crypto.randomUUID();patch(nid,{id:nid,label:'추가 컷',enabled:true,shown:true,source:null,image:null,cutout:null,crop:null,status:'empty'});return;}
     patch(id,{shown:true});
@@ -874,6 +926,22 @@ export default function AutoStudio() {
       {colorRef&&<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>색감 기준: <b>{colorRef.label}</b> ({{stage1:'1차',stage2:'2차',final:'최종'}[colorRef.stage]||'최종'}) · 다른 컷은 보정할 때 이 색감으로 맞춰집니다 <button type="button" className="subtle tiny" onClick={()=>chooseColorRef(null,null)}>기준 해제</button></p>}
       {cutList.map(slot=><CutRow key={slot.id} slot={slot} {...cutProps}/>)}
       {fitEnabled&&<CutRow slot={slots.fit} {...cutProps} onHide={null}/>}
+      {HANGER_V2&&<section className="detail-cuts" aria-label="디테일컷 자동">
+        <h3>디테일컷 <small>보정이 끝난 옷걸이 정면·후면에서 자동으로 잘라 냅니다 · 실제 사진만 사용(새로 그리지 않음)</small></h3>
+        <div className="btn-row">
+          <span className="btn-with-cost"><button type="button" className="primary" disabled={!slots.hero.cutout} onClick={makeDetails}>{derivedCuts.length?'디테일컷 다시 만들기':'디테일컷 자동 만들기'}</button><Cost k="browser"/></span>
+          <label className="check"><input type="checkbox" aria-label="디테일 위치 Claude로 찾기" checked={Boolean(defectOpts.detailAI)} onChange={e=>setDefectOpts({detailAI:e.target.checked})}/>확신 없는 위치(단추·소매 끝)는 Claude로 찾기 <Cost k="claudeDetails"/></label>
+        </div>
+        <p className="slot-note">{detailIds(garment).map(id=>DETAIL_LABELS[id]).join(' · ')} ({GARMENTS.find(g=>g.id===garment)?.label}) · 원본 기준 긴 변 {DETAIL_MIN_SIDE}px이 안 나오면 키우지 않고 빼고 ‘해상도 부족’으로 표시합니다. 정면·후면을 다시 보정했으면 다시 만들어 주세요.</p>
+        {derivedCuts.length>0&&<div className="detail-grid">{derivedCuts.map(s=><figure key={s.id} data-detail={s.derived.detail}>
+          <img src={s.image||s.cutout} alt={`${s.label} 디테일컷`}/>
+          <figcaption><b>{s.label}</b> · {s.derived.from==='back'?'후면':'정면'}에서 · {s.derived.side}px
+            <label className="check"><input type="checkbox" aria-label={`${s.label} 상세페이지에 포함`} checked={s.enabled!==false} onChange={e=>patch(s.id,{enabled:e.target.checked})}/>상세페이지에 포함</label></figcaption>
+        </figure>)}</div>}
+        {detailReport?.skipped?.length>0&&<ul className="detail-skipped" aria-label="빠진 디테일">{detailReport.skipped.map(x=><li key={x.id} className={x.review?'review-note':''}>{x.label}: {x.reason}</li>)}</ul>}
+        {detailReport?.error&&<p className="review-note">디테일컷을 만들지 못했습니다: {detailReport.error}</p>}
+      </section>}
+
       {!HANGER_V2&&<div className="add-cuts" aria-label="컷 추가">
         <span>+ 컷 추가</span>
         {hiddenCuts.map(s=><button key={s.id} type="button" aria-label={`${s.id} 컷 추가`} onClick={()=>addCut(s.id)}>+ {s.label}</button>)}

@@ -108,3 +108,15 @@ test('a cut finished by auto correction without a 2nd stage (0 boxes) counts as 
  assert.deepEqual(saved.data.slots.hero.auto.flags,['Claude가 수정할 곳을 찾지 못함(0곳)']);
  assert.equal(planAuto([saved]).products[0].cuts[0].status,'skipped');
 });
+
+test('014 hanger v2: details step runs once per product after 2차 and before final; derived slots are not cuts; cost is added',async()=>{
+ const v2=[{id:'h',name:'아이보리 가디건',data:{slots:{hero:slot('옷걸이 정면'),back:slot('옷걸이 후면'),'d-neckline':{label:'넥라인',cutout:'x',derived:{from:'hero'}}}}}];
+ const s=store(v2),log=[],steps=mockSteps(log),job=planAuto(v2);
+ assert.deepEqual(job.products[0].cuts.map(c=>c.slotId),['hero','back'],'자동 디테일컷은 보정 대상이 아님');
+ steps.details=async p=>{log.push(`details:${p.name}:${p.data.slots.back.stage2}`);return {product:{...p,data:{...p.data,detailReport:{items:[{id:'neckline'}],skipped:[]}}},cost:{claude:.02}};};
+ const r=await runAuto(job,{...s,steps});
+ assert.deepEqual(log.slice(-2),['details:아이보리 가디건:s2:옷걸이 후면','final:아이보리 가디건:옷걸이 정면']);
+ assert.equal(log.filter(x=>x.startsWith('details')).length,1);
+ assert.equal(s.db.get('h').data.detailReport.items[0].id,'neckline','디테일 보고가 저장됨');
+ assert.ok(Math.abs(r.claude-.08)<1e-9,`2차 2컷 + 디테일 1회 (${r.claude})`);
+});

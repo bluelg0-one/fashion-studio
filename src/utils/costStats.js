@@ -5,6 +5,7 @@ import {claudeCost, openaiCost, claudePrice, PHOTOROOM} from './pricing.js';
 export const FEATURES={
   defects:{label:'수정할 곳 찾기',group:'defects'},
   classify:{label:'자동 분류',group:'classify'},
+  details:{label:'기타 · 디테일 위치 찾기(Claude)',group:'other'},
   photoroom_cutout:{label:'기타 · Photoroom 누끼',group:'other'},
   photoroom_retouch2:{label:'기타 · Photoroom 2차 보정',group:'other'},
   openai_copy:{label:'기타 · OpenAI 상품 문구',group:'other'},

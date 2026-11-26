@@ -122,6 +122,8 @@ export async function runAuto(job,deps) {
       for(const cut of p.cuts)await run(cut,'stage2',async()=>put(cut,await engine(cut,'iopaint',paid=>steps.stage2(slots()[cut.slotId],{paid,product}))));
       // ④ 최종 확정: 상품 전체 이미지 다시 그리기(색감 기준 저장) → 컷 상태
       if(p.cuts.some(c=>todo(c)&&c.step==='final')){
+        // 옷걸이 v2(014): 보정 끝난 정면·후면에서 디테일컷 자동 생성(steps.details가 있을 때만)
+        if(steps.details){progress(`${p.name} · 디테일컷 잘라 내기`);const r=await steps.details(product);product=r.product;addCost(r.cost);await saveProduct(product);}
         product=await steps.final(product,refCut?{slotId:refCut.slotId,label:refCut.label,lab}:null);
         const fin=p.cuts.filter(c=>todo(c)&&c.step==='final'),at=now(),ss={...product.data.slots};
         for(const c of fin)if(ss[c.slotId])ss[c.slotId]={...ss[c.slotId],auto:{at,flags:[...c.flags]}};
