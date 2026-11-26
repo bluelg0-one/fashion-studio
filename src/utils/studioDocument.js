@@ -1,3 +1,4 @@
+import {HANGER_V2} from './appMode.js';
 export const GARMENTS = [
   {id:'long-top',label:'긴팔티셔츠'}, {id:'short-top',label:'반팔티셔츠'},
   {id:'vest',label:'조끼'}, {id:'dress',label:'원피스'},
@@ -13,7 +14,11 @@ export const DETAIL_SLOTS = [
   ['fabric','원단 및 디테일'],['detail2','디테일 2'],['detail3','디테일 3'],
   ['side','측면'],['back','후면'],['point1','포인트 1'],['point2','포인트 2'],
 ];
-export const initialSlots = () => Object.fromEntries([['hero','정면'],['fit','모델컷'],...DETAIL_SLOTS].map(([id,label])=>[id,{id,label,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'}]));
+// 옷걸이 v2(014): 필수 컷은 옷걸이 정면(hero)·옷걸이 후면(back) 2장. 측면·확대 칸은 없습니다(디테일컷은 이 2장에서 잘라 만듦, detailCrops.js).
+// 'fit'(모델컷) 칸은 데이터 모양을 맞추려고 두지만 v2 화면·상세페이지에서는 쓰지 않습니다.
+export const V2_CUTS = [['hero','옷걸이 정면'],['back','옷걸이 후면']];
+const emptySlot = ([id,label]) => [id,{id,label,enabled:true,source:null,image:null,cutout:null,crop:null,status:'empty'}];
+export const initialSlots = (v2=HANGER_V2) => Object.fromEntries((v2?[...V2_CUTS,['fit','모델컷']]:[['hero','정면'],['fit','모델컷'],...DETAIL_SLOTS]).map(emptySlot));
 const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // The guide describes where to measure; numeric values only come from the user.

@@ -72,9 +72,15 @@ test('already imported Drive files are skipped; unsupported files are counted; f
 
 test('slot placement follows the bulk-upload rules and respects slots already used',()=>{
  const it=(shot,confidence=.9)=>({shot,confidence});
- const r=assignSlots([it('front',.7),it('front',.95),it('fabric'),it('detail'),it('fabric'),it('unknown')]);
+ const r=assignSlots([it('front',.7),it('front',.95),it('fabric'),it('detail'),it('fabric'),it('unknown')],[],false);
  assert.deepEqual(r.map(x=>[x.item.shot,x.slotId]),[['front','hero'],['fabric','fabric'],['detail','detail2'],['fabric','detail3'],['unknown',null],['front',null]]);
- assert.deepEqual(assignSlots([it('front'),it('back')],['hero']).map(x=>x.slotId),[null,'back']);
+ assert.deepEqual(assignSlots([it('front'),it('back')],['hero'],false).map(x=>x.slotId),[null,'back']);
+});
+test('hanger v2 placement: front → hero, back → back, anything else or a second front → review slot',()=>{
+ const it=(shot,confidence=.9)=>({shot,confidence});
+ const r=assignSlots([it('front',.7),it('back',.8),it('front',.95),it('unknown'),it('fabric')]);
+ assert.deepEqual(r.map(x=>[x.item.shot,x.slotId]),[['front','hero'],['unknown',null],['fabric',null],['back','back'],['front',null]]);
+ assert.deepEqual(assignSlots([it('back'),it('front')],['back']).map(x=>[x.item.shot,x.slotId]),[['back',null],['front','hero']]);
 });
 
 test('estimated classification cost depends on the number of photos',()=>{

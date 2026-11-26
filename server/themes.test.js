@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {initialSlots,newSizeRow,documentBlocks,documentHtml} from '../src/utils/studioDocument.js';
 import {THEMES,THEME_LIST,themeOf,themeUnits,themedHtml,NEW_PRODUCT_THEME,wrap} from '../src/utils/detailThemes.js';
 const texts={headline:'<b>상품</b>',description:'설명',product:'',fitTitle:'Fit guide',fitDescription:'모델 165cm',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위 cm'};
-const withPhotos=ids=>{const s=initialSlots();for(const id of ids)s[id]={...s[id],image:`data:image/png;base64,${id}`};return s;};
+const withPhotos=ids=>{const s=initialSlots(false);for(const id of ids)s[id]={...s[id],image:`data:image/png;base64,${id}`};return s;};
 test('theme list: soft first, new products start soft, unknown/missing ids fall back to basic (old products keep their look)',()=>{
  assert.deepEqual(THEME_LIST.map(t=>t.id),['soft','minimal','magazine','basic']);assert.equal(NEW_PRODUCT_THEME,'soft');
  assert.equal(themeOf(undefined).id,'basic');assert.equal(themeOf('nope').id,'basic');

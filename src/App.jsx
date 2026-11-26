@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import AutoStudio from './components/AutoStudio.jsx'
 import ModelCutStudio from './components/ModelCutStudio.jsx'
+import { HANGER_V2 } from './utils/appMode.js'
 
+// 옷걸이 v2(014): 모델컷은 서비스 조사 뒤 결정(사장님) → 'AI모델컷' 탭은 숨깁니다(코드는 남김, ?v1 에서 보임).
 const TABS = [
   { id: 'studio', label: '상세페이지 제작' },
-  { id: 'modelcut', label: 'AI모델컷' },
+  ...(HANGER_V2 ? [] : [{ id: 'modelcut', label: 'AI모델컷' }]),
 ]
 
 export default function App() {
@@ -24,7 +26,7 @@ export default function App() {
       <main style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
         {/* 탭을 옮겨도 작업 중인 내용이 사라지지 않도록 숨김 처리만 함 */}
         <div style={{ display: tab === 'studio' ? 'block' : 'none' }}><AutoStudio /></div>
-        <div style={{ display: tab === 'modelcut' ? 'block' : 'none' }}><ModelCutStudio active={tab === 'modelcut'} /></div>
+        {!HANGER_V2 && <div style={{ display: tab === 'modelcut' ? 'block' : 'none' }}><ModelCutStudio active={tab === 'modelcut'} /></div>}
       </main>
     </>
   )

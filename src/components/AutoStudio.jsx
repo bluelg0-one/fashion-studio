@@ -33,6 +33,7 @@ import ChannelExportPanel from './ChannelExportPanel.jsx';
 import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME} from '../utils/detailThemes.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
+import {HANGER_V2} from '../utils/appMode.js';
 import CostPanel from './CostPanel.jsx';
 import {addCost} from '../utils/costLog.js';
 import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
@@ -175,6 +176,8 @@ export default function AutoStudio() {
   // '자동 수평 (실험)'을 켜면 예전처럼 정면 전체·측면·후면만, 세로·가로 근거가 같은 방향·비슷한 각도이고 ±4° 안일 때만 돌립니다.
   async function initialLevel(source,options,slotId,shot) {
     const none={angle:0,auto:null,confidence:null,manual:false,zoom:1,reason:null,review:false,suggest:0};
+    // 옷걸이 v2(014 사장님 결정): 회전 없음. 옷걸이 사진은 걸린 그대로가 정상이라 기울기 계산도 하지 않습니다.
+    if(HANGER_V2)return {level:none,workSource:null};
     const est=estimateCanvasTilt(await imageCanvas(source)),d=decideLevel(est);
     const base={...none,auto:est.angle,confidence:est.confidence,suggest:d.angle,reason:d.reason};
     if(options?.autoLevelBeta!==true)return {level:base,workSource:null};
@@ -215,7 +218,7 @@ export default function AutoStudio() {
     if(options.hangerMode==='remove')removeHanger(px);else {solidifyThin(px);if(sp)restoreHook(px,sp,wall);}
     if(wall)clearWallPockets(px,wall);
     // 마네킹 꼭지는 남기되(사장님 결정), 꼭지 맨 위보다 위에 남은 벽 걸이 부품 등은 지웁니다.
-    if(options.cleanMannequinTop)removeMannequinTop(px);else clearAboveFinial(px);
+    if(options.cleanMannequinTop)removeMannequinTop(px);else if(options.clearFinial!==false)clearAboveFinial(px);
     if(options.cleanIslands!==false)removeIslands(px);
     ctx.putImageData(px,0,0);
     return c.toDataURL('image/png');
@@ -561,7 +564,7 @@ export default function AutoStudio() {
       const photos=[];
       for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name});}
       setStep(`Claude가 사진 ${photos.length}장을 옷별·컷별로 분류하는 중`);
-      const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb}))});
+      const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb})),...(HANGER_V2?{mode:'hanger'}:{})});
       logCost(claudeRow({feature:'classify',product:'(한꺼번에 올리기)',cut:`사진 ${photos.length}장`,responses:[result],photos:photos.length}));
       const byId=Object.fromEntries(photos.map(p=>[p.id,p]));
       const groups=result.garments.map(g=>({...g,items:result.photos.filter(p=>p.garment===g.id)})).filter(g=>g.items.length);
@@ -612,7 +615,7 @@ export default function AutoStudio() {
   }
   const importDeps={
     readThumb:driveThumb,refImage:refThumb,createProduct:createImportedProduct,
-    classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',body);},
+    classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',HANGER_V2?{...body,mode:'hanger'}:body);},
     onClassified:(result,batch)=>logCost(claudeRow({feature:'classify',product:'(드라이브 가져오기)',cut:`사진 ${batch.length}장`,responses:[result],photos:batch.length})),
   };
   // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
@@ -820,9 +823,10 @@ export default function AutoStudio() {
     const title=texts.headline||'의류 상세페이지';
     downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
+  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:HANGER_V2?null:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:HANGER_V2?null:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
-  const visible=s=>s.id==='hero'||Boolean(s.source)||Boolean(s.shown);
+  // 옷걸이 v2: 옷걸이 정면·후면 2칸은 항상 보입니다. 자동 디테일컷(derived)은 아래 '디테일컷' 줄에 따로 보입니다.
+  const visible=s=>s.id==='hero'||(HANGER_V2&&s.id==='back')||(!s.derived?.from&&(Boolean(s.source)||Boolean(s.shown)));
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));
   const hiddenCuts=Object.values(slots).filter(s=>s.id!=='fit'&&!visible(s));
   function addCut(id) {
@@ -831,7 +835,7 @@ export default function AutoStudio() {
   }
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
-    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
+    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작{HANGER_V2?' · 옷걸이 v2':''}</h1><p>{HANGER_V2?'옷걸이 정면 → 옷걸이 후면 → 디테일(정면·후면에서 자동으로 잘라 냄) → Size 순서로 구성합니다.':'대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.'}</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><label className="theme-pick">디자인 테마<select aria-label="상세페이지 디자인 테마" value={docTheme} disabled={busy} onChange={e=>{setDocTheme(e.target.value);setPreview(null);}}>{THEME_LIST.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select><small>{themeOf(docTheme).desc}</small></label><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
     <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · BiRefNet(내 PC) {bir?.ok&&bir.ready?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
       <table className="cost-table"><thead><tr><th>기능</th><th>사용 모델</th><th>비용</th></tr></thead><tbody>
@@ -870,11 +874,11 @@ export default function AutoStudio() {
       {colorRef&&<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>색감 기준: <b>{colorRef.label}</b> ({{stage1:'1차',stage2:'2차',final:'최종'}[colorRef.stage]||'최종'}) · 다른 컷은 보정할 때 이 색감으로 맞춰집니다 <button type="button" className="subtle tiny" onClick={()=>chooseColorRef(null,null)}>기준 해제</button></p>}
       {cutList.map(slot=><CutRow key={slot.id} slot={slot} {...cutProps}/>)}
       {fitEnabled&&<CutRow slot={slots.fit} {...cutProps} onHide={null}/>}
-      <div className="add-cuts" aria-label="컷 추가">
+      {!HANGER_V2&&<div className="add-cuts" aria-label="컷 추가">
         <span>+ 컷 추가</span>
         {hiddenCuts.map(s=><button key={s.id} type="button" aria-label={`${s.id} 컷 추가`} onClick={()=>addCut(s.id)}>+ {s.label}</button>)}
         <button type="button" disabled={Object.keys(slots).length>=18} onClick={()=>addCut('__new')}>+ 직접 이름 정하기</button>
-      </div>
+      </div>}
     </fieldset>
     <div className="studio-workspace"><fieldset disabled={busy} className="studio-editor">
       <section className="editor-section"><h2>상품 정보와 공통 보정</h2>
@@ -904,9 +908,9 @@ export default function AutoStudio() {
         <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k={cutoutCost(retouch)}/><Cost k="openai"/></span>
         <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
       </section>
-      <section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
+      {!HANGER_V2&&<section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
         {fitEnabled&&<><label>Fit guide 제목<input maxLength={100} value={texts.fitTitle} onChange={e=>setText('fitTitle',e.target.value)}/></label><label>모델 설명<textarea maxLength={1500} value={texts.fitDescription} onChange={e=>setText('fitDescription',e.target.value)} placeholder="확인된 모델 키·착용 사이즈 등을 입력하세요."/></label><p className="slot-note">모델 사진은 위 ‘컷별 보정’의 모델컷 줄에서 넣고 보정합니다.</p></>}
-      </section>
+      </section>}
       <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>디테일 사진은 위 ‘컷별 보정’에서 넣고 보정합니다. 사진이 없는 컷은 상세페이지에서 빠집니다.</p>
       </section>
       <section className="editor-section size-editor"><h2>04 · Size</h2><label>Size 제목<input maxLength={100} value={texts.sizeTitle} onChange={e=>setText('sizeTitle',e.target.value)}/></label>

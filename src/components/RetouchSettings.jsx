@@ -1,5 +1,6 @@
 import {RETOUCH_PRESETS, MANNEQUIN_MODES, lowResolution, retouchPrompt} from '../utils/retouchPresets.js';
 import {Cost} from './Cost.jsx';
+import {HANGER_V2} from '../utils/appMode.js';
 
 export const cutoutCost=o=>o?.cutout==='birefnet'?'birefnet':'photoroom';
 export function RetouchSettings({value,onChange,status,bir,prefix='',title='누끼·보정 설정'}) {
@@ -25,18 +26,20 @@ export function RetouchSettings({value,onChange,status,bir,prefix='',title='누�
       :<p className="slot-note">Photoroom은 배경 지우기만 합니다(원본 해상도 최대 2400px, 옷 테두리 HD). 구김 펴기·얼룩 지우기는 각 사진의 ‘얼룩·구김 수정 (IOPaint)’에서 무료로 합니다.</p>}
     <div className="post-clean" aria-label={`${prefix}누끼 뒤 정리`}>
       <h4>누끼 뒤 정리 <Cost k="browser"/></h4>
-      <label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 (실험)`} checked={value.autoLevelBeta===true} onChange={e=>set({autoLevelBeta:e.target.checked})}/>자동 수평 (실험 · 기본 꺼짐: 꺼져 있으면 사진마다 ‘수평 제안’만 보여 주고 누를 때만 돌립니다)</label>
-      <label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>
+      {!HANGER_V2&&<label className="check"><input type="checkbox" aria-label={`${prefix}자동 수평 (실험)`} checked={value.autoLevelBeta===true} onChange={e=>set({autoLevelBeta:e.target.checked})}/>자동 수평 (실험 · 기본 꺼짐: 꺼져 있으면 사진마다 ‘수평 제안’만 보여 주고 누를 때만 돌립니다)</label>}
+      {!HANGER_V2&&<label className="check"><input type="checkbox" aria-label={`${prefix}받침대 기둥 지우기`} checked={value.removeStand!==false} onChange={e=>set({removeStand:e.target.checked})}/>마네킹 받침대(검은 기둥) 자동 지우기 (Photoroom·BiRefNet 모두)</label>}
       <label className="check"><input type="checkbox" aria-label={`${prefix}떨어진 조각 정리`} checked={value.cleanIslands!==false} onChange={e=>set({cleanIslands:e.target.checked})}/>옷과 떨어진 작은 조각 지우기</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}흰 옷 맑게`} checked={value.clearWhite!==false} onChange={e=>set({clearWhite:e.target.checked})}/>흰·아이보리 옷 맑게 (누런 기 약하게 덜기 · 무료)</label>
-      <label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>
+      {!HANGER_V2&&<label className="check"><input type="checkbox" aria-label={`${prefix}마네킹 꼭지·목 받침 지우기`} checked={Boolean(value.cleanMannequinTop)} onChange={e=>set({cleanMannequinTop:e.target.checked})}/>마네킹 금색 꼭지·목 받침 지우기 (옷 목선 위로 나온 부분)</label>}
       <label>옷걸이<select aria-label={`${prefix}옷걸이`} value={value.hangerMode||'keep'} onChange={e=>set({hangerMode:e.target.value})}>
         <option value="keep">남기기 (반투명해진 고리만 선명하게)</option>
         <option value="remove">지우기</option>
       </select></label>
+      {HANGER_V2&&<p className="slot-note">옷걸이 v2: 받침대 기둥 지우기·마네킹 꼭지 정리·자동 수평은 쓰지 않습니다(옷걸이 사진에는 없고, 끈·금색 고리를 잘못 지울 수 있음).</p>}
       <p className="slot-note">옷 색으로 마네킹·옷걸이를 구분합니다. 흰색·회색·검정 옷은 구분할 수 없어 마네킹·옷걸이 지우기를 건너뜁니다.</p>
     </div>
-    {value.cutout!=='birefnet'&&<details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
+    {/* 옷걸이 v2: 생성형 추가 편집(고스트 마네킹·플랫레이·프롬프트)은 없는 모양을 만들 수 있어 숨김(014) */}
+    {!HANGER_V2&&value.cutout!=='birefnet'&&<details className="advanced" open={advancedOn||undefined}><summary>Photoroom 생성형 추가 편집 (선택 · 기본 꺼짐) <Cost k="photoroomAI"/></summary>
       <label className="check"><input type="checkbox" aria-label={`${prefix}조명 보정`} checked={value.lighting} onChange={e=>set({lighting:e.target.checked})}/>조명 자연스럽게 보정 (색상·채도는 원본 유지)</label>
       <label className="check"><input type="checkbox" aria-label={`${prefix}AI 그림자`} checked={Boolean(value.shadow)} onChange={e=>set({shadow:e.target.checked})}/>바닥에 자연스러운 그림자 넣기 (AI 그림자)</label>
       <h4>마네킹 처리</h4>
