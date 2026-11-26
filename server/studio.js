@@ -1,5 +1,5 @@
 import {retouchPrompt, lowResolution} from '../src/utils/retouchPresets.js';
-import {classifyPhotos, findDefects} from './classify.js';
+import {classifyPhotos, findDefects, findDetailBoxes} from './classify.js';
 const MAX = 8 * 1024 * 1024;
 const fail=(message,status)=>Object.assign(new Error(message),{status});
 const PHOTOROOM_URL='https://image-api.photoroom.com/v2/edit';
@@ -124,6 +124,7 @@ export async function studio(action, body, env = process.env, request = fetch) {
     googlePicker: /^AIza[\w-]{35}$/.test(env.GOOGLE_PICKER_API_KEY||'') && /^\d{6,20}$/.test(env.GOOGLE_APP_ID||'') ? {apiKey:env.GOOGLE_PICKER_API_KEY,appId:env.GOOGLE_APP_ID} : null };
   if (action === 'classify') return classifyPhotos(body,env);
   if (action === 'defects') return findDefects(body,env);
+  if (action === 'details') return findDetailBoxes(body,env);
   if (action === 'retouch') return retouch(body,env,request);
   if (action === 'retouch2') return retouch2(body,env,request);
   if (action === 'credits') {

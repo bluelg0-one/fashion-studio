@@ -59,3 +59,11 @@
 .cut-chip{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;margin:2px 4px 2px 0;background:#eef0f3;color:#3f4856}.st-running{background:#e5eefc;color:#1f4fa0}.st-waiting{background:#fff6d6;color:#6b5200;font-weight:600}.st-done{background:#e7f6ec;color:#1e6b3a}.st-review{background:#fbefe4;color:#8a4b12;font-weight:600}.st-failed{background:#fde4e4;color:#8f1d1d}.st-skipped{background:#f3f4f6;color:#6b7280}.auto-table td:first-child{white-space:nowrap;width:1%}button.link{background:none;border:0;padding:0;color:#233d78;text-decoration:underline;cursor:pointer;font:inherit}.waiting{color:#6b5200}.auto-summary{border-top:1px dashed #dce2e9;margin-top:8px;padding-top:6px}
 .level-badge{display:inline-block;background:#fff3cd;border:1px solid #f0c36d;color:#6b4b00!important;font-weight:600;font-size:13px;padding:6px 10px;border-radius:6px;margin:6px 0!important}
 .check-result{display:grid;gap:4px;margin:10px 0;padding:14px 16px;border-radius:10px;border:2px solid;font-size:14px}.check-result b{font-size:18px}.check-result small{color:#5b6576}.check-ok{background:#e8f7ec;border-color:#2e9b4f;color:#14532d}.check-fail{background:#fdecec;border-color:#d93636;color:#7f1d1d}
+/* 옷걸이 v2 디테일컷(014) */
+.detail-cuts{border:1px solid #e3e6eb;border-radius:10px;padding:14px;margin:14px 0;background:#fafbfc}
+.detail-cuts h3 small{font-weight:400;color:#667085;margin-left:6px}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:10px}
+.detail-grid figure{margin:0;background:#fff;border:1px solid #e3e6eb;border-radius:8px;padding:6px}
+.detail-grid img{width:100%;aspect-ratio:3/4;object-fit:contain;background:#fff;display:block}
+.detail-grid figcaption{font-size:12px;margin-top:4px}
+.detail-skipped{margin:10px 0 0;padding-left:18px;font-size:13px}

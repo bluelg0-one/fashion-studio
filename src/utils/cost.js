@@ -8,6 +8,7 @@ export const COST={
   photoroomAI:['Photoroom 생성형',`같은 ${pr} · 결과 1K`],
   claudeClassify:['Claude Opus 5.5',estimateText('claudeClassify')],
   claudeDefects:['Claude Opus 5.5',estimateText('claudeDefects')],
+  claudeDetails:['Claude Opus 5.5',`${estimateText('claudeDefects')} · 확신 없는 디테일이 있을 때만 상품당 1회`],
   iopaint:['IOPaint LaMa','무료 · 내 PC'],
   openai:['OpenAI gpt-4.1-mini','단가 미확인 · 토큰만 기록'],
   browser:['브라우저 계산','무료'],

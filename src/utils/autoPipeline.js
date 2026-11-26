@@ -1,3 +1,4 @@
+import {HANGER_V2} from './appMode.js';
 // 상품 단위 자동 보정 (지시서 010) — 화면과 분리된 순서·상태 관리.
 // 상품마다: ① 모든 컷 자동 수평 → 1차(누끼·받침대·정리·색상 기본값)  ② 색감 통일(대표 정면컷 기준)  ③ 2차(Claude 찾기 ‘적극’ → 작은 상자 분할 → IOPaint)  ④ 최종 확정
 // 실제 처리(사진 계산·엔진 호출)는 deps.steps로 받습니다(AutoStudio.jsx). 단계가 끝날 때마다 상품과 진행 상태를 저장해서
@@ -104,7 +105,7 @@ export async function runAuto(job,deps) {
       const run=async(cut,step,work)=>{
         if(!todo(cut)||STEPS.indexOf(cut.step)>STEPS.indexOf(step))return;
         check(signal);
-        const t0=now();cut.status='running';progress(`${p.name} · ${cut.label} · ${{level:'자동 수평',stage1:'1차(누끼·정리·색상)',color:'색감 통일',stage2:'2차(수정할 곳 찾기 → IOPaint)'}[step]}`);
+        const t0=now();cut.status='running';progress(`${p.name} · ${cut.label} · ${{level:HANGER_V2?'준비(회전 없음)':'자동 수평',stage1:'1차(누끼·정리·색상)',color:'색감 통일',stage2:'2차(수정할 곳 찾기 → IOPaint)'}[step]}`);
         try {await work();cut.step=STEPS[STEPS.indexOf(step)+1];cut.status='pending';}
         catch(e){if(e?.stopped||e?.capReached)throw e;cut.status='failed';cut.error=String(e?.message||e).slice(0,200);}
         finally {cut.seconds+=Math.max(0,now()-t0)/1000;clock();await save(job);}
@@ -122,6 +123,8 @@ export async function runAuto(job,deps) {
       for(const cut of p.cuts)await run(cut,'stage2',async()=>put(cut,await engine(cut,'iopaint',paid=>steps.stage2(slots()[cut.slotId],{paid,product}))));
       // ④ 최종 확정: 상품 전체 이미지 다시 그리기(색감 기준 저장) → 컷 상태
       if(p.cuts.some(c=>todo(c)&&c.step==='final')){
+        // 옷걸이 v2(014): 보정 끝난 정면·후면에서 디테일컷 자동 생성(steps.details가 있을 때만)
+        if(steps.details){progress(`${p.name} · 디테일컷 잘라 내기`);const r=await steps.details(product);product=r.product;addCost(r.cost);await saveProduct(product);}
         product=await steps.final(product,refCut?{slotId:refCut.slotId,label:refCut.label,lab}:null);
         const fin=p.cuts.filter(c=>todo(c)&&c.step==='final'),at=now(),ss={...product.data.slots};
         for(const c of fin)if(ss[c.slotId])ss[c.slotId]={...ss[c.slotId],auto:{at,flags:[...c.flags]}};

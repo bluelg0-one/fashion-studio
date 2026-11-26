@@ -1,3 +1,4 @@
+import {HANGER_V2} from './appMode.js';
 // 사진 여러 장 가져오기 → 묶음 분류 → 상품 만들기 (화면과 분리된 순수 흐름).
 // 네트워크·사진 처리는 deps로 받아서, 화면 버튼(지금)이나 다음 단계의 자동 보정(010)이 같은 함수를 그대로 부를 수 있습니다.
 // 진행 상태(job)는 매 단계 저장(deps.save)하므로, 중간에 끊겨도 같은 job으로 다시 부르면 남은 것부터 이어서 합니다.
@@ -35,10 +36,13 @@ export const toClassify=job=>job.files.filter(f=>f.status==='pending'||f.status=
 // 사진 칸 배치: 지금의 ‘한꺼번에 올리기’와 같은 규칙. 같은 컷이 두 장이면 뒤의 것은 추가 칸(extra).
 const SHOT_SLOT={front:'hero',frontZoom:'frontZoom',frontTop:'frontTop',frontBottom:'frontBottom',side:'side',back:'back',fabric:'fabric',fit:'fit'};
 const DETAIL_ORDER=['fabric','detail2','detail3','point1','point2'];
-export function assignSlots(items,taken=[]) {
+// 옷걸이 v2(014): 정면 → 옷걸이 정면(hero), 후면 → 옷걸이 후면(back). 그 밖의 사진(애매함·다른 컷)은 '확인 필요' 추가 칸으로.
+const SHOT_SLOT_V2={front:'hero',back:'back'};
+export function assignSlots(items,taken=[],v2=HANGER_V2) {
   const used=new Set(taken),out=[];
   for(const item of [...items].sort((a,b)=>b.confidence-a.confidence)){
-    let id=SHOT_SLOT[item.shot];
+    let id=(v2?SHOT_SLOT_V2:SHOT_SLOT)[item.shot];
+    if(v2){if(!id||used.has(id)){out.push({slotId:null,item});continue;}used.add(id);out.push({slotId:id,item});continue;}
     if((!id||used.has(id))&&['fabric','detail'].includes(item.shot))id=DETAIL_ORDER.find(k=>!used.has(k));
     if(!id||used.has(id)){out.push({slotId:null,item});continue;}
     used.add(id);out.push({slotId:id,item});

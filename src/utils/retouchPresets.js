@@ -1,3 +1,4 @@
+import {HANGER_V2} from './appMode.js';
 // 누끼·보정 기본 프롬프트. 화면(체크박스)과 서버(실제 프롬프트 조립)가 함께 사용합니다.
 // 서버는 화면에서 받은 id만 믿고, 프롬프트 문장은 여기에서 만듭니다.
 export const RETOUCH_PRESETS = [
@@ -21,8 +22,13 @@ export const DEFAULT_TONE={bright:20,vivid:30};
 // autoLevelBeta: 사진을 넣을 때 자동 수평 맞추기(실험, 기본 꺼짐 — 013 팀장 결정: 상품 3개에서 거의 모든 컷이 틀림). 꺼져 있으면 '수평 제안 n°'만 보여 줍니다.
 //   예전 설정 autoLevel(기본 켬)은 더 이상 쓰지 않습니다(저장된 설정 때문에 다시 켜지지 않도록 새 이름).
 // clearWhite: 흰·아이보리 옷의 누런 기를 약하게 덜고 밝은 부분을 살짝 올림(013-B, 기본 켬, 브라우저 계산)
-export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','hangerMode','autoLevel','autoLevelBeta','clearWhite'];
-export const DEFAULT_RETOUCH = {cutout:'photoroom', autoLevelBeta:false, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+// clearFinial: 마네킹 금색 꼭지 위에 남은 벽 걸이 부품 지우기(013-B). 옷걸이 v2에서는 끔(금색 옷걸이 고리를 꼭지로 볼 수 있음, 점검 C-3).
+export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','clearFinial','hangerMode','autoLevel','autoLevelBeta','clearWhite'];
+export const DEFAULT_RETOUCH_V1 = {cutout:'photoroom', autoLevelBeta:false, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, clearFinial:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
+// 옷걸이 v2(014) 기본값: 받침대 기둥 지우기·꼭지 위 정리·마네킹 꼭지 지우기·자동 수평을 끕니다(옷걸이 사진에는 받침대·꼭지가 없고,
+// 켜 두면 늘어진 끈·금색 고리를 잘못 지울 수 있음 — 점검 C-2·C-3). 옷걸이는 남기고(고리 끝 살리기·틈의 벽 지우기는 그대로) 흰 옷 맑게는 켬.
+export const V2_RETOUCH = {removeStand:false, clearFinial:false, cleanMannequinTop:false, autoLevelBeta:false, hangerMode:'keep', mannequin:'keep'};
+export const DEFAULT_RETOUCH = HANGER_V2 ? {...DEFAULT_RETOUCH_V1, ...V2_RETOUCH} : DEFAULT_RETOUCH_V1;
 // 마네킹 처리: 그대로 / 고스트 마네킹(마네킹을 지우고 옷만 입체로) / 플랫레이(바닥에 펼친 모습). 둘 다 생성형이며 결과가 1K로 작아집니다.
 export const MANNEQUIN_MODES = [
   {id:'keep', label:'마네킹 그대로 두기'},

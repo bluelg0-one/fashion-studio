@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import './AutoStudio.css';
-import {cutoutBounds} from '../utils/detailCrops.js';
+import {cutoutBounds, planDetails, garmentFrame, detailSlotId, detailIds, DETAIL_LABELS, DETAIL_MIN_SIDE} from '../utils/detailCrops.js';
 import {removeStand} from '../utils/stand.js';
 import {isOpaque, alphaFromWhite} from '../utils/alpha.js';
 import {estimateCanvasTilt, rotateCanvas, borderColor, decideLevel, autoLevelAllowed, coverScale} from '../utils/level.js';
@@ -33,13 +33,14 @@ import ChannelExportPanel from './ChannelExportPanel.jsx';
 import {THEME_LIST, themeOf, renderThemed, themedHtml, NEW_PRODUCT_THEME} from '../utils/detailThemes.js';
 import {defaultInstagram} from '../utils/instagramExport.js';
 import {COST, Cost} from './Cost.jsx';
+import {HANGER_V2} from '../utils/appMode.js';
 import CostPanel from './CostPanel.jsx';
 import {addCost} from '../utils/costLog.js';
 import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
 import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
-const defaultTexts=()=>({headline:'',description:'',product:'',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
+const defaultTexts=()=>({headline:'',description:'',product:'',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
 const defaultShopee=()=>({title:'',description:'',includeSizeChart:true});
 
 async function api(action,body) {
@@ -66,7 +67,8 @@ function withEntry(slot,entry) {
 function migrateSlots(saved) {
   const base=initialSlots(),out={};
   for(const [k,v] of Object.entries(base)){const o=saved?.[k];out[k]=o?{...v,...o,label:o.source?o.label:v.label}:v;}
-  for(const [k,v] of Object.entries(saved||{}))if(!(k in base)&&v?.source)out[k]=v;
+  // 옷걸이 v2 자동 디테일컷(derived.from)은 원본 사진이 없어도 남깁니다(014 점검 C-1).
+  for(const [k,v] of Object.entries(saved||{}))if(!(k in base)&&(v?.source||v?.derived?.from))out[k]=v;
   for(const v of Object.values(out))if(v.source&&!v.cutout&&entryOf(v)){const {status,...f}=entryFields(entryOf(v));Object.assign(v,f);}
   for(const v of Object.values(out))if(v.source&&!v.stage1&&v.cutout){const e=entryOf(v);Object.assign(v,{stage1:e?.stage1||v.cutout,stage2:e?.stage2||null,matte:e?.matte||null});}
   return out;
@@ -84,7 +86,7 @@ export default function AutoStudio() {
   const skipSave=useRef(true),saveTimer=useRef(null),dirty=useRef(false),latest=useRef(null);
   const [brightness,setBrightness]=useState(0),[busy,setBusy]=useState(false),[step,setStep]=useState(''),[error,setError]=useState('');
   const [preview,setPreview]=useState(null),[previewBusy,setPreviewBusy]=useState(false);
-  const [autoRequest,setAutoRequest]=useState(null);
+  const [autoRequest,setAutoRequest]=useState(null),[detailReport,setDetailReport]=useState(null);
   const cache=useRef(new Map()),lock=useRef(false),previewUrl=useRef(null),costCut=useRef(''),costProduct=useRef('');
   // 유료 호출 비용 기록(이 브라우저 + 연결 시 드라이브 CSV). 기록 실패는 작업을 멈추지 않습니다.
   const logCost=row=>{addCost(row);};
@@ -98,16 +100,16 @@ export default function AutoStudio() {
     try {await work();}catch(e){setError(e.message);setStep('중단됨 · 완료한 사진은 유지됩니다.');}
     finally {lock.current=false;setBusy(false);}
   }
-  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame});
+  const snapshot=()=>({slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,color:{ref:colorRef,strength:matchStrength},frame,detailReport});
   latest.current={id:productId,name:productName,data:snapshot()};
   async function applyProduct(product) {
     const d=product?.data||{};
     skipSave.current=true;dirty.current=false;clearTimeout(saveTimer.current);
     // 예전 버전이 대표 사진에서 자동으로 잘라 만든 디테일컷(원본 사진 없음)은 비웁니다.
-    const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
+    const nextSlots=Object.fromEntries(Object.entries(migrateSlots(d.slots)).map(([k,v])=>[k,v.derived===true&&!v.source?{...v,image:null,cutout:null,crop:null,derived:false,status:'empty'}:{...v,retouch:sanitizeRetouch(v.retouch)}]));
     setSlots(nextSlots);setTexts({...defaultTexts(),...d.texts});setGarment(d.garment||'long-top');setSizeRows(d.sizeRows||{});
     setFitEnabled(Boolean(d.fitEnabled));setRetouch(sanitizeRetouch({...DEFAULT_RETOUCH,...d.retouch}));setShopee({...defaultShopee(),...d.shopee});setInstagram({...defaultInstagram(),...d.instagram});setDocTheme(themeOf(d.docTheme).id);
-    setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
+    setDetailReport(d.detailReport||null);setColorRef(d.color?.ref||null);setFrame({enabled:false,ratio:'3:4',margin:6,...d.frame});setMatchStrength(d.color?.strength??80);
     setProductId(product.id);setProductName(product.name||'');setPreview(null);setSaveState('saved');
   }
   // 인자 없이 부르면 ‘화면의 최신 상태’를 저장하되, 저장 안 된 편집이 있을 때만 저장합니다.
@@ -138,7 +140,7 @@ export default function AutoStudio() {
     dirty.current=true;setSaveState('pending');clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveNow(),800);
     return()=>clearTimeout(saveTimer.current);
-  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame]);
+  },[slots,texts,garment,sizeRows,fitEnabled,retouch,shopee,instagram,docTheme,productName,colorRef,matchStrength,frame,detailReport]);
   async function switchProduct(id) {
     if(id===productId)return;
     await task(async()=>{await saveNow();await applyProduct(await getProduct(id));setStep('상품을 불러왔습니다.');});
@@ -175,6 +177,8 @@ export default function AutoStudio() {
   // '자동 수평 (실험)'을 켜면 예전처럼 정면 전체·측면·후면만, 세로·가로 근거가 같은 방향·비슷한 각도이고 ±4° 안일 때만 돌립니다.
   async function initialLevel(source,options,slotId,shot) {
     const none={angle:0,auto:null,confidence:null,manual:false,zoom:1,reason:null,review:false,suggest:0};
+    // 옷걸이 v2(014 사장님 결정): 회전 없음. 옷걸이 사진은 걸린 그대로가 정상이라 기울기 계산도 하지 않습니다.
+    if(HANGER_V2)return {level:none,workSource:null};
     const est=estimateCanvasTilt(await imageCanvas(source)),d=decideLevel(est);
     const base={...none,auto:est.angle,confidence:est.confidence,suggest:d.angle,reason:d.reason};
     if(options?.autoLevelBeta!==true)return {level:base,workSource:null};
@@ -215,7 +219,7 @@ export default function AutoStudio() {
     if(options.hangerMode==='remove')removeHanger(px);else {solidifyThin(px);if(sp)restoreHook(px,sp,wall);}
     if(wall)clearWallPockets(px,wall);
     // 마네킹 꼭지는 남기되(사장님 결정), 꼭지 맨 위보다 위에 남은 벽 걸이 부품 등은 지웁니다.
-    if(options.cleanMannequinTop)removeMannequinTop(px);else clearAboveFinial(px);
+    if(options.cleanMannequinTop)removeMannequinTop(px);else if(options.clearFinial!==false)clearAboveFinial(px);
     if(options.cleanIslands!==false)removeIslands(px);
     ctx.putImageData(px,0,0);
     return c.toDataURL('image/png');
@@ -326,6 +330,50 @@ export default function AutoStudio() {
       if(warnings.length)setError(warnings.join('\n'));
       refreshCredits();
       setStep(`완료 · 사진과 문구를 확인한 후 전체 이미지를 저장하세요.${!onlyId&&!status.openai?' (OpenAI 키가 없어 문구 자동 작성은 건너뛰었습니다.)':''}`);
+    });
+  }
+  // ---- 옷걸이 v2 디테일컷(014): 보정이 끝난 정면·후면(지금 버전의 2차, 없으면 1차)에서 잘라 냅니다 ----
+  // 사장님 결정: 실제 사진만 씀(생성 없음). 원본 기준 긴 변 800px이 안 나오면 키우지 않고 빼고 '해상도 부족'으로 표시합니다.
+  // ai: 확신 없는 디테일(단추 없음·소매가 붙음 등)만 Claude 1회로 상자를 받음(선택·유료, 같은 사진은 다시 부르지 않음).
+  async function buildDetails(cur,garmentId,{ai=false,product=productName}={}) {
+    const hero=cur.hero,back=cur.back,front=hero?.cutout?await pixelsOf(hero.cutout):null,backPx=back?.cutout?await pixelsOf(back.cutout):null;
+    // 1차 정렬(가운데 맞추기)로 옷이 커졌으면, 원본(누끼) 대비 몇 배인지 → 원본 해상도로 판단
+    const scaleOf=async(slot,px)=>{const m=(entryOf(slot)||{}).matte||slot?.matte;if(!m||!px)return 1;const a=garmentFrame(await pixelsOf(m)),b=garmentFrame(px);return a&&b?b.gw/a.gw:1;};
+    const scale={front:await scaleOf(hero,front),back:await scaleOf(back,backPx)};
+    let plan=planDetails({front,back:backPx,garment:garmentId,scale}),aiUsed=false,cost=null;
+    const unsure=front?plan.skipped.filter(x=>x.review).map(x=>x.id):[];
+    if(ai&&unsure.length){
+      const key='details:'+unsure.join(',')+':'+hero.cutout;
+      let res=cache.current.get(key),cached=Boolean(res);
+      if(!res){
+        const status=await api('status');setReady(status);
+        if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 없어 디테일 위치를 찾을 수 없습니다. ‘Claude로 위치 찾기’를 끄고 다시 하세요.');
+        res=await api('details',{...(await inspectImage(hero.cutout)),ids:unsure});cache.current.set(key,res);
+      }
+      logCost(claudeRow({feature:'details',product,cut:hero.label,responses:[res],boxes:Object.keys(res.details||{}).length,cached}));
+      cost=cached?null:{claude:claudeCost(res.model,res.usage)||0,claudeUnknown:claudeCost(res.model,res.usage)==null?1:0};
+      plan=planDetails({front,back:backPx,garment:garmentId,scale,ai:res.details});aiUsed=true;
+    }
+    const next={};
+    for(const [k,v] of Object.entries(cur))if(!v?.derived?.from)next[k]=v;
+    for(const it of plan.items){
+      const src=it.from==='front'?hero:back,c=await imageCanvas(src.cutout),s=Math.max(1,scale[it.from]||1),{x,y,w,h}=it.box;
+      const out=document.createElement('canvas');out.width=Math.round(w/s);out.height=Math.round(h/s);
+      const g=out.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(c,x,y,w,h,0,0,out.width,out.height);
+      const id=detailSlotId(it.id),png=out.toDataURL('image/png'),old=cur[id];
+      next[id]={id,label:it.label,enabled:old?.enabled??true,source:null,image:null,cutout:png,stage1:png,stage2:null,matte:null,status:'done',versions:[null],vIndex:0,
+        derived:{from:src.id,detail:it.id,box:it.box,side:out.height,at:Date.now()}};
+    }
+    return {slots:next,report:{items:plan.items.map(({id,label,from,outSide})=>({id,label,from,outSide})),skipped:plan.skipped,ai:aiUsed,garment:garmentId,at:Date.now()},cost};
+  }
+  async function makeDetails() {
+    await task(async()=>{
+      if(!slots.hero.cutout)throw new Error('먼저 옷걸이 정면을 누끼·보정해 주세요.');
+      setStep('정면·후면에서 디테일컷을 잘라 내는 중 (브라우저 계산, 무료)');
+      const r=await buildDetails(slots,garment,{ai:Boolean(defectOpts.detailAI)});
+      setSlots(await refreshImages(r.slots));setDetailReport(r.report);
+      const review=r.report.skipped.filter(x=>x.review).length;
+      setStep(`디테일컷 ${r.report.items.length}장을 만들었습니다${r.report.skipped.length?` · 빠짐 ${r.report.skipped.length}(${r.report.skipped.map(x=>`${x.label}: ${x.reason}`).join(' · ')})`:''}${review?' · 위치 확인이 필요한 디테일은 ‘Claude로 위치 찾기’를 켜고 다시 누를 수 있습니다(유료)':''}.`);
     });
   }
   // ---- 색감 통일 (브라우저 계산, API 비용 없음) ----
@@ -561,7 +609,7 @@ export default function AutoStudio() {
       const photos=[];
       for(let i=0;i<list.length;i++){setStep(`${i+1}/${list.length} 사진 읽는 중`);const full=await readPhoto(list[i]);photos.push({id:`p${i}`,full,thumb:await thumbnail(full),name:list[i].name});}
       setStep(`Claude가 사진 ${photos.length}장을 옷별·컷별로 분류하는 중`);
-      const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb}))});
+      const result=await api('classify',{photos:photos.map(p=>({id:p.id,image:p.thumb})),...(HANGER_V2?{mode:'hanger'}:{})});
       logCost(claudeRow({feature:'classify',product:'(한꺼번에 올리기)',cut:`사진 ${photos.length}장`,responses:[result],photos:photos.length}));
       const byId=Object.fromEntries(photos.map(p=>[p.id,p]));
       const groups=result.garments.map(g=>({...g,items:result.photos.filter(p=>p.garment===g.id)})).filter(g=>g.items.length);
@@ -612,7 +660,7 @@ export default function AutoStudio() {
   }
   const importDeps={
     readThumb:driveThumb,refImage:refThumb,createProduct:createImportedProduct,
-    classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',body);},
+    classify:async body=>{const status=await api('status');setReady(status);if(!status.claude)throw new Error('서버에 Claude API 키(ANTHROPIC_API_KEY)가 연결되지 않았습니다.');return api('classify',HANGER_V2?{...body,mode:'hanger'}:body);},
     onClassified:(result,batch)=>logCost(claudeRow({feature:'classify',product:'(드라이브 가져오기)',cut:`사진 ${batch.length}장`,responses:[result],photos:batch.length})),
   };
   // ---- 자동 보정(010): 화면 상태가 아니라 저장된 상품 데이터로 처리하는 단계들. 순서·저장·대기는 utils/autoPipeline.js ----
@@ -665,6 +713,12 @@ export default function AutoStudio() {
       const fix=await fixRegions(input,chosen,{closeup:!autoLevelAllowed(slot.id,slot.ai?.shot)});
       return {slot:fix.image?keep(fix.image):{...slot,defects:null},flags:[...flags,...fix.flags],cost};
     },
+    // 옷걸이 v2: 2차까지 끝난 정면·후면에서 디테일컷(014). 실패해도 컷 보정은 그대로 두고 보고서에만 남깁니다.
+    details:HANGER_V2?async product=>{
+      const d=product.data;
+      try {const r=await buildDetails(d.slots,d.garment||'long-top',{ai:Boolean(defectOpts.detailAI),product:product.name});return {product:{...product,data:{...d,slots:r.slots,detailReport:r.report}},cost:r.cost};}
+      catch(e){return {product:{...product,data:{...d,detailReport:{items:[],skipped:[],error:String(e.message).slice(0,200),at:Date.now()}}}};}
+    }:null,
     final:async(product,ref)=>{
       const data=product.data,colorRefNew=ref?{slotId:ref.slotId,stage:'stage1',label:ref.label,lab:{L:ref.lab.L,a:ref.lab.a,b:ref.lab.b}}:(data.color?.ref||null);
       const next=await refreshImages(data.slots,{colorRef:colorRefNew,frame:{enabled:false,ratio:'3:4',margin:6,...data.frame}});
@@ -820,18 +874,20 @@ export default function AutoStudio() {
     const title=texts.headline||'의류 상세페이지';
     downloadBlob(new Blob([docTheme==='basic'?documentHtml(blocks(),title):themedHtml(blocks(),title,docTheme)],{type:'text/html;charset=utf-8'}),'의류-상세페이지.html');
   }
-  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:id=>patch(id,{shown:false})};
+  const cutProps={busy,onUpload:upload,onPatch:patch,onProcess:processPhotos,onLevel:HANGER_V2?null:levelFor,defectOpts,setDefectOpts,onPhotoroom2:photoroomStage2For,onMatteEdit:matteEdit,onTone:toneFor,onRemove:removePhoto,onVersion:changeVersion,onSave:savePhoto,retouchDefault:retouch,status:ready,bir,colorRef,onColorRef:chooseColorRef,slotList:Object.values(slots).filter(s=>s.id!=='fit'||fitEnabled).map(s=>({id:s.id,label:s.label,source:Boolean(s.source)})),onMove:moveSlot,iop,onFindDefects:findDefectsFor,onInpaint:inpaintFor,onHide:HANGER_V2?null:id=>patch(id,{shown:false})};
   // 사진이 없는 컷은 숨깁니다(정면은 항상 표시). 아래 ‘+’로 꺼내 씁니다.
-  const visible=s=>s.id==='hero'||Boolean(s.source)||Boolean(s.shown);
+  // 옷걸이 v2: 옷걸이 정면·후면 2칸은 항상 보입니다. 자동 디테일컷(derived)은 아래 '디테일컷' 줄에 따로 보입니다.
+  const visible=s=>s.id==='hero'||(HANGER_V2&&s.id==='back')||(!s.derived?.from&&(Boolean(s.source)||Boolean(s.shown)));
   const cutList=Object.values(slots).filter(s=>s.id!=='fit'&&visible(s));
-  const hiddenCuts=Object.values(slots).filter(s=>s.id!=='fit'&&!visible(s));
+  const hiddenCuts=Object.values(slots).filter(s=>s.id!=='fit'&&!s.derived?.from&&!visible(s));
+  const derivedCuts=detailIds(garment).map(id=>slots[detailSlotId(id)]).filter(s=>s?.derived?.from);
   function addCut(id) {
     if(id==='__new'){const nid='extra-'+crypto.randomUUID();patch(nid,{id:nid,label:'추가 컷',enabled:true,shown:true,source:null,image:null,cutout:null,crop:null,status:'empty'});return;}
     patch(id,{shown:true});
   }
   const pendingCount=Object.values(slots).filter(s=>s.image&&s.enabled&&s.status==='raw'&&(s.id!=='fit'||fitEnabled)).length;
   return <div className="auto-studio">
-    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작</h1><p>대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
+    <div className="studio-heading"><div><span className="eyebrow">FASHION STUDIO / PAGE EDITOR</span><h1>의류 상세페이지 제작{HANGER_V2?' · 옷걸이 v2':''}</h1><p>{HANGER_V2?'옷걸이 정면 → 옷걸이 후면 → 디테일(정면·후면에서 자동으로 잘라 냄) → Size 순서로 구성합니다.':'대표 사진 → Fit guide → Detail → Size 순서로 구성합니다.'}</p></div><span className="connection">{ready===null?'연결 확인 중':`Photoroom ${ready.photoroom?`연결됨${credits&&Number.isFinite(credits.available)?` (남은 이미지 ${credits.available}/${credits.subscription})`:''}`:'키 필요'} · OpenAI 문구 ${ready.openai?'연결됨':'키 필요'}${ready.photoroom||ready.openai?' · AI 처리 시 사용료 발생':''}`}</span></div>
     <div className="studio-toolbar"><label className="theme-pick">디자인 테마<select aria-label="상세페이지 디자인 테마" value={docTheme} disabled={busy} onChange={e=>{setDocTheme(e.target.value);setPreview(null);}}>{THEME_LIST.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select><small>{themeOf(docTheme).desc}</small></label><button disabled={busy} onClick={()=>exportPng(true)}>전체 미리보기</button><button disabled={busy} className="primary" onClick={()=>exportPng(false)}>상세페이지 전체 PNG 저장</button><button disabled={busy} onClick={exportHtml}>HTML 다운로드</button></div>
     <details className="tools-panel"><summary>사용 도구·비용 · Photoroom {ready?.photoroom?'✅':'⛔'} · Claude {ready?.claude?'✅':'⛔'} · IOPaint(내 PC) {iop?.ok?'✅':'⛔'} · BiRefNet(내 PC) {bir?.ok&&bir.ready?'✅':'⛔'} · OpenAI {ready?.openai?'✅':'⛔'}</summary>
       <table className="cost-table"><thead><tr><th>기능</th><th>사용 모델</th><th>비용</th></tr></thead><tbody>
@@ -870,11 +926,27 @@ export default function AutoStudio() {
       {colorRef&&<p className="color-ref"><i style={{background:labCss(colorRef.lab)}}/>색감 기준: <b>{colorRef.label}</b> ({{stage1:'1차',stage2:'2차',final:'최종'}[colorRef.stage]||'최종'}) · 다른 컷은 보정할 때 이 색감으로 맞춰집니다 <button type="button" className="subtle tiny" onClick={()=>chooseColorRef(null,null)}>기준 해제</button></p>}
       {cutList.map(slot=><CutRow key={slot.id} slot={slot} {...cutProps}/>)}
       {fitEnabled&&<CutRow slot={slots.fit} {...cutProps} onHide={null}/>}
-      <div className="add-cuts" aria-label="컷 추가">
+      {HANGER_V2&&<section className="detail-cuts" aria-label="디테일컷 자동">
+        <h3>디테일컷 <small>보정이 끝난 옷걸이 정면·후면에서 자동으로 잘라 냅니다 · 실제 사진만 사용(새로 그리지 않음)</small></h3>
+        <div className="btn-row">
+          <span className="btn-with-cost"><button type="button" className="primary" disabled={!slots.hero.cutout} onClick={makeDetails}>{derivedCuts.length?'디테일컷 다시 만들기':'디테일컷 자동 만들기'}</button><Cost k="browser"/></span>
+          <label className="check"><input type="checkbox" aria-label="디테일 위치 Claude로 찾기" checked={Boolean(defectOpts.detailAI)} onChange={e=>setDefectOpts({detailAI:e.target.checked})}/>확신 없는 위치(단추·소매 끝)는 Claude로 찾기 <Cost k="claudeDetails"/></label>
+        </div>
+        <p className="slot-note">{detailIds(garment).map(id=>DETAIL_LABELS[id]).join(' · ')} ({GARMENTS.find(g=>g.id===garment)?.label}) · 원본 기준 긴 변 {DETAIL_MIN_SIDE}px이 안 나오면 키우지 않고 빼고 ‘해상도 부족’으로 표시합니다. 정면·후면을 다시 보정했으면 다시 만들어 주세요.</p>
+        {derivedCuts.length>0&&<div className="detail-grid">{derivedCuts.map(s=><figure key={s.id} data-detail={s.derived.detail}>
+          <img src={s.image||s.cutout} alt={`${s.label} 디테일컷`}/>
+          <figcaption><b>{s.label}</b> · {s.derived.from==='back'?'후면':'정면'}에서 · {s.derived.side}px
+            <label className="check"><input type="checkbox" aria-label={`${s.label} 상세페이지에 포함`} checked={s.enabled!==false} onChange={e=>patch(s.id,{enabled:e.target.checked})}/>상세페이지에 포함</label></figcaption>
+        </figure>)}</div>}
+        {detailReport?.skipped?.length>0&&<ul className="detail-skipped" aria-label="빠진 디테일">{detailReport.skipped.map(x=><li key={x.id} className={x.review?'review-note':''}>{x.label}: {x.reason}</li>)}</ul>}
+        {detailReport?.error&&<p className="review-note">디테일컷을 만들지 못했습니다: {detailReport.error}</p>}
+      </section>}
+
+      {!HANGER_V2&&<div className="add-cuts" aria-label="컷 추가">
         <span>+ 컷 추가</span>
         {hiddenCuts.map(s=><button key={s.id} type="button" aria-label={`${s.id} 컷 추가`} onClick={()=>addCut(s.id)}>+ {s.label}</button>)}
         <button type="button" disabled={Object.keys(slots).length>=18} onClick={()=>addCut('__new')}>+ 직접 이름 정하기</button>
-      </div>
+      </div>}
     </fieldset>
     <div className="studio-workspace"><fieldset disabled={busy} className="studio-editor">
       <section className="editor-section"><h2>상품 정보와 공통 보정</h2>
@@ -904,9 +976,9 @@ export default function AutoStudio() {
         <span className="btn-with-cost"><button className="primary" disabled={!slots.hero.source} onClick={()=>processPhotos()}>사진 일괄 누끼·보정 및 문구 제작</button><Cost k={cutoutCost(retouch)}/><Cost k="openai"/></span>
         <p className="slot-note">완료한 사진은 재사용합니다. 옆면·후면·모델 사진은 실제 사진을 넣었을 때만 사용합니다.</p>
       </section>
-      <section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
+      {!HANGER_V2&&<section className="editor-section"><h2>02 · Fit guide</h2><label className="check"><input type="checkbox" checked={fitEnabled} onChange={e=>{setFitEnabled(e.target.checked);setPreview(null);}}/>모델컷 적용</label><p>선택하고 모델 사진을 넣으면 표시됩니다. 사진이 없으면 전체 상세페이지에서 제외됩니다.</p>
         {fitEnabled&&<><label>Fit guide 제목<input maxLength={100} value={texts.fitTitle} onChange={e=>setText('fitTitle',e.target.value)}/></label><label>모델 설명<textarea maxLength={1500} value={texts.fitDescription} onChange={e=>setText('fitDescription',e.target.value)} placeholder="확인된 모델 키·착용 사이즈 등을 입력하세요."/></label><p className="slot-note">모델 사진은 위 ‘컷별 보정’의 모델컷 줄에서 넣고 보정합니다.</p></>}
-      </section>
+      </section>}
       <section className="editor-section"><h2>03 · Detail</h2><label>Detail 제목<input maxLength={100} value={texts.detailTitle} onChange={e=>setText('detailTitle',e.target.value)}/></label><p>디테일 사진은 위 ‘컷별 보정’에서 넣고 보정합니다. 사진이 없는 컷은 상세페이지에서 빠집니다.</p>
       </section>
       <section className="editor-section size-editor"><h2>04 · Size</h2><label>Size 제목<input maxLength={100} value={texts.sizeTitle} onChange={e=>setText('sizeTitle',e.target.value)}/></label>
