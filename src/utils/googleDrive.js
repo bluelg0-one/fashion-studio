@@ -291,3 +291,26 @@ export async function saveBaseModels(folderId,data) {
   if(!f)meta.parents=[folderId];
   return uploadBlob(meta,new Blob([JSON.stringify(data)],{type:'application/json'}),f?.id);
 }
+
+// ---- 모델 보관함(019): 작업 폴더 / 모델보관함 / {모델 id}.jpg ----
+// json(두손_기본모델.json)에는 목록과 파일 ID만 두고, 사진은 이 폴더에 JPG로 따로 둡니다(파일이 커지지 않게).
+export const MODEL_FOLDER_NAME='모델보관함';
+export async function modelFolder(parentId) {
+  const query=`'${esc(parentId)}' in parents and mimeType='${FOLDER_MIME}' and appProperties has { key='fashionStudio' and value='modelfolder' } and trashed=false`;
+  const f=((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id)')}&spaces=drive`)).json()).files||[])[0];
+  if(f)return f.id;
+  const r=await call(`${API}/files?fields=id`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:MODEL_FOLDER_NAME,mimeType:FOLDER_MIME,parents:[parentId],appProperties:{fashionStudio:'modelfolder'}})});
+  return (await r.json()).id;
+}
+export async function uploadModelImage(folderId,model) {
+  const blob=await (await fetch(model.image)).blob();
+  const meta={name:`${model.id}.jpg`,mimeType:'image/jpeg',parents:[folderId],appProperties:{fashionStudio:'model',modelId:model.id}};
+  return uploadBlob(meta,blob.type==='image/jpeg'?blob:new Blob([blob],{type:'image/jpeg'}));
+}
+export async function downloadModelImage(fileId) {
+  const blob=await downloadFile(fileId);
+  return new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve(fr.result);fr.onerror=reject;fr.readAsDataURL(blob.type?blob:new Blob([blob],{type:'image/jpeg'}));});
+}
+export async function trashModelImage(fileId) {
+  await call(`${API}/files/${q(fileId)}?fields=id`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})});
+}
