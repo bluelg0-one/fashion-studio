@@ -273,3 +273,21 @@ export async function uploadFinalPhotos(parentId,product,photos,onStage=()=>{}) 
   for(const f of bySlot.values()){await call(`${API}/files/${q(f.id)}?fields=id`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})});removed++;}
   return {folder,uploaded,kept,removed};
 }
+
+// ---- 고정 모델(기본 모델 사진, 018): 작업 폴더 / 두손_기본모델.json ----
+// 구도별 사람 사진 3장({top, bottom, dress, at})을 노트북·집 PC가 함께 쓰도록 작업 폴더에 둡니다(drive.file 권한 안, 앱이 만든 파일만).
+export const BASE_MODELS_NAME='두손_기본모델.json';
+async function baseModelsFile(folderId) {
+  const query=`'${esc(folderId)}' in parents and appProperties has { key='fashionStudio' and value='basemodels' } and trashed=false`;
+  return ((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id,modifiedTime)')}&spaces=drive`)).json()).files||[])[0]||null;
+}
+export async function loadBaseModels(folderId) {
+  const f=await baseModelsFile(folderId);if(!f)return null;
+  try {const v=await (await call(`${API}/files/${q(f.id)}?alt=media`)).json();return v&&typeof v==='object'?v:null;} catch {return null;}
+}
+export async function saveBaseModels(folderId,data) {
+  const f=await baseModelsFile(folderId);
+  const meta={name:BASE_MODELS_NAME,mimeType:'application/json',appProperties:{fashionStudio:'basemodels'}};
+  if(!f)meta.parents=[folderId];
+  return uploadBlob(meta,new Blob([JSON.stringify(data)],{type:'application/json'}),f?.id);
+}

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { listProducts, getProduct } from '../utils/productStore.js'
 import { addCost } from '../utils/costLog.js'
-import { COMPOSITIONS, compositionOf, baseSlotOf, BASE_SLOTS, ENGINES, modelCutRow, faceCrop, cropInfo } from '../utils/modelCut.js'
+import { COMPOSITIONS, compositionOf, baseSlotOf, BASE_SLOTS, ENGINES, modelCutRow, faceCrop, cropInfo, fashnMode, FASHN_MODE_LABEL, tryonInputs, newerBase } from '../utils/modelCut.js'
+import { hasToken, savedFolder, loadBaseModels, saveBaseModels } from '../utils/googleDrive.js'
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -143,7 +144,8 @@ function rememberOutputs(key, outputs) {
   try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ...loadCache(), [key]: { outputs, at: Date.now() } })) } catch { /* 저장 공간 부족 시 재사용만 안 됨 */ }
 }
 
-// Google 가상 피팅용 기본 모델 사진(구도별 1장, 017). 이 브라우저에만 저장(저장소에 커밋하지 않음).
+// 기본 모델 사진(구도별 1장, 017 Google용 → 018부터 FASHN '고정 모델'과 공용). 브라우저에 저장하고, 드라이브 작업 폴더가 연결돼 있으면
+// 드라이브에도 저장·불러오기(노트북·집 PC 공용). 저장소에 커밋하지 않습니다. at = 마지막으로 바꾼 시각(어느 쪽이 최신인지 비교).
 const BASE_KEY = 'fashion-studio:vto-base'
 function loadBase() { try { return JSON.parse(localStorage.getItem(BASE_KEY) || '{}') } catch { return {} } }
 function saveBase(v) { try { localStorage.setItem(BASE_KEY, JSON.stringify(v)); return true } catch { return false } }
@@ -194,6 +196,28 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
   const fashnReady = config?.fashn === true, googleReady = config?.google === true
   const engineReady = provider === 'fashn' ? fashnReady : provider === 'google' ? googleReady : false
   const comp = COMPOSITIONS[composition] || COMPOSITIONS.full
+  // 018: FASHN은 해당 구도의 기본 모델 사진이 있으면 '고정 모델'(가상 피팅), 없으면 '새 모델 생성'
+  const mode = linked && provider === 'fashn' ? fashnMode(base, composition) : 'create'
+  const fixed = mode === 'fixed', noScenes = provider === 'google' || fixed
+  const [baseSync, setBaseSync] = useState('')
+  // 드라이브 작업 폴더가 연결돼 있으면 탭을 열 때 드라이브의 기본 모델 사진을 불러옵니다(나중에 바꾼 쪽을 씀).
+  useEffect(() => {
+    if (!active || !linked || !hasToken() || !savedFolder()?.id) return
+    let off = false
+    loadBaseModels(savedFolder().id).then(remote => {
+      if (off || !remote) return
+      setBase(cur => { const next = newerBase(cur, remote); if (next !== cur) { saveBase(next); setBaseSync('드라이브에서 기본 모델 사진을 불러왔습니다.') } return next })
+    }).catch(() => setBaseSync('드라이브의 기본 모델 사진을 불러오지 못했습니다(브라우저 저장본을 씁니다).'))
+    return () => { off = true }
+  }, [active, linked?.id])
+  // 기본 모델 사진 바꾸기: 브라우저 저장 + (연결돼 있으면) 드라이브 저장
+  const putBase = (next) => {
+    const v = { ...next, at: Date.now() }
+    if (!saveBase(v)) alert('브라우저 저장 공간이 부족합니다.')
+    setBase(v)
+    if (hasToken() && savedFolder()?.id) saveBaseModels(savedFolder().id, v).then(() => setBaseSync('드라이브 작업 폴더에도 저장했습니다(다른 PC에서 같은 모델 사용).')).catch(() => setBaseSync('드라이브 저장 실패 · 이 브라우저에만 저장됨'))
+    else setBaseSync('이 브라우저에 저장했습니다. 구글 드라이브를 연결하면 다른 PC에서도 같은 모델을 씁니다.')
+  }
   const [compare, setCompare] = useState(null)
 
   // 의류
@@ -333,7 +357,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
   const handleGenerate = async () => {
     if (!garment) { alert(linked ? '원본 보정 탭에서 옷걸이 정면(또는 후면) 보정을 먼저 끝내 주세요.' : '의류 사진을 선택해주세요!'); return }
     const google = provider === 'google'
-    if (!google && sceneIds.length === 0) { alert('장면을 1개 이상 선택해주세요!'); return }
+    if (!google && !fixed && sceneIds.length === 0) { alert('장면을 1개 이상 선택해주세요!'); return }
     const person = google ? base[baseSlotOf(composition)] : null
     if (google && !person) { alert(`Google 가상 피팅은 사람 사진에 옷을 입힙니다. 먼저 '${BASE_SLOTS.find(b => b[0] === baseSlotOf(composition))?.[1]}' 기본 모델 사진을 넣어 주세요.`); return }
 
@@ -347,12 +371,19 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
 
     const batchId = Date.now()
     // Google 가상 피팅: 장면·문구 없이 '기본 모델 사진 + 옷'. 응답 크기 때문에 1장씩 따로 요청합니다.
+    // 018 고정 모델(FASHN 가상 피팅): 기본 모델 사진 + 옷, 장면·문구·얼굴 고정 없음. 한 번에 장수만큼.
+    const fixedPerson = fixed ? base[baseSlotOf(composition)] : null
+    const fixedJobs = fixedPerson ? [{
+      id: `${batchId}-f`, batchId, scene: { id: 'fixed', emoji: '🧍', label: '고정 모델' }, garmentName: garment.name, garmentUrl: garment.url,
+      modelName: '고정 모델', status: 'queued', outputs: [], composition,
+      request: { provider: 'fashn', model_name: 'tryon-v1.6', inputs: tryonInputs({ person: fixedPerson, garment: product, composition, samples: perScene }) },
+    }] : null
     const googleJobs = google ? Array.from({ length: perScene }, (_, i) => ({
       id: `${batchId}-g${i}`, batchId, scene: { id: 'vto', emoji: '👕', label: `가상 피팅 ${i + 1}` }, garmentName: garment.name, garmentUrl: garment.url,
       modelName: '기본 모델 사진', status: 'queued', outputs: [], composition,
       request: { provider: 'google', model_name: 'virtual-try-on', inputs: { person_image: person, product_image: product, sample_count: 1, seed_slot: i } },
     })) : null
-    const built = googleJobs || SCENES.filter(s => sceneIds.includes(s.id)).map((scene, i) => {
+    const built = googleJobs || fixedJobs || SCENES.filter(s => sceneIds.includes(s.id)).map((scene, i) => {
       // 구도 지시(017): 얼굴 없는 구도면 맨 앞에 넣고, 장면의 '전신' 지시는 뺍니다.
       const noFace = Boolean(linked) && !comp.face
       const parts = [noFace ? comp.prompt : '', selectedModel?.desc, noFace ? stripFullBody(scene.prompt) : scene.prompt, extraPrompt.trim()].filter(Boolean)
@@ -388,15 +419,15 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
       else if (busyKeys.has(job.key)) skipped.push(job)
       else fresh.push(job)
     }
-    const freshImages = google ? fresh.length : fresh.length * perScene
+    const freshImages = google ? fresh.length : fixed ? fresh.length * perScene : fresh.length * perScene
     const eng = ENGINES[provider] || ENGINES.fashn
     if (fresh.length) {
       const lines = [
-        google ? `Google 가상 피팅으로 모델컷 ${freshImages}장을 새로 만듭니다 (기본 모델 사진 + 옷).` : `FASHN으로 모델컷 ${freshImages}장을 새로 만듭니다 (장면 ${fresh.length}개 × ${perScene}장).`,
-        `${linked ? eng.note : FASHN_COST_LABEL} · ${freshImages}장 분량${linked ? ` · 예상 약 $${(eng.perImage * freshImages).toFixed(2)}` : ''}`,
+        google ? `Google 가상 피팅으로 모델컷 ${freshImages}장을 새로 만듭니다 (기본 모델 사진 + 옷).` : fixed ? `FASHN 고정 모델로 모델컷 ${freshImages}장을 만듭니다 (기본 모델 사진 + 옷 · 가상 피팅).` : `FASHN으로 모델컷 ${freshImages}장을 새로 만듭니다 (장면 ${fresh.length}개 × ${perScene}장).`,
+        `${fixed ? FASHN_MODE_LABEL.fixed : linked ? eng.note : FASHN_COST_LABEL} · ${freshImages}장 분량${linked ? ` · 예상 약 $${(eng.perImage * freshImages).toFixed(2)}` : ''}`,
         linked ? `구도: ${comp.label}` : '',
-        google ? '' : selectedModel ? `얼굴 고정(${selectedModel.name}) 사용: 장당 크레딧이 추가로 차감됩니다.` : '얼굴 고정 없음(랜덤 모델).',
-        !google && background ? '배경 참고 사진 사용.' : '',
+        google || fixed ? '' : selectedModel ? `얼굴 고정(${selectedModel.name}) 사용: 장당 크레딧이 추가로 차감됩니다.` : '얼굴 고정 없음(랜덤 모델).',
+        !google && !fixed && background ? '배경 참고 사진 사용.' : '',
         reused.length ? `같은 설정으로 이미 만든 ${reused.length}개 장면은 저장된 결과를 다시 씁니다(추가 비용 없음).` : '',
         skipped.length ? `지금 만들고 있는 같은 장면 ${skipped.length}개는 건너뜁니다.` : '',
         '계속할까요?',
@@ -418,10 +449,10 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     pump()
   }
 
-  // FASHN 결과를 Google 가상 피팅의 기본 모델 사진으로 저장(구도별, 017)
+  // 결과·모델 후보를 기본 모델 사진으로 저장(구도별, 017 → 018 FASHN 고정 모델과 공용)
   const saveBaseFrom = async (url, comp0) => {
     const id = baseSlotOf(comp0 || composition)
-    try { const img = await compressImage(await urlToDataUrl(url), 1024, 0.9); const next = { ...base, [id]: img }; if (!saveBase(next)) alert('브라우저 저장 공간이 부족합니다.'); setBase(next); alert(`'${BASE_SLOTS.find(b => b[0] === id)?.[1]}' 기본 모델 사진으로 저장했습니다.`) }
+    try { const img = await compressImage(await urlToDataUrl(url), 1024, 0.9); putBase({ ...base, [id]: img }); alert(`'${BASE_SLOTS.find(b => b[0] === id)?.[1]}' 기본 모델 사진으로 저장했습니다. 이제 이 구도는 고정 모델로 만듭니다.`) }
     catch (err) { alert('저장하지 못했습니다: ' + err.message) }
   }
 
@@ -460,6 +491,11 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
               </div>
             ))}
           </div>
+          {linked && provider === 'fashn' && (
+            <div aria-label="FASHN 방식" style={{ ...hint, marginTop: 10, marginBottom: 0, fontWeight: 700, color: fixed ? '#1e6b3a' : C.ink }}>
+              지금 방식: {FASHN_MODE_LABEL[mode]}{fixed ? ' (기본 모델 사진에 옷 입히기 · 얼굴 고정 없음)' : ' (이 구도의 기본 모델 사진이 없음 · 장면마다 새 모델)'}
+            </div>
+          )}
           {linked && config && !fashnReady && provider === 'fashn' && (
             <div role="alert" style={{ ...hint, marginTop: 10, marginBottom: 0, color: '#9b1c3a', fontWeight: 700 }}>모델컷을 만들려면 Vercel에 FASHN_API_KEY가 필요합니다.</div>
           )}
@@ -498,18 +534,19 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
             <div style={{ ...hint, marginTop: 6 }}>{comp.face ? '얼굴이 나오는 구도입니다.' : '생성할 때 얼굴이 나오지 않게 지시하고, 그래도 얼굴이 나오면 저장할 때 자동으로 잘라 냅니다(확인 필요 표시 · 직접 조절 가능).'} 저장한 모델컷 {savedCount}장.</div>
           </div>
         )}
-        {linked && provider === 'google' && (
-          <div style={card} aria-label="Google 기본 모델 사진">
-            <div style={title}>② 기본 모델 사진 (Google 가상 피팅)</div>
-            <div style={hint}>Google 가상 피팅은 새 모델을 만들지 않고 '사람 사진'에 옷을 입힙니다. 구도별로 1장씩 올리거나, FASHN 결과 카드의 '기본 모델로 저장'을 누르세요. 이 브라우저에만 저장됩니다.</div>
+        {linked && (
+          <div style={card} aria-label="기본 모델 사진">
+            <div style={title}>② 기본 모델 사진 (고정 모델 · FASHN·Google 공용)</div>
+            <div style={hint}>처음 한 번만 모델을 만들어 고정으로 씁니다. 구도별로 1장씩 올리거나, 'AI로 새 모델 만들기' 후보·모델컷 결과의 '기본 모델로 저장'을 누르세요. 사진이 있는 구도는 그 사람에게 옷을 입히고(가상 피팅), 없으면 FASHN이 새 모델을 만듭니다. 구글 드라이브가 연결돼 있으면 작업 폴더에도 저장해 다른 PC에서 같은 모델을 씁니다.</div>
+            {baseSync && <div role="status" aria-label="기본 모델 저장 상태" style={{ ...hint, color: C.ink }}>{baseSync}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
               {BASE_SLOTS.map(([id, label]) => (
                 <label key={id} style={{ fontSize: 10, textAlign: 'center', border: `2px solid ${baseSlotOf(composition) === id ? C.ink : C.line}`, borderRadius: 8, padding: 4, cursor: 'pointer' }}>
                   {base[id] ? <img src={base[id]} alt={`${label} 기본 모델`} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block', borderRadius: 4 }} /> : <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.sub }}>사진 없음</div>}
                   {label}
                   <input type="file" accept="image/jpeg,image/png" aria-label={`${label} 기본 모델 사진 선택`} style={{ display: 'none' }}
-                    onChange={async e => { const f = e.target.files[0]; if (!f) return; const url = await compressImage(await fileToDataUrl(f), 1024, 0.9); const next = { ...base, [id]: url }; if (!saveBase(next)) alert('브라우저 저장 공간이 부족합니다.'); setBase(next) }} />
-                  {base[id] && <button type="button" style={{ ...btn(false, false), padding: '2px 6px', marginTop: 4 }} onClick={e => { e.preventDefault(); const next = { ...base }; delete next[id]; saveBase(next); setBase(next) }}>지우기</button>}
+                    onChange={async e => { const f = e.target.files[0]; if (!f) return; const url = await compressImage(await fileToDataUrl(f), 1024, 0.9); putBase({ ...base, [id]: url }) }} />
+                  {base[id] && <button type="button" style={{ ...btn(false, false), padding: '2px 6px', marginTop: 4 }} onClick={e => { e.preventDefault(); const next = { ...base }; delete next[id]; putBase(next) }}>지우기</button>}
                 </label>
               ))}
             </div>
@@ -554,7 +591,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
         </div>}
 
         {/* 2. 내 모델 */}
-        {provider !== 'google' && <div style={card}>
+        {!noScenes && <div style={card}>
           <div style={title}>② 내 모델 (얼굴 고정)</div>
           <div style={hint}>모델을 고정하면 모든 컷이 같은 사람으로 나옵니다. 얼굴 고정은 장당 크레딧이 추가로 듭니다.{linked && !comp.face ? ' 지금 구도는 얼굴이 나오지 않아 필요 없습니다(기본 꺼짐 · 비용 절약).' : ''}</div>
 
@@ -605,6 +642,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
                         onClick={() => saveAsModel(c.url, c.desc)}>
                         {savingModel === c.url ? '저장 중...' : '이 모델로 저장'}
                       </button>
+                      {linked && <button style={{ ...btn(false, false), width: '100%', borderRadius: 0 }} onClick={() => saveBaseFrom(c.url, composition)}>기본 모델로 저장 ({BASE_SLOTS.find(b => b[0] === baseSlotOf(composition))?.[1]})</button>}
                     </div>
                   ))}
                 </div>
@@ -614,7 +652,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
         </div>}
 
         {/* 3. 장면 */}
-        {provider !== 'google' && <div style={card}>
+        {!noScenes && <div style={card}>
           <div style={title}>③ 장면 (포즈+배경) — {sceneIds.length}개 선택</div>
           <div style={hint}>선택한 장면마다 컷이 만들어집니다.</div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -648,10 +686,10 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
         {/* 4. 출력 */}
         <div style={card}>
           <div style={title}>④ 출력 설정</div>
-          {provider !== 'google' && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+          {!noScenes && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
             {ASPECTS.map(a => <button key={a.id} style={chip(aspect === a.id)} onClick={() => setAspect(a.id)}>{a.label}</button>)}
           </div>}
-          <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>{provider === 'google' ? '장수 (기본 모델 사진 비율로 나옴)' : '장면당 장수'}</div>
+          <div style={{ fontSize: 11, color: '#555', marginBottom: 4 }}>{noScenes ? '장수 (기본 모델 사진 비율로 나옴)' : '장면당 장수'}</div>
           <div style={{ display: 'flex', gap: 4 }}>
             {[1, 2, 3, 4].map(n => <button key={n} style={{ ...chip(perScene === n), flex: 1 }} onClick={() => setPerScene(n)}>{n}장</button>)}
           </div>
@@ -659,10 +697,10 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
 
         <button onClick={handleGenerate} disabled={!engineReady && (linked || provider === 'fashn')}
           style={{ padding: '14px 0', borderRadius: 10, border: 'none', background: !engineReady && (linked || provider === 'fashn') ? '#ccc' : C.ink, color: '#fff', fontSize: 14, fontWeight: 700, cursor: !engineReady && (linked || provider === 'fashn') ? 'not-allowed' : 'pointer' }}>
-          📸 {provider === 'google' ? 'Google 가상 피팅' : 'FASHN'} 유료 · {provider === 'google' ? perScene : totalImages}장 생성
+          📸 {provider === 'google' ? 'Google 가상 피팅' : fixed ? 'FASHN 고정 모델' : 'FASHN'} 유료 · {noScenes ? perScene : totalImages}장 생성
         </button>
         <div style={{ fontSize: 10, color: '#9b1c3a', textAlign: 'center', marginTop: -6 }}>
-          {linked ? `${(ENGINES[provider] || ENGINES.fashn).note} · 예상 약 $${((ENGINES[provider] || ENGINES.fashn).perImage * (provider === 'google' ? perScene : totalImages)).toFixed(2)}` : FASHN_COST_LABEL}{provider !== 'google' && selectedModel ? ' · 얼굴 고정은 장당 크레딧 추가' : ''} · 같은 설정은 다시 누르면 저장된 결과 재사용
+          {linked ? `${fixed ? FASHN_MODE_LABEL.fixed : (ENGINES[provider] || ENGINES.fashn).note} · 예상 약 $${((ENGINES[provider] || ENGINES.fashn).perImage * (noScenes ? perScene : totalImages)).toFixed(2)}` : FASHN_COST_LABEL}{!noScenes && selectedModel ? ' · 얼굴 고정은 장당 크레딧 추가' : ''} · 같은 설정은 다시 누르면 저장된 결과 재사용
         </div>
         {provider === 'fashn' && config && !fashnReady && (
           <div style={{ fontSize: 11, color: '#9b5a00', textAlign: 'center' }}>서버에 FASHN_API_KEY가 없어 생성할 수 없습니다. Vercel 환경변수에 추가해 주세요.</div>
@@ -690,7 +728,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
                   ? job.outputs.map((url, k) => (
                     <ResultCard key={job.id + k} job={job} url={url} onCompare={() => setCompare({ job, url })}
                       onSaveCut={linked && onSaveCut ? () => setSaveTarget({ job, url }) : null}
-                      onSaveBase={linked && job.request.provider === 'fashn' ? () => saveBaseFrom(url, job.composition) : null}
+                      onSaveBase={linked ? () => saveBaseFrom(url, job.composition) : null}
                       onDownload={() => downloadResult(url, `모델컷_${job.scene.label}_${job.id}_${k + 1}.jpg`)}
                       onSaveModel={() => saveAsModel(url, '', `${job.scene.label} 모델`)}
                       saving={savingModel === url} />
@@ -830,7 +868,7 @@ function ResultCard({ job, url, onDownload, onSaveModel, onCompare, saving, onSa
           </button>
         </div>
         {onSaveCut && <button style={{ ...btn(true, false), width: '100%', marginTop: 6 }} onClick={onSaveCut}>이 상품 모델컷으로 저장</button>}
-        {onSaveBase && <button style={{ ...btn(false, false), width: '100%', marginTop: 6 }} onClick={onSaveBase} title="Google 가상 피팅에서 이 사람 사진을 다시 씁니다">Google 기본 모델로 저장</button>}
+        {onSaveBase && <button style={{ ...btn(false, false), width: '100%', marginTop: 6 }} onClick={onSaveBase} title="이 사람 사진을 이 구도의 고정 모델로 다시 씁니다(FASHN·Google)">기본 모델로 저장</button>}
       </div>
     </div>
   )
