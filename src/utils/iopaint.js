@@ -105,12 +105,13 @@ export async function markedPreview(src,regions,selected) {
 
 // IOPaint(LaMa)로 지우기. 투명 배경(누끼)은 그대로 유지됩니다(IOPaint가 투명도를 다시 붙여 돌려줌).
 // keepColors: 투명한 곳의 색을 이미 채워 보낸 경우(013: 가까운 옷 색으로 채움) 흰색으로 덮지 않음.
-export async function inpaint(src,regions,url=getIopaintUrl(),{keepColors=false}={}) {
+// mask(020): 표시 상자 대신 직접 만든 마스크(흰색 = 채울 곳) PNG 주소를 보낼 때.
+export async function inpaint(src,regions,url=getIopaintUrl(),{keepColors=false,mask=null}={}) {
   const c=await imageCanvas(src),ctx=c.getContext('2d'),d=ctx.getImageData(0,0,c.width,c.height);
   // 투명한 곳의 색을 흰색으로 채워 경계 주변 채우기가 검게 번지지 않게 합니다.
   if(!keepColors)for(let i=0;i<d.data.length;i+=4)if(d.data[i+3]===0){d.data[i]=d.data[i+1]=d.data[i+2]=255;}
   ctx.putImageData(d,0,0);
-  const body={image:c.toDataURL('image/png'),mask:maskFromRegions(c.width,c.height,regions)};
+  const body={image:c.toDataURL('image/png'),mask:mask||maskFromRegions(c.width,c.height,regions)};
   let r;
   try {r=await fetch(`${base(url)}/api/v1/inpaint`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(180000)});}
   catch {throw Object.assign(new Error(NOT_RUNNING),{offline:true});}

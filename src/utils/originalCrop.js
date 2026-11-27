@@ -29,12 +29,18 @@ export function originalBox(box,map,ratio,W,H) {
 }
 // 합치기(모두 같은 크기의 ImageData): orig = 원본 조각(불투명), alpha = 늘린 누끼, s1·s2 = 늘린 1차·최종(2차).
 // 원본 조각에 ops를 다시 적용 → 2차가 바꾼 픽셀(1차와 tol 넘게 다른 곳)은 늘린 최종 픽셀로 → 알파는 늘린 누끼 알파.
-export function composeCrop({orig,alpha,s1=null,s2=null,ops=[],tol=6}) {
+// restored(020): 옷걸이 자리를 복원한 컷이면 {stage1}을 넘깁니다. 원본 사진에는 그 자리에 옷걸이가 찍혀 있으므로,
+// 누끼(alpha 이미지의 색)와 원본 색이 크게 다른 불투명 픽셀(= 복원으로 채운 곳)은 1차 보정본 색을 씁니다.
+export function composeCrop({orig,alpha,s1=null,s2=null,ops=[],tol=6,restored=null,restoreTol=60}) {
+  const d=orig.data,A=alpha.data;
+  let fill=null;
+  if(restored?.stage1){fill=new Uint8Array(d.length/4);for(let i=0,p=0;i<d.length;i+=4,p++)if(A[i+3]>=200&&(Math.abs(d[i]-A[i])+Math.abs(d[i+1]-A[i+1])+Math.abs(d[i+2]-A[i+2]))/3>restoreTol)fill[p]=1;}
   applyOps(orig,ops);
-  const d=orig.data,A=alpha.data;let changed=0;
-  for(let i=0;i<d.length;i+=4){
+  let changed=0,filled=0;
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    if(fill?.[p]){const f=restored.stage1.data;d[i]=f[i];d[i+1]=f[i+1];d[i+2]=f[i+2];filled++;}
     if(s1&&s2){const a=s1.data,b=s2.data;if(Math.abs(a[i]-b[i])>tol||Math.abs(a[i+1]-b[i+1])>tol||Math.abs(a[i+2]-b[i+2])>tol){d[i]=b[i];d[i+1]=b[i+1];d[i+2]=b[i+2];changed++;}}
     d[i+3]=A[i+3];
   }
-  return {image:orig,changed:changed/(d.length/4)};
+  return {image:orig,changed:changed/(d.length/4),restored:filled};
 }

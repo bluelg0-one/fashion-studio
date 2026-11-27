@@ -17,7 +17,8 @@ export const QA={
   islandShare:.0005,// 배경 잔여물: 옷과 떨어진 조각(사진의 0.05% 이상) 수, 1개 이상 보류
   buttonsDiff:0,// 단추 수 변화(1차 → 최종): 0이 아니면 불합격
   hookMin:.012,// 옷걸이 고리: 몸판 위로 옷 높이의 1.2% 이상 솟은 좁은 부분(옷걸이 남기기 설정일 때)
-  residueMax:.01,// 옷걸이 잔여물(016, 옷걸이 지우기 설정일 때): 맨 위에 남은 가는 고리 높이가 옷 높이의 1% 이상이면 불합격
+  residueMax:.01,
+  dentHold:.01,// 옷걸이 자리 패임(020): 복원 뒤 남은 어깨 패임 깊이가 옷 높이의 1% 이상이면 보류// 옷걸이 잔여물(016, 옷걸이 지우기 설정일 때): 맨 위에 남은 가는 고리 높이가 옷 높이의 1% 이상이면 불합격
   channelFill:.88,// 채널 사진에서 옷이 차지하는 긴 변 비율(여백 6%씩)
   upscaleMax:1.25,// 채널 사진을 만들 때 원본 옷을 1.25배까지 키우는 것은 통과, 더 키워야 하면 보류(흐려 보임)
 };
@@ -81,7 +82,7 @@ const r1=v=>Math.round(v*10)/10;
 
 // 컷 하나 점검. cut: {matte(누끼, 원본과 같은 크기), stage1, final(지금 최종), label}
 // 반환: checks[{key,cut,status,value,limit,reason,fix}] (fix: 다시 편집으로 고칠 수 있는 종류)
-export function checkCut({matte=null,stage1=null,final,hanger='keep'},name='front',o=QA) {
+export function checkCut({matte=null,stage1=null,final,hanger='keep',restore=null},name='front',o=QA) {
   const out=[],add=(key,status,value,limit,reason,fix=null)=>out.push({key,cut:name,status,value,limit,reason:status==='pass'||status==='na'?'':reason,fix:status==='pass'||status==='na'?null:fix});
   const area=opaqueShareOf(final);
   add('area',area<o.areaMin||area>o.areaMax?'fail':'pass',r1(area*100),`${o.areaMin*100}~${o.areaMax*100}%`,area<o.areaMin?`옷 면적이 너무 작음(${r1(area*100)}%) — 옷이 지워졌을 수 있음`:`옷 면적이 너무 큼(${r1(area*100)}%) — 배경이 남았을 수 있음`,'stage1');
@@ -99,6 +100,9 @@ export function checkCut({matte=null,stage1=null,final,hanger='keep'},name='fron
     add('buttons',diff>o.buttonsDiff?'fail':'pass',diff,'0',`단추 수 변화: 잃음 ${bt.lost} · 생김 ${bt.added} (2차가 고친 범위 안 1차 ${bt.before}개 → 최종 ${bt.after}개)`,'stage2');
   }
   // 옷걸이 지우기(016 v2 기본): 최종 사진에 남은 옷걸이(모양으로 찾은 가는 고리)가 없어야 함. 설정으로 더 고칠 수 없어 사장님 확인.
+  // 옷걸이 자리 패임(020): 복원할 때 잰 남은 패임 깊이(윤곽 오목 깊이, px) ÷ 옷 높이. 복원 기록이 없으면(예전 컷·남기기) 해당 없음.
+  if(hanger==='remove'){const f=garmentFrame(final),gh=f?f.hemY-f.y0+1:0,dep=restore&&gh?(Number(restore.depthAfter)||0)/gh:null;
+    add('hanger_dent',dep===null?'na':dep>=o.dentHold?'hold':'pass',dep===null?'-':r1(dep*100),`<${o.dentHold*100}%`,restore?.status==='review'?restore.reason:`옷걸이 자리가 패여 있음(옷 높이의 ${r1((dep||0)*100)}%)`,null);}
   if(hanger==='remove'){const r=hangerResidue(final);add('hanger_residue',r>=o.residueMax?'fail':'pass',r1(r*100),`<${o.residueMax*100}%`,`옷걸이 고리가 남음(옷 높이의 ${r1(r*100)}%) — 누끼에서 지우지 못함`,null);}
   if(matte){
     if(hanger!=='remove'){const was=hasHook(matte),now=hasHook(final);
