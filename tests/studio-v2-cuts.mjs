@@ -19,7 +19,7 @@ try{
  for(const l of ['자동 수평 (실험)','받침대 기둥 지우기','마네킹 꼭지·목 받침 지우기','마네킹 처리'])assert.equal(await page.getByLabel(l,{exact:true}).count(),0,`${l} 숨김`);
  assert.equal(await page.getByLabel('옷걸이',{exact:true}).first().inputValue(),'remove','옷걸이 지우기(016 v2 기본)');
  assert.equal(await page.getByLabel('흰 옷 맑게',{exact:true}).first().isChecked(),true);
- assert.match(await page.locator('h1').innerText(),/옷걸이 v2/);
+ assert.equal(await page.locator('h1').count(),0,'맨 위 제목·안내 문구는 v2에서 삭제(사장님 요청, a0e514e)');
  assert.deepEqual(errors,[]);
  // 예전 화면(?v1)은 그대로
  const v1=await open(base+'/?v1');

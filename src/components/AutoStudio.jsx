@@ -44,6 +44,7 @@ import {claudeRow, photoroomRow, openaiRow} from '../utils/costStats.js';
 import {dominantLab, colorShift, applyShift, labCss, clearWhite} from '../utils/colorMatch.js';
 import {readOriginal} from '../utils/studioImages.js';
 import {frameMap, originalBox, composeCrop, DETAIL_MAX_SIDE} from '../utils/originalCrop.js';
+import {removedMask, restoreHanger, remainingDepth} from '../utils/hangerRestore.js';
 import {readPhoto, imageCanvas, medianLight, whitePhoto, download, downloadBlob, renderDocument, compressPng, thumbnail, framePhoto} from '../utils/studioImages.js';
 
 const defaultTexts=()=>({headline:'',description:'',product:'',intro:'',tagline:'',colorName:'',material:'',care:'',fitNote:'',colorTitle:'Color choice',infoTitle:'Info',backTitle:'Back',fitTitle:'Fit guide',fitDescription:'',detailTitle:'Detail',sizeTitle:'Size',sizeNote:'단위: cm · 단면 기준\n측정 위치와 방법에 따라 실측값에 차이가 있을 수 있습니다.'});
@@ -232,18 +233,41 @@ export default function AutoStudio({view='all'}) {
     const c=await imageCanvas(url),ctx=c.getContext('2d'),px=ctx.getImageData(0,0,c.width,c.height);
     let sp=null,wall=null;
     if(src){const sc=await imageCanvas(src);if(sc.width===c.width&&sc.height===c.height){sp=sc.getContext('2d').getImageData(0,0,sc.width,sc.height);wall=borderColor(sp);}}
+    const alphaBefore=options.hangerMode==='remove'?Uint8Array.from({length:px.width*px.height},(_,p)=>px.data[p*4+3]):null;
     if(options.hangerMode==='remove')removeHanger(px);else {solidifyThin(px);if(sp)restoreHook(px,sp,wall);}
     if(wall)clearWallPockets(px,wall);
     // 마네킹 꼭지는 남기되(사장님 결정), 꼭지 맨 위보다 위에 남은 벽 걸이 부품 등은 지웁니다.
     if(options.cleanMannequinTop)removeMannequinTop(px);else if(options.clearFinial!==false)clearAboveFinial(px);
     if(options.cleanIslands!==false)removeIslands(px);
-    ctx.putImageData(px,0,0);
-    return c.toDataURL('image/png');
+    // 옷걸이 자리 복원(020): 옷걸이에 가려졌던 작은 부분만 IOPaint(무료)로 채움. 꺼져 있으면 건너뛰고 '확인 필요'. 유료 대체 없음.
+    let restore=null,out=px;
+    if(alphaBefore){
+      const removed=removedMask(alphaBefore,px);
+      if(options.restoreHanger===false)restore={status:'off',reason:'옷걸이 자리 복원 꺼짐',depthAfter:remainingDepth(px,removed)};
+      else {
+        const r=await restoreHanger(px,removed,{fill:fillTransparent,inpaintFn:async(img,mask)=>pixelsOf(await inpaint(dataUrlOf(img),[],iopUrl,{keepColors:true,mask:maskUrl(mask,img.width,img.height)}))});
+        if(r.offline)setIop({ok:false});
+        out=r.image;
+        restore={status:r.status,reason:r.reason,pixels:r.pixels,depthBefore:r.depthBefore,depthAfter:r.depthAfter,
+          ...(r.box&&r.status!=='none'?{before:cropUrl(px,r.box),after:r.status==='done'?cropUrl(out,r.box):null}:{})};
+      }
+    }
+    ctx.putImageData(out===px?px:new ImageData(out.data,out.width,out.height),0,0);
+    return {url:c.toDataURL('image/png'),restore};
+  }
+  // 복원 마스크 PNG(흰색 = 채울 곳)와 비교용 작은 조각(복원 범위 + 여백, 긴 변 480px)
+  function maskUrl(mask,w,h){const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d'),d=g.createImageData(w,h);for(let p=0;p<mask.length;p++){const v=mask[p]?255:0;d.data[p*4]=d.data[p*4+1]=d.data[p*4+2]=v;d.data[p*4+3]=255;}g.putImageData(d,0,0);return c.toDataURL('image/png');}
+  function cropUrl(img,box){
+    const pad=Math.round(Math.max(box.w,box.h)*.6)+20,x=Math.max(0,box.x-pad),y=Math.max(0,box.y-pad),w=Math.min(img.width-x,box.w+pad*2),h=Math.min(img.height-y,box.h+pad*2);
+    const src=document.createElement('canvas');src.width=img.width;src.height=img.height;src.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(img.data),img.width,img.height),0,0);
+    const k=Math.min(1,480/Math.max(w,h)),c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);
+    const g=c.getContext('2d');g.fillStyle='#dfe6ee';g.fillRect(0,0,c.width,c.height);g.drawImage(src,x,y,w,h,0,0,c.width,c.height);return c.toDataURL('image/png');
   }
   // 반환: {matte: 정리까지 끝난 누끼, raw: Photoroom 원본 결과(사진에 저장 → 정리 옵션만 바꿔 다시 돌려도 재과금 없음)}
   async function engineMatte(source,warnings,options,saved,angle=0,work=null,zoom=1) {
     const cut=await engineCut(source,warnings,options,saved,angle,work,zoom);
-    return {matte:await cleanMatte(cut.url,options,angle&&work?work:source),raw:cut.raw||null,charged:Boolean(cut.charged)};
+    const {url,restore}=await cleanMatte(cut.url,options,angle&&work?work:source);
+    return {matte:url,raw:cut.raw||null,charged:Boolean(cut.charged),restore};
   }
   // 받침대 기둥 지우기(무료): BiRefNet·Photoroom 모두 기둥을 옷의 일부로 남기는 경우가 있어 같은 방법으로 지웁니다.
   // 사진 아래에서 올라오는 좁고 곧은 무채색 기둥만 지웁니다(stand.js).
@@ -330,11 +354,12 @@ export default function AutoStudio({view='all'}) {
       for(let index=0;index<pending.length;index++){
         const slot=pending[index];setStep(`${index+1}/${pending.length} · ${slot.label} 배경 제거 (${cutoutCost(slot.retouch||retouch)==='birefnet'?'BiRefNet · 내 PC, 수십 초 걸릴 수 있음':'Photoroom'})`);
         costCut.current=slot.label;
-        const options=slot.retouch||retouch,{matte,raw}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
+        const options=slot.retouch||retouch,{matte,raw,restore}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
         const ops=[],stage1=await buildStage1(matte,{options,tone:slot.tone,slotId:slot.id,ops});
         const prev=entryOf(slot);
         // 같은 결과(저장된 결과 재사용)는 버전을 새로 늘리지 않습니다.
-        current={...current,[slot.id]:{...(prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null}),rawCut:raw||slot.rawCut||null}};
+        current={...current,[slot.id]:{...(prev&&prev.stage1===stage1&&!prev.stage2?{...slot,...entryFields(prev)}:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null}),rawCut:raw||slot.rawCut||null,hangerRestore:restore||null}};
+        if(restore?.status==='review')warnings.push(`${slot.label} · ${restore.reason}`);
         current=await refreshImages(current);
         setSlots(current);
       }
@@ -352,7 +377,7 @@ export default function AutoStudio({view='all'}) {
   // ---- 자동 점검(014-2): 검증 기준서의 자동 측정 항목(qaCheck.js) ----
   async function qaOf(data) {
     // hanger: 이 컷에 실제로 쓰인 옷걸이 설정(016: 지우기면 '옷걸이 잔여물 없음', 남기기면 '고리 유지'를 점검)
-    const load=async slot=>{if(!slot?.cutout)return null;const e=entryOf(slot)||{};return {matte:e.matte?await pixelsOf(e.matte):null,stage1:e.stage1?await pixelsOf(e.stage1):null,final:await pixelsOf(slot.cutout),hanger:{...keepSavedHanger(data.retouch),...(slot.retouch||{})}.hangerMode||'keep'};};
+    const load=async slot=>{if(!slot?.cutout)return null;const e=entryOf(slot)||{};return {matte:e.matte?await pixelsOf(e.matte):null,stage1:e.stage1?await pixelsOf(e.stage1):null,final:await pixelsOf(slot.cutout),hanger:{...keepSavedHanger(data.retouch),...(slot.retouch||{})}.hangerMode||'keep',restore:slot.hangerRestore||null};};
     return checkProduct({front:await load(data.slots?.hero),back:await load(data.slots?.back),details:data.detailReport||null});
   }
   async function runQa() {
@@ -404,7 +429,9 @@ export default function AutoStudio({view='all'}) {
         const orig=await grab(G.oc,ob.x,ob.y,ob.w,ob.h);
         const [mx,my]=G.map.toMatte(x,y),alpha=await grab(e.matte,mx,my,w/G.map.sx,h/G.map.sx);
         const s1=e.stage2&&e.stage1?await grab(e.stage1,x,y,w,h):null,s2=s1?await grab(e.stage2,x,y,w,h):null;
-        const {image}=composeCrop({orig,alpha,s1,s2,ops:e.ops||[]});
+        // 옷걸이 자리를 복원한 컷(020): 원본 사진의 그 자리에는 옷걸이가 찍혀 있으므로 복원한 픽셀은 1차 보정본 색으로
+        const restored=src.hangerRestore?.status==='done'&&e.stage1?{stage1:s1||await grab(e.stage1,x,y,w,h)}:null;
+        const {image}=composeCrop({orig,alpha,s1,s2,ops:e.ops||[],restored});
         const [c,g]=canvasOf(W,H);g.putImageData(image,0,0);png=c.toDataURL('image/png');origin='원본';
       } else {
         const c=await imageCanvas(src.cutout),s=Math.max(1,G.s||1),[W,H]=fit(w/s,h/s),[out,g]=canvasOf(W,H);
@@ -731,10 +758,11 @@ export default function AutoStudio({view='all'}) {
     stage1:async(slot,{paid,product})=>{
       costProduct.current=product.name;costCut.current=slot.label;
       const options=autoOptions(slot,product.data,paid),warnings=[];
-      const {matte,raw,charged}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
+      const {matte,raw,charged,restore}=await engineMatte(slot.source,warnings,options,slot.rawCut,slot.level?.angle||0,slot.workSource,slot.level?.zoom||1);
+      if(restore?.status==='review')warnings.push(restore.reason);
       const ops=[],stage1=await buildStage1(matte,{options,tone:slot.tone||DEFAULT_TONE,slotId:slot.id,ref:null,ops});
       const f=areaFlag(opaqueFraction(await pixelsOf(matte)));
-      return {slot:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null,rawCut:raw||slot.rawCut||null},
+      return {slot:{...withEntry(slot,{matte,stage1,stage2:null,ops}),defects:null,rawCut:raw||slot.rawCut||null,hangerRestore:restore||null},
         flags:[...(f?[f]:[]),...(paid?['무료 엔진이 꺼져 유료(Photoroom)로 누끼']:[]),...warnings],cost:charged?{paid:PHOTOROOM.perCall}:null};
     },
     refLab:async slot=>{const l=dominantLab(await pixelsOf(entryOf(slot)?.stage1||slot.cutout));return {L:l.L,a:l.a,b:l.b};},
@@ -1042,6 +1070,14 @@ export default function AutoStudio({view='all'}) {
         </figure>)}</div>}
         {detailReport?.skipped?.length>0&&<ul className="detail-skipped" aria-label="빠진 디테일">{detailReport.skipped.map(x=><li key={x.id} className={x.review?'review-note':''}>{x.label}: {x.reason}</li>)}</ul>}
         {detailReport?.error&&<p className="review-note">디테일컷을 만들지 못했습니다: {detailReport.error}</p>}
+      </section>}
+      {HANGER_V2&&[slots.hero,slots.back].some(s=>s?.hangerRestore)&&<section className="restore-panel" aria-label="옷걸이 자리 복원">
+        <h3>옷걸이 자리 복원 <small>옷걸이를 지우면서 비어 버린, 옷걸이에 가려졌던 작은 부분만 주변 원단으로 채웁니다(내 PC IOPaint · 무료) · 색·무늬·모양은 바꾸지 않음</small></h3>
+        {[slots.hero,slots.back].filter(s=>s?.hangerRestore).map(s=>{const r=s.hangerRestore,on=(s.retouch||retouch).restoreHanger!==false;return <div key={s.id} className="restore-row" data-restore={s.id}>
+          <b>{s.label}</b> · <span className={r.status==='done'?'ok-tag':r.status==='review'?'off-tag':''}>{{done:'복원함',review:'확인 필요',none:'복원할 곳 없음',off:'꺼짐'}[r.status]||r.status}</span> <small>{r.reason}</small>
+          {r.before&&<div className="restore-compare"><figure><img src={r.before} alt={`${s.label} 복원 전`}/><figcaption>복원 전(옷걸이만 지움)</figcaption></figure>{r.after&&<figure><img src={r.after} alt={`${s.label} 복원 후`}/><figcaption>복원 후</figcaption></figure>}</div>}
+          <label className="check"><input type="checkbox" aria-label={`${s.label} 옷걸이 자리 복원`} checked={on} onChange={e=>{const nr={...(s.retouch||retouch),restoreHanger:e.target.checked};const nextSlots={...slots,[s.id]:{...s,retouch:nr}};setSlots(nextSlots);processPhotos(s.id,nextSlots);}}/>이 사진 옷걸이 자리 복원 (바꾸면 1차를 다시 만듭니다 · 저장된 누끼 재사용, 추가 비용 없음)</label>
+        </div>;})}
       </section>}
       {HANGER_V2&&<section className="qa-panel" aria-label="자동 점검">
         <h3>자동 점검 <small>검증 기준서(docs/qa/검증기준서.md)의 자동 측정 항목 · 자동 보정이 끝나면 저절로 하고, 보류·불합격이면 설정을 바꿔 최대 2회 다시 편집합니다</small></h3>

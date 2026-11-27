@@ -23,12 +23,13 @@ export const DEFAULT_TONE={bright:20,vivid:30};
 //   예전 설정 autoLevel(기본 켬)은 더 이상 쓰지 않습니다(저장된 설정 때문에 다시 켜지지 않도록 새 이름).
 // clearWhite: 흰·아이보리 옷의 누런 기를 약하게 덜고 밝은 부분을 살짝 올림(013-B, 기본 켬, 브라우저 계산)
 // clearFinial: 마네킹 금색 꼭지 위에 남은 벽 걸이 부품 지우기(013-B). 옷걸이 v2에서는 끔(금색 옷걸이 고리를 꼭지로 볼 수 있음, 점검 C-3).
-export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','clearFinial','hangerMode','autoLevel','autoLevelBeta','clearWhite'];
+// restoreHanger(020): 옷걸이 지우기 뒤 옷걸이에 가려졌던 작은 부분(어깨 패임·뒷목 고리 자리)을 IOPaint로 채움. v2 기본 켬, 사진별로 끌 수 있음.
+export const POST_OPTIONS=['removeStand','cleanIslands','cleanMannequinTop','clearFinial','hangerMode','restoreHanger','autoLevel','autoLevelBeta','clearWhite'];
 export const DEFAULT_RETOUCH_V1 = {cutout:'photoroom', autoLevelBeta:false, removeStand:true, cleanIslands:true, cleanMannequinTop:false, clearWhite:true, clearFinial:true, hangerMode:'keep', removeBackground:true, center:true, lighting:false, shadow:false, mannequin:'keep', presets:[], custom:'', engine:'photoroom'};
 // 옷걸이 v2(014) 기본값: 받침대 기둥 지우기·꼭지 위 정리·마네킹 꼭지 지우기·자동 수평을 끕니다(옷걸이 사진에는 받침대·꼭지가 없고,
 // 켜 두면 늘어진 끈·금색 고리를 잘못 지울 수 있음 — 점검 C-2·C-3). 흰 옷 맑게는 켬.
 // 016(사장님 결정 변경): 누끼 때 옷걸이도 지웁니다(hangerMode 'remove'). 새 상품에만 적용 — 설정을 저장한 예전 상품은 keepSavedHanger로 그대로 둡니다.
-export const V2_RETOUCH = {removeStand:false, clearFinial:false, cleanMannequinTop:false, autoLevelBeta:false, hangerMode:'remove', mannequin:'keep'};
+export const V2_RETOUCH = {removeStand:false, clearFinial:false, cleanMannequinTop:false, autoLevelBeta:false, hangerMode:'remove', restoreHanger:true, mannequin:'keep'};
 export const DEFAULT_RETOUCH = HANGER_V2 ? {...DEFAULT_RETOUCH_V1, ...V2_RETOUCH} : DEFAULT_RETOUCH_V1;
 // 저장된 상품 설정(saved)을 열 때: 설정이 저장된 상품인데 옷걸이 값이 없으면 예전 기본값(남기기)으로 둡니다. 설정이 없는 새 상품은 지금 기본값.
 export const keepSavedHanger = (saved, defaults=DEFAULT_RETOUCH) => saved ? {...defaults, hangerMode:'keep', ...saved} : {...defaults};
