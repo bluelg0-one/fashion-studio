@@ -49,6 +49,9 @@ try{
  assert.equal(await page.getByText('저장된 결과 재사용 · 추가 비용 없음').count(),4);
  // 새로고침 후에도 재사용(브라우저에 저장)
  await page.reload();await page.getByRole('tab',{name:'AI모델컷',exact:true}).click();await page.getByText('키 설정됨 · 유료').waitFor();
+ // 021: 새로고침해도 만든 결과가 그대로 보임(이미지째 보관) → 확인 뒤 목록 비우기(확인 창)
+ await page.getByText('생성된 모델컷 (8장)').waitFor({timeout:10000});
+ await page.getByRole('button',{name:'목록 비우기'}).click();await page.waitForTimeout(300);
  await page.getByLabel('모델컷 의류 사진 선택').setInputFiles({name:'garment.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
  await gen.click();await page.getByText('생성된 모델컷 (4장)').waitFor({timeout:10000});
  assert.equal(runs,4,'새로고침 후에도 재사용');

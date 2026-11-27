@@ -314,3 +314,30 @@ export async function downloadModelImage(fileId) {
 export async function trashModelImage(fileId) {
   await call(`${API}/files/${q(fileId)}?fields=id`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({trashed:true})});
 }
+
+// ---- 모델컷 임시 결과(021): 작업 폴더 / 모델컷_임시 / 상품 이름 / *.jpg ----
+// 생성 결과를 바로 올려 다른 PC에서도 보이게 하고, 상세페이지 정식 저장 3일 뒤 휴지통으로 보냅니다.
+export const TEMP_CUT_FOLDER='모델컷_임시';
+async function childFolder(parentId,name,props) {
+  const [k,v]=Object.entries(props)[0];
+  const query=`'${esc(parentId)}' in parents and mimeType='${FOLDER_MIME}' and appProperties has { key='${esc(k)}' and value='${esc(v)}' } and trashed=false`;
+  const f=((await (await call(`${API}/files?q=${q(query)}&fields=${q('files(id)')}&spaces=drive`)).json()).files||[])[0];
+  if(f)return f.id;
+  const r=await call(`${API}/files?fields=id`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:String(name).slice(0,100),mimeType:FOLDER_MIME,parents:[parentId],appProperties:props})});
+  return (await r.json()).id;
+}
+export async function tempCutFolder(parentId,product) {
+  const root=await childFolder(parentId,TEMP_CUT_FOLDER,{fashionStudio:'mctemp'});
+  return childFolder(root,product.name||'이름 없는 상품',{mctempProduct:String(product.id).slice(0,100)});
+}
+export async function uploadTempCut(folderId,{dataUrl,name,props}) {
+  const blob=await (await fetch(dataUrl)).blob();
+  const meta={name,mimeType:blob.type||'image/jpeg',parents:[folderId],appProperties:{fashionStudio:'mctempfile',...Object.fromEntries(Object.entries(props).map(([k,v])=>[k,String(v).slice(0,100)]))}};
+  return uploadBlob(meta,blob);
+}
+// 이 상품의 임시 결과 파일 목록(다른 PC에서 올린 것 포함)
+export async function listTempCuts(productId) {
+  const query=`appProperties has { key='fashionStudio' and value='mctempfile' } and appProperties has { key='productId' and value='${esc(String(productId).slice(0,100))}' } and trashed=false`;
+  const r=await call(`${API}/files?q=${q(query)}&fields=${q('files(id,modifiedTime,appProperties)')}&pageSize=200&spaces=drive`);
+  return ((await r.json()).files||[]).map(f=>({id:f.id,modifiedTime:f.modifiedTime,...(f.appProperties||{})}));
+}
