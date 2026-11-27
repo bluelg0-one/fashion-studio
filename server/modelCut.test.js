@@ -36,3 +36,16 @@ test('017 model cut cost row (estimated unit price per engine; reuse costs nothi
  const f=modelCutRow({engine:'fashn',product:'니트',cut:'정면',images:2}),g=modelCutRow({engine:'google',images:1}),c=modelCutRow({engine:'google',cached:true});
  assert.equal(f.feature,'modelcut');assert.equal(f.cost_usd,0.15);assert.equal(g.cost_usd,0.06);assert.equal(c.cost_usd,0);assert.equal(c.calls,0);
 });
+import {fashnMode, tryonInputs, newerBase, TRYON_CATEGORY} from '../src/utils/modelCut.js';
+test('018 fixed model: a base photo for the composition → FASHN try-on (person + garment, category by composition); none → create a new model',()=>{
+ const base={top:'data:image/jpeg;base64,P'};
+ assert.equal(fashnMode(base,'top'),'fixed');assert.equal(fashnMode(base,'bottom'),'create');assert.equal(fashnMode({bottom:'x'},'shorts'),'fixed','반바지는 하반신 칸');
+ assert.deepEqual(tryonInputs({person:'P',garment:'G',composition:'dress',samples:9}),{model_image:'P',garment_image:'G',category:'one-pieces',num_samples:4,output_format:'jpeg'});
+ assert.equal(tryonInputs({person:'P',garment:'G',composition:'top'}).category,'tops');assert.equal(TRYON_CATEGORY.shorts,'bottoms');
+ assert.ok(!('face_reference' in tryonInputs({person:'P',garment:'G',composition:'top'})),'얼굴 고정 없음');
+});
+test('018 base photos sync: the side changed last (at) wins between this browser and Drive',()=>{
+ const local={top:'L',at:100},remote={top:'R',bottom:'R2',at:200};
+ assert.deepEqual(newerBase(local,remote),{top:'R',bottom:'R2',dress:undefined,at:200});
+ assert.equal(newerBase({top:'L',at:300},remote).top,'L');assert.equal(newerBase(local,null),local);
+});

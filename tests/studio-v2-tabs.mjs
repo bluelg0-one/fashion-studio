@@ -88,6 +88,21 @@ try{
  await page.waitForFunction(()=>[...document.querySelectorAll('div')].some(d=>d.textContent.startsWith('👕 가상 피팅 1')));
  const g=shots.find(b=>b.action==='run'&&b.provider==='google');assert.ok(g.inputs.person_image.startsWith('data:image/jpeg'));assert.ok(g.inputs.product_image.startsWith('data:image/jpeg'));assert.equal(g.inputs.sample_count,1);
  assert.ok(dialogs.some(m=>/Google 가상 피팅으로 모델컷 1장/.test(m)&&/\$0\.06/.test(m)));
+ // 018 고정 모델: 기본 모델 사진이 생긴 구도(상반신)는 FASHN도 가상 피팅(tryon-v1.6, 사람 사진 + 옷), 얼굴 고정·장면 없음
+ await page.getByRole('button',{name:'엔진 FASHN'}).click();
+ assert.match(await page.getByLabel('FASHN 방식').innerText(),/고정 모델 · 장당 약 \$0\.075/);
+ assert.equal(await page.getByText('② 내 모델 (얼굴 고정)').count(),0,'고정 모델에서는 얼굴 고정 칸 없음');
+ await page.getByRole('button',{name:/FASHN 고정 모델 유료 · 1장 생성/}).click();
+ await page.waitForFunction(()=>[...document.querySelectorAll('div')].some(d=>d.textContent.startsWith('🧍 고정 모델')));
+ const fx2=shots.filter(b=>b.action==='run'&&b.model_name==='tryon-v1.6');assert.equal(fx2.length,1);
+ assert.ok(fx2[0].inputs.model_image.startsWith('data:image/jpeg'));assert.ok(fx2[0].inputs.garment_image.startsWith('data:image/jpeg'));
+ assert.equal(fx2[0].inputs.category,'tops');assert.equal(fx2[0].inputs.num_samples,1);
+ assert.equal(fx2[0].inputs.face_reference,undefined);assert.equal(fx2[0].inputs.prompt,undefined);
+ assert.ok(dialogs.some(m=>/FASHN 고정 모델로 모델컷 1장/.test(m)&&/고정 모델 · 장당 약 \$0\.075/.test(m)));
+ // 구도를 하반신으로 바꾸면(그 칸에 사진 없음) 다시 '새 모델 생성'
+ await page.getByLabel('모델컷 구도').selectOption('bottom');
+ assert.match(await page.getByLabel('FASHN 방식').innerText(),/새 모델 생성/);
+ await page.getByLabel('모델컷 구도').selectOption('top');
  // ④ 상세페이지에 반영: 포함·순서·AI 모델 컷 표시
  await tab(page,'상세페이지');
  assert.equal(await page.getByLabel('상품 제목').inputValue(),'라운드 니트','탭을 옮겨도 입력 유지');

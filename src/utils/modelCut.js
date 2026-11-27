@@ -63,3 +63,21 @@ export function cropInfo(width, height, cropTop, o = CROP) {
   const h = height - Math.max(0, Math.min(height - 1, Math.round(cropTop))), side = Math.max(width, h)
   return { width, height: h, side, lowRes: side < o.minSide, note: side < o.minSide ? `해상도 부족: 자른 뒤 긴 변 ${side}px (채널 기준 ${o.minSide}px 미만)` : '' }
 }
+
+// ── 고정 모델(018) ───────────────────────────────────────
+// 사장님: "모델을 매번 새로 만들면 돈이 드니 처음 한 번만 만들어 고정으로 쓰자."
+// 구도별 기본 모델 사진(top·bottom·dress)이 있으면 FASHN도 가상 피팅(tryon-v1.6: 사람 사진 + 옷 사진, 장당 1크레딧)으로 그 사람에게 입힙니다.
+// 없으면 예전처럼 product-to-model(새 모델 생성). 고정 모델 방식에서는 얼굴 고정(face_reference, 추가 크레딧)을 쓰지 않습니다.
+// FASHN 문서(docs.fashn.ai)는 이 작업 환경에서 열리지 않아 검색 요약 기준(원문 미확인): /v1/run, model_name 'tryon-v1.6',
+// inputs {model_image, garment_image, category:'auto'|'tops'|'bottoms'|'one-pieces', num_samples, output_format}.
+export const TRYON_CATEGORY = { top: 'tops', bottom: 'bottoms', shorts: 'bottoms', dress: 'one-pieces', full: 'auto' }
+export const fashnMode = (base = {}, composition = 'top') => (base[baseSlotOf(composition)] ? 'fixed' : 'create')
+export const FASHN_MODE_LABEL = { fixed: '고정 모델 · 장당 약 $0.075', create: '새 모델 생성' }
+export function tryonInputs({ person, garment, composition, samples = 1 }) {
+  return { model_image: person, garment_image: garment, category: TRYON_CATEGORY[composition] || 'auto', num_samples: Math.min(4, Math.max(1, samples)), output_format: 'jpeg' }
+}
+// 브라우저 저장본과 드라이브 저장본 중 나중에 바꾼 쪽(at)을 씁니다.
+export function newerBase(local = {}, remote = null) {
+  if (!remote || typeof remote !== 'object') return local
+  return (Number(remote.at) || 0) > (Number(local.at) || 0) ? { top: remote.top, bottom: remote.bottom, dress: remote.dress, at: remote.at } : local
+}
