@@ -3,6 +3,8 @@ import { listProducts, getProduct } from '../utils/productStore.js'
 import { addCost } from '../utils/costLog.js'
 import { COMPOSITIONS, compositionOf, baseSlotOf, BASE_SLOTS, ENGINES, modelCutRow, faceCrop, cropInfo, FASHN_MODE_LABEL, tryonInputs } from '../utils/modelCut.js'
 import { hasToken, savedFolder, loadBaseModels, saveBaseModels, modelFolder, uploadModelImage, downloadModelImage, trashModelImage } from '../utils/googleDrive.js'
+import { putResult, listResults, deleteResult, runCleanup, extendKeep, cleanupPlan, listMeta, recordsFromDrive } from '../utils/modelcutStore.js'
+import { tempCutFolder, uploadTempCut, listTempCuts } from '../utils/googleDrive.js'
 import { migrateLibrary, migratedPicks, modelsFor, addModel, renameModel, deleteModel, pickFor, setPick, syncLibrary } from '../utils/modelLibrary.js'
 
 function fileToDataUrl(file) {
@@ -103,6 +105,10 @@ async function runAndWait({ provider, model_name, inputs }, onStarted) {
   if (started0.status === 'completed' && Array.isArray(started0.output)) return started0.output   // Google 가상 피팅: 바로 결과
   const { id } = started0
   onStarted?.(id)
+  return pollUntilDone(provider, id)
+}
+// 진행 중이던 작업을 작업 ID로 이어 받기(021: 탭 이동·새로고침 뒤에도, 다시 과금하지 않음)
+async function pollUntilDone(provider, id) {
   const started = Date.now()
   while (Date.now() - started < POLL_TIMEOUT_MS) {
     await new Promise(r => setTimeout(r, POLL_MS))
@@ -299,7 +305,92 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
 
   useEffect(() => { saveModels(models) }, [models])
 
-  const updateJob = (id, patch) => setJobs(prev => prev.map(j => (j.id === id ? { ...j, ...patch } : j)))
+  // 021: 결과·진행 중 작업을 바로 IndexedDB에 저장(상품별). 탭 이동·새로고침·브라우저 탭 정리 뒤에도 남고, 진행 중 작업은 이어 받습니다.
+  const recordOf = j => ({ ...j, productId: j.productId ?? (linked?.id || ''), productName: j.productName ?? (linked?.name || ''), kind: j.kind || 'shot', createdAt: j.createdAt || j.batchId || Date.now() })
+  const keepJob = j => { putResult(recordOf(j)).catch(() => setStoreError('모델컷 결과를 이 브라우저에 저장하지 못했습니다(저장 공간 확인). 결과는 바로 다운로드해 두세요.')) }
+  const [storeError, setStoreError] = useState('')
+  const updateJob = (id, patch) => setJobs(prev => prev.map(j => { if (j.id !== id) return j; const n = { ...j, ...patch }; keepJob(n); return n }))
+  const jobsRef = useRef(jobs); jobsRef.current = jobs
+  // 결과가 나오면 이미지 자체를 받아 저장(결과 주소는 약 3일 뒤 만료) → 드라이브 '모델컷_임시/상품명'에 올림(연결 안 돼 있으면 나중에)
+  const finishJob = async (job, output) => {
+    const urls = output || []
+    const datas = await Promise.all(urls.map(u => urlToDataUrl(u).catch(() => null)))
+    const done = { status: 'completed', outputs: datas.map((d, k) => d || urls[k]), sourceUrls: urls, error: null }
+    updateJob(job.id, done)
+    uploadPending({ ...job, ...done })
+  }
+  const uploading = useRef(new Set())
+  const uploadPending = async (job) => {
+    if (!job?.productId && !linked?.id) return
+    if (!hasToken() || !savedFolder()?.id || job.driveIds?.length || !job.outputs?.length || uploading.current.has(job.id)) return
+    uploading.current.add(job.id)
+    try {
+      const pid = job.productId || linked.id, folder = await tempCutFolder(savedFolder().id, { id: pid, name: job.productName || linked?.name })
+      const ids = []
+      for (let k = 0; k < job.outputs.length; k++) {
+        if (!String(job.outputs[k]).startsWith('data:')) continue
+        ids.push(await uploadTempCut(folder, { dataUrl: job.outputs[k], name: `${job.scene?.label || '모델컷'}_${String(job.id).slice(-6)}_${k + 1}.jpg`,
+          props: { productId: pid, resultId: job.id, idx: k, scene: job.scene?.label || '', kind: job.kind || 'shot', provider: job.request?.provider || job.provider || 'fashn', composition: job.composition || '', createdAt: job.createdAt || job.batchId || Date.now() } }))
+      }
+      updateJob(job.id, { driveIds: ids })
+    } catch { /* 연결이 끊기면 다음에 다시 올림 */ } finally { uploading.current.delete(job.id) }
+  }
+  const [notice, setNotice] = useState(null)
+  const [restored, setRestored] = useState(false)
+  // 처음 열 때: 저장된 결과 불러오기 → 진행 중이던 작업 이어 받기 → (드라이브 연결 시) 다른 PC 결과 불러오기·못 올린 결과 올리기
+  useEffect(() => {
+    let off = false
+    ;(async () => {
+      let saved = []
+      try { saved = (await listResults()).filter(r => (r.kind || 'shot') === 'shot') } catch { setStoreError('모델컷 보관함을 열 수 없습니다(이 브라우저).') }
+      if (off) return
+      const fixed = saved.map(r => (r.status === 'running' || r.status === 'queued') && !r.remoteId
+        ? { ...r, status: 'failed', error: r.request?.provider === 'google' ? '중단됨 · 결과를 받지 못했습니다(Google은 과금됐을 수 있음 — 비용 기록 확인)' : '중단됨(아직 시작 전 · 과금 없음) · 다시 시도를 눌러 주세요' } : r)
+      setJobs(cur => { const ids = new Set(cur.map(j => j.id)); return [...cur, ...fixed.filter(r => !ids.has(r.id))].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)) })
+      for (const r of fixed) if (r !== saved.find(x => x.id === r.id)) keepJob(r)
+      for (const r of fixed.filter(r => (r.status === 'running' || r.status === 'queued') && r.remoteId)) {
+        updateJob(r.id, { status: 'running', resumed: true })
+        pollUntilDone(r.request?.provider || 'fashn', r.remoteId).then(out => { rememberOutputs(r.key, out); finishJob(r, out) }).catch(err => updateJob(r.id, { status: 'failed', error: err.message }))
+      }
+      const cands = (await listResults().catch(() => [])).filter(r => r.kind === 'candidate' && r.outputs?.length)
+      if (!off && cands.length) setCandidates(prev => [...prev, ...cands.filter(c => !prev.some(p => p.id === c.id)).map(c => ({ id: c.id, url: c.outputs[0], desc: c.desc || '' }))])
+      setRestored(true)
+    })()
+    return () => { off = true }
+  }, [])
+  // 3일 정리: 앱을 열 때와 그 뒤 하루 한 번(상세페이지 정식 저장 3일 뒤, 보관 연장 가능)
+  const cleanup = async () => {
+    try {
+      const r = await runCleanup({ ready: () => hasToken() && Boolean(savedFolder()?.id), trash: id => trashModelImage(id) })
+      if (r.removed) { const left = new Set((await listResults()).map(x => x.id)); setJobs(cur => cur.filter(j => left.has(j.id) || j.status === 'running' || j.status === 'queued')) }
+    } catch { /* 다음 검사 때 다시 */ }
+    refreshNotice()
+  }
+  const refreshNotice = async () => {
+    try { const plan = cleanupPlan(await listResults(), await listMeta()); setNotice(plan.notices) } catch { setNotice(null) }
+  }
+  useEffect(() => { if (!restored) return; cleanup(); const t = setInterval(cleanup, 24 * 60 * 60 * 1000); return () => clearInterval(t) }, [restored])
+  // 드라이브: 탭을 열 때 이 상품의 다른 PC 결과 불러오기 + 못 올린 결과 올리기
+  useEffect(() => {
+    if (!active || !linked?.id || !restored || !hasToken() || !savedFolder()?.id) return
+    let off = false
+    ;(async () => {
+      try {
+        const files = await listTempCuts(linked.id)
+        const recs = recordsFromDrive(files, jobsRef.current)
+        for (const r of recs) {
+          const outputs = []
+          for (const id of r.driveIds) outputs.push(await downloadModelImage(id).catch(() => null))
+          const rec = { ...r, productName: linked.name, outputs: outputs.filter(Boolean), garmentName: linked.name, garmentUrl: linked.front || null, modelName: '다른 PC에서 만듦' }
+          if (off) return
+          keepJob(rec); setJobs(cur => cur.some(j => j.id === rec.id) ? cur : [rec, ...cur])
+        }
+      } catch { /* 드라이브 연결이 끊김 */ }
+      for (const j of jobsRef.current) if (j.status === 'completed' && !j.driveIds?.length && (j.productId || '') === linked.id) uploadPending(j)
+    })()
+    return () => { off = true }
+  }, [active, linked?.id, restored])
+  useEffect(() => { if (active) refreshNotice() }, [active, linked?.id])
 
   // ── 의류 업로드
   const handleGarmentUpload = async (file) => {
@@ -312,12 +403,18 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     if (provider !== 'fashn') { alert('모델 만들기는 현재 FASHN으로만 가능합니다.'); return }
     if (!confirm(`AI 모델 후보 2장을 만듭니다.\n${FASHN_COST_LABEL} · 2장 분량\n계속할까요?`)) return
     setCreating(true)
-    setCandidates([])
     const desc = describeModel(attrs)
     const prompt = `${desc}, upper body portrait looking at camera, natural makeup, plain light gray studio background, soft lighting, fashion model casting photo`
     const tasks = [0, 1].map(() =>
       runAndWait({ provider, model_name: 'model-create', inputs: { prompt, aspect_ratio: '3:4' } })
-        .then(out => { addCost(modelCutRow({ engine: 'fashn', product: linked?.name || '', cut: '모델 후보', images: out?.length || 1 })).catch(() => {}); return out?.[0] && setCandidates(prev => [...prev, { url: out[0], desc }]) })
+        .then(async out => {
+          addCost(modelCutRow({ engine: 'fashn', product: linked?.name || '', cut: '모델 후보', images: out?.length || 1 })).catch(() => {})
+          if (!out?.[0]) return
+          // 021: 모델 후보도 이미지 자체를 받아 바로 보관(돈 내고 만든 결과)
+          const data = await urlToDataUrl(out[0]).catch(() => out[0]), id = 'cand-' + Date.now() + Math.random().toString(36).slice(2, 6)
+          putResult({ id, kind: 'candidate', productId: linked?.id || '', productName: linked?.name || '', status: 'completed', outputs: [data], sourceUrls: out, desc, createdAt: Date.now(), scene: { id: 'candidate', emoji: '🎨', label: '모델 후보' } }).catch(() => {})
+          setCandidates(prev => [...prev, { id, url: data, desc }])
+        })
         .catch(err => err)
     )
     const errors = (await Promise.all(tasks)).filter(e => e instanceof Error)
@@ -363,9 +460,9 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
       const job = queueRef.current.shift()
       activeRef.current++
       updateJob(job.id, { status: 'running', startedAt: Date.now() })
-      runAndWait(job.request, () => {})
+      runAndWait(job.request, id => updateJob(job.id, { remoteId: id }))
         .then(output => {
-          rememberOutputs(job.key, output); updateJob(job.id, { status: 'completed', outputs: output || [] })
+          rememberOutputs(job.key, output); finishJob(job, output)
           // 비용 기록(008-6, 017부터 모델컷 포함): 엔진별 추정 단가 × 받은 장수
           addCost(modelCutRow({ engine: job.request.provider, product: linked?.name || job.garmentName, cut: job.scene.label, images: (output || []).length || 1 })).catch(() => {})
         })
@@ -456,8 +553,12 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     } else if (!reused.length) {
       alert('같은 설정의 작업이 이미 진행 중입니다.'); return
     }
-    setJobs(prev => [...reused, ...fresh, ...prev])
-    queueRef.current.push(...fresh)
+    const stamp = j => ({ ...j, productId: linked?.id || '', productName: linked?.name || '', kind: 'shot', createdAt: Date.now() })
+    const addR = reused.map(stamp), addF = fresh.map(stamp)
+    for (const j of [...addR, ...addF]) keepJob(j)
+    setJobs(prev => [...addR, ...addF, ...prev])
+    for (const j of addR) if (j.outputs?.some(u => !String(u).startsWith('data:'))) finishJob(j, j.outputs)
+    queueRef.current.push(...addF)
     pump()
   }
 
@@ -480,12 +581,15 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     try { downloadImage(await urlToDataUrl(url), name) } catch { window.open(url, '_blank') }
   }
 
-  const allOutputs = jobs.flatMap(j => j.outputs.map((url, k) => ({ url, name: `모델컷_${j.scene.label}_${j.id}_${k + 1}.jpg` })))
+  // 모델컷 탭(상품 연결)에서는 지금 상품의 결과만 보여 줍니다(다른 상품 결과는 그 상품을 고르면 보임).
+  const shown = linked ? jobs.filter(j => (j.productId || '') === (linked.id || '') || (!j.productId && !j.fromDrive)) : jobs
+  const myNotice = linked ? notice?.find(n => n.productId === linked.id) : null
+  const allOutputs = shown.flatMap(j => j.outputs.map((url, k) => ({ url, name: `모델컷_${j.scene.label}_${j.id}_${k + 1}.jpg` })))
   const downloadAll = async () => {
     for (const o of allOutputs) { await downloadResult(o.url, o.name) }
   }
 
-  const runningCount = jobs.filter(j => j.status === 'running' || j.status === 'queued').length
+  const runningCount = shown.filter(j => j.status === 'running' || j.status === 'queued').length
   const totalImages = sceneIds.length * perScene
 
   // ── 화면 ───────────────────────────────────────────────────
@@ -747,22 +851,30 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
 
       {/* 결과 */}
       <div>
-        {jobs.length > 0 ? (
+        {storeError && <div role="alert" style={{ ...hint, color: '#9b1c3a', fontWeight: 700 }}>{storeError}</div>}
+        {myNotice && (
+          <div aria-label="임시 모델컷 자동 삭제 안내" style={{ ...card, marginBottom: 12, background: '#fff7e6', borderColor: '#f3d29b' }}>
+            <b>{myNotice.days}일 뒤 임시 모델컷 {myNotice.images}장 자동 삭제</b>
+            <div style={{ ...hint, marginBottom: 6 }}>상세페이지를 정식 저장한 지 3일이 지나면 이 상품의 임시 모델컷(브라우저·드라이브 '모델컷_임시')을 지웁니다. '이 상품 모델컷으로 저장'한 컷·모델 보관함·상세페이지 사진은 지우지 않습니다. 드라이브 파일은 휴지통으로 갑니다.</div>
+            <button style={btn(true, false)} onClick={async () => { await extendKeep(linked.id); refreshNotice() }}>보관 연장 (다시 3일)</button>
+          </div>
+        )}
+        {shown.length > 0 ? (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>📸 생성된 모델컷 ({allOutputs.length}장)</div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {allOutputs.length > 0 && <button style={btn(true, false)} onClick={downloadAll}>⬇️ 전체 다운로드</button>}
-                <button style={btn(false, runningCount > 0)} disabled={runningCount > 0} onClick={() => setJobs([])}>목록 비우기</button>
+                <button style={btn(false, runningCount > 0)} disabled={runningCount > 0} onClick={() => { if (!confirm('보이는 모델컷 결과를 이 브라우저에서 지울까요? 돈을 내고 만든 결과입니다. (이 상품 모델컷으로 저장한 컷·드라이브 파일은 남습니다)')) return; const ids = new Set(shown.map(j => j.id)); for (const id of ids) deleteResult(id).catch(() => {}); setJobs(cur => cur.filter(j => !ids.has(j.id))) }}>목록 비우기</button>
               </div>
             </div>
-            <div style={{ fontSize: 10, color: C.sub, marginBottom: 12 }}>※ FASHN 결과 링크는 약 3일 뒤 만료됩니다. 마음에 드는 컷은 바로 다운로드하세요.</div>
+            <div style={{ fontSize: 10, color: C.sub, marginBottom: 12 }}>결과는 나오는 즉시 이미지째 이 브라우저에 보관합니다(탭을 옮기거나 새로고침해도 남음){hasToken() && savedFolder()?.id ? " · 드라이브 '모델컷_임시'에도 저장" : ' · 구글 드라이브를 연결하면 드라이브에도 저장됩니다'}.</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
-              {jobs.map(job => (
+              {shown.map(job => (
                 job.status === 'completed' && job.outputs.length > 0
                   ? job.outputs.map((url, k) => (
                     <ResultCard key={job.id + k} job={job} url={url} onCompare={() => setCompare({ job, url })}
-                      onSaveCut={linked && onSaveCut ? () => setSaveTarget({ job, url }) : null}
+                      onSaveCut={linked && onSaveCut ? () => setSaveTarget({ job, url, sourceUrl: job.sourceUrls?.[k] || url }) : null}
                       onSaveBase={linked ? () => saveBaseFrom(url, job.composition) : null}
                       onDownload={() => downloadResult(url, `모델컷_${job.scene.label}_${job.id}_${k + 1}.jpg`)}
                       onSaveModel={() => saveAsModel(url, '', `${job.scene.label} 모델`)}
@@ -784,7 +896,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
         )}
       </div>
       {compare && <CompareView job={compare.job} url={compare.url} onClose={() => setCompare(null)} />}
-      {saveTarget && <SaveCutView job={saveTarget.job} url={saveTarget.url} composition={saveTarget.job.composition || composition}
+      {saveTarget && <SaveCutView job={saveTarget.job} url={saveTarget.url} sourceUrl={saveTarget.sourceUrl} composition={saveTarget.job.composition || composition}
         onClose={() => setSaveTarget(null)} onSave={cut => { onSaveCut(cut); setSaveTarget(null) }} />}
     </div>
   )
@@ -818,7 +930,7 @@ function CompareView({ job, url, onClose }) {
 }
 
 // '이 상품 모델컷으로 저장'(017): 얼굴 자동 자르기(구도별) → 수동 슬라이더로 고치기 → 원본 의류와 나란히 확인 → 저장
-function SaveCutView({ job, url, composition, onClose, onSave }) {
+function SaveCutView({ job, url, sourceUrl = url, composition, onClose, onSave }) {
   const [state, setState] = useState({ loading: true })
   const [topPct, setTopPct] = useState(0)
   const [preview, setPreview] = useState(null)
@@ -851,7 +963,7 @@ function SaveCutView({ job, url, composition, onClose, onSave }) {
   const info = state.width ? cropInfo(state.width, state.height, state.height * topPct / 100) : null
   const save = () => {
     const src = crop(); if (!src) return
-    onSave({ src, sourceUrl: /^https:/.test(url) ? url : null, engine: job.request.provider, composition, scene: job.scene.label,
+    onSave({ src, sourceUrl: /^https:/.test(sourceUrl || '') ? sourceUrl : null, engine: job.request.provider, composition, scene: job.scene.label,
       crop: { top: Math.round(topPct * 10) / 1000 }, review: Boolean(state.auto?.review), lowRes: Boolean(info?.lowRes), side: info?.side || null })
   }
   const box = { flex: '1 1 300px', minWidth: 0, margin: 0 }

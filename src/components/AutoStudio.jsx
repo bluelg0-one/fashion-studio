@@ -25,6 +25,7 @@ import {claudeCost, PHOTOROOM} from '../utils/pricing.js';
 import AutoFixPanel from './AutoFixPanel.jsx';
 import {runSave, planSave, fileNames, sizeMissing, AUTO_CHANNELS} from '../utils/autoSave.js';
 import {putOutputs, flushOutbox, driveReady} from '../utils/outbox.js';
+import {markFinalSaved} from '../utils/modelcutStore.js';
 import {channelPackage, channelPhotos} from '../utils/channelExport.js';
 import {printOf} from '../utils/googleDrive.js';
 import {shopeePhotos} from '../utils/shopeeExport.js';
@@ -149,6 +150,8 @@ export default function AutoStudio({view='all'}) {
     } catch(e){setSaveState('error');setStep('');setError(`상품 저장소를 쓸 수 없습니다 (${e.message}). 작업은 이 화면에서만 유지됩니다.`);}
     finally {lock.current=false;setBusy(false);}
   })();},[]);
+  // 021: 브라우저 탭을 옮기거나 닫을 때(브라우저가 숨은 탭을 정리할 수 있음) 기다리던 자동 저장을 바로 합니다(Photoroom·Claude 결과 보호).
+  useEffect(()=>{const flush=()=>{if(document.visibilityState==='hidden'||!document.visibilityState)saveNow();};document.addEventListener('visibilitychange',flush);window.addEventListener('pagehide',flush);return()=>{document.removeEventListener('visibilitychange',flush);window.removeEventListener('pagehide',flush);};});
   useEffect(()=>{
     if(!productId)return;
     if(skipSave.current){skipSave.current=false;return;}
@@ -889,6 +892,8 @@ export default function AutoStudio({view='all'}) {
     },
     store:async(product,{files,photos,draft})=>{
       await putOutputs({productId:product.id,name:product.name,draft,files,photos,at:Date.now()});
+      // 021: 상세페이지 정식 저장(초안 아님) 시각 → 3일 뒤 이 상품의 임시 모델컷 정리
+      if(!draft)markFinalSaved(product.id).catch(()=>{});
       if(!driveReady())return {where:'browser'};
       const r=await flushOutbox({only:[product.id],onStage:m=>setStep(`드라이브 저장 · ${m}`)});
       if(r.errors?.length)return {where:'browser',note:`드라이브 올리기 실패(대기열에 남김): ${r.errors[0]}`};
