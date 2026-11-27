@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || undefined,headless:true,args:['--no-sandbox']});
 const URL0=process.env.STUDIO_TEST_URL || 'http://127.0.0.1:3001';
-async function open(config){
+async function open(config,init=null){
  const ctx=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true});const page=await ctx.newPage();
+ if(init)await page.addInitScript(init);
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('about:blank');
  const fx=await page.evaluate(()=>{
@@ -38,7 +39,7 @@ async function open(config){
 const tab=(page,name)=>page.getByRole('tab',{name,exact:true}).click();
 try{
  const {page,errors,fx,queue,shots,idle}=await open({fashn:true,google:true,styleroom:false});
- const dialogs=[];page.on('dialog',d=>{dialogs.push(d.message());d.accept();});
+ const dialogs=[];let promptText='';page.on('dialog',d=>{dialogs.push(d.message());d.type()==='prompt'?d.accept(promptText):d.accept();});
  assert.deepEqual(await page.getByRole('tab').allInnerTexts(),['원본 보정','모델컷','상세페이지']);
  // ① 원본 보정: 사진·보정 칸만, 상세페이지 편집은 없음
  assert.equal(await page.getByRole('tab',{name:'원본 보정'}).getAttribute('aria-selected'),'true');
@@ -83,7 +84,7 @@ try{
  await page.getByRole('button',{name:/Google 가상 피팅 유료 · 1장 생성/}).click();
  assert.ok(dialogs.some(m=>/기본 모델 사진을 넣어 주세요/.test(m)));
  await page.getByLabel('상반신 (얼굴 없음) 기본 모델 사진 선택').setInputFiles({name:'base.png',mimeType:'image/png',buffer:Buffer.from(fx.base.split(',')[1],'base64')});
- await page.getByAltText('상반신 (얼굴 없음) 기본 모델').waitFor();
+ await page.getByAltText('모델 1 기본 모델').waitFor();   // 019: 보관함에 '모델 1'로 저장되고 골라짐
  await page.getByRole('button',{name:/Google 가상 피팅 유료 · 1장 생성/}).click();
  await page.waitForFunction(()=>[...document.querySelectorAll('div')].some(d=>d.textContent.startsWith('👕 가상 피팅 1')));
  const g=shots.find(b=>b.action==='run'&&b.provider==='google');assert.ok(g.inputs.person_image.startsWith('data:image/jpeg'));assert.ok(g.inputs.product_image.startsWith('data:image/jpeg'));assert.equal(g.inputs.sample_count,1);
@@ -118,12 +119,37 @@ try{
  await page.waitForTimeout(1200);await page.reload();await idle();
  await tab(page,'상세페이지');assert.match(await page.getByLabel('AI 모델 컷 목록').innerText(),/AI 모델 컷 1/,'다시 열어도 저장됨');
  assert.deepEqual(errors,[]);
+ // ⑦ 019 모델 보관함: 이름 붙여 저장 · 선택 · 이름 바꾸기 · 상품마다 마지막 선택 기억 · 삭제
+ await tab(page,'모델컷');
+ assert.equal(await page.getByLabel('모델 고르기 모델 1').getAttribute('aria-pressed'),'true','다시 열어도 보관함·선택 유지');
+ await page.getByLabel('새 모델 이름').fill('봄 모델');
+ await page.getByLabel('상반신 (얼굴 없음) 기본 모델 사진 선택').setInputFiles({name:'b2.png',mimeType:'image/png',buffer:Buffer.from(fx.base.split(',')[1],'base64')});
+ await page.getByAltText('봄 모델 기본 모델').waitFor();
+ assert.equal(await page.getByLabel('모델 고르기 봄 모델').getAttribute('aria-pressed'),'true','새로 저장한 모델이 골라짐');
+ assert.match(await page.getByLabel('FASHN 방식').innerText(),/봄 모델/);
+ promptText='여름 모델';await page.getByLabel('모델 이름 바꾸기 봄 모델').click();
+ await page.getByAltText('여름 모델 기본 모델').waitFor();
+ const p1=await page.getByLabel('상품 선택').inputValue();
+ await page.getByLabel('모델 고르기 모델 1').click();
+ await page.getByRole('button',{name:'+ 새 상품'}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="상품 이름"]')?.value==='상품 2');
+ assert.equal(await page.getByLabel('모델 고르기 모델 1').getAttribute('aria-pressed'),'true','새 상품은 구도 기본값(처음 고른 모델)');
+ await page.getByLabel('모델 고르기 여름 모델').click();
+ await page.getByLabel('상품 선택').selectOption(p1);await page.waitForFunction(()=>document.querySelector('[aria-label="상품 이름"]')?.value==='탭 시험 니트');
+ assert.equal(await page.getByLabel('모델 고르기 모델 1').getAttribute('aria-pressed'),'true','상품마다 마지막 선택 기억');
+ await page.getByLabel('모델 선택 안 함 (새 모델 생성)').click();
+ assert.match(await page.getByLabel('FASHN 방식').innerText(),/새 모델 생성/,'선택 없음 → 새 모델 생성');
+ await page.getByLabel('모델 삭제 여름 모델').click();
+ assert.equal(await page.getByLabel('모델 고르기 여름 모델').count(),0,'삭제');
+ assert.ok(dialogs.some(m=>/여름 모델' 모델을 보관함에서 지울까요/.test(m)));
  // ⑥ 키 없음: 안내 + 생성 버튼 꺼짐 + Google 선택 불가
- const b2=await open({fashn:false,google:false,styleroom:false});
+ // 018 형식(구도별 1칸)으로 저장돼 있던 브라우저 → 첫 모델 '모델 1'로 옮겨지고 그 구도의 기본 선택(데이터 손실 없음)
+ const b2=await open({fashn:false,google:false,styleroom:false},`try{localStorage.setItem('fashion-studio:vto-base',JSON.stringify({top:${JSON.stringify(fx.base)},at:1}))}catch(e){}`);
  await tab(b2.page,'모델컷');
  await b2.page.getByRole('alert').filter({hasText:'모델컷을 만들려면 Vercel에 FASHN_API_KEY가 필요합니다'}).waitFor();
- assert.equal(await b2.page.getByRole('button',{name:/FASHN 유료/}).isDisabled(),true);
+ assert.equal(await b2.page.getByRole('button',{name:/FASHN( 고정 모델)? 유료/}).isDisabled(),true);
  assert.equal(await b2.page.getByRole('button',{name:'엔진 Google 가상 피팅'}).getAttribute('aria-disabled'),'true');
  assert.match(await b2.page.locator('body').innerText(),/GOOGLE_VTO_CREDENTIALS/);
+ assert.equal(await b2.page.getByLabel('모델 고르기 모델 1').getAttribute('aria-pressed'),'true','018 사진 → 보관함 첫 모델·기본 선택');
+ assert.ok(await b2.page.getByAltText('모델 1 기본 모델').isVisible());
  console.log('PASS: 3 tabs keep one product/state; model cut tab uses the retouched front, top composition prompt (no face, no face lock), auto face crop + slider + side-by-side, reuse, Google with base photo; saved cut shows in the page with "AI 모델 컷" and include/exclude; persisted; missing keys disable generation.');
 }finally{await browser.close();}

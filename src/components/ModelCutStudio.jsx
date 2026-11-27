@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { listProducts, getProduct } from '../utils/productStore.js'
 import { addCost } from '../utils/costLog.js'
-import { COMPOSITIONS, compositionOf, baseSlotOf, BASE_SLOTS, ENGINES, modelCutRow, faceCrop, cropInfo, fashnMode, FASHN_MODE_LABEL, tryonInputs, newerBase } from '../utils/modelCut.js'
-import { hasToken, savedFolder, loadBaseModels, saveBaseModels } from '../utils/googleDrive.js'
+import { COMPOSITIONS, compositionOf, baseSlotOf, BASE_SLOTS, ENGINES, modelCutRow, faceCrop, cropInfo, FASHN_MODE_LABEL, tryonInputs } from '../utils/modelCut.js'
+import { hasToken, savedFolder, loadBaseModels, saveBaseModels, modelFolder, uploadModelImage, downloadModelImage, trashModelImage } from '../utils/googleDrive.js'
+import { migrateLibrary, migratedPicks, modelsFor, addModel, renameModel, deleteModel, pickFor, setPick, syncLibrary } from '../utils/modelLibrary.js'
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -147,8 +148,16 @@ function rememberOutputs(key, outputs) {
 // 기본 모델 사진(구도별 1장, 017 Google용 → 018부터 FASHN '고정 모델'과 공용). 브라우저에 저장하고, 드라이브 작업 폴더가 연결돼 있으면
 // 드라이브에도 저장·불러오기(노트북·집 PC 공용). 저장소에 커밋하지 않습니다. at = 마지막으로 바꾼 시각(어느 쪽이 최신인지 비교).
 const BASE_KEY = 'fashion-studio:vto-base'
-function loadBase() { try { return JSON.parse(localStorage.getItem(BASE_KEY) || '{}') } catch { return {} } }
-function saveBase(v) { try { localStorage.setItem(BASE_KEY, JSON.stringify(v)); return true } catch { return false } }
+// 019 모델 보관함: 같은 저장 위치를 목록 형식으로 씁니다(018 형식은 읽을 때 첫 모델로 옮김). 선택은 PICK_KEY에.
+const PICK_KEY = 'fashion-studio:model-picks'
+function loadLib() { try { return migrateLibrary(JSON.parse(localStorage.getItem(BASE_KEY) || '{}')) } catch { return migrateLibrary({}) } }
+function saveLib(v) { try { localStorage.setItem(BASE_KEY, JSON.stringify(v)); return true } catch { return false } }
+function loadPicks(lib) { try { return migratedPicks(lib, JSON.parse(localStorage.getItem(PICK_KEY) || '{}')) } catch { return migratedPicks(lib) } }
+function savePicks(v) { try { localStorage.setItem(PICK_KEY, JSON.stringify(v)) } catch { /* 선택 기억만 안 됨 */ } }
+const driveDeps = folderId => ({
+  loadIndex: () => loadBaseModels(folderId), saveIndex: v => saveBaseModels(folderId, v), folder: () => modelFolder(folderId),
+  upload: (f, m) => uploadModelImage(f, m), download: id => downloadModelImage(id), trash: id => trashModelImage(id),
+})
 // 장면 문구의 '전신' 지시는 얼굴 없는 구도와 부딪혀서 뺍니다.
 const stripFullBody = t => t.replace(/full body (shot from behind|shot|street snap)[, ]*/g, '')
 
@@ -185,7 +194,9 @@ const btn = (primary, disabled) => ({
 export default function ModelCutStudio({ active = true, product: linked = null, onSaveCut = null, savedCount = 0 }) {
   const [provider, setProvider] = useState('fashn')
   const [composition, setComposition] = useState(() => linked ? compositionOf(linked.garment) : 'full')
-  const [base, setBase] = useState(loadBase)
+  const [lib, setLib] = useState(loadLib)
+  const [picks, setPicks] = useState(() => loadPicks(loadLib()))
+  const [newName, setNewName] = useState('')
   const [saveTarget, setSaveTarget] = useState(null)
   // 서버에 키가 있는지만 확인 (과금 없음). null = 확인 중
   const [config, setConfig] = useState(null)
@@ -197,26 +208,35 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
   const engineReady = provider === 'fashn' ? fashnReady : provider === 'google' ? googleReady : false
   const comp = COMPOSITIONS[composition] || COMPOSITIONS.full
   // 018: FASHN은 해당 구도의 기본 모델 사진이 있으면 '고정 모델'(가상 피팅), 없으면 '새 모델 생성'
-  const mode = linked && provider === 'fashn' ? fashnMode(base, composition) : 'create'
+  const slot = baseSlotOf(composition), slotModels = modelsFor(lib, slot)
+  const chosen = linked ? pickFor(picks, lib, linked.id, slot) : null
+  const choose = id => { const next = setPick(picks, linked?.id, slot, id); setPicks(next); savePicks(next) }
+  const mode = linked && provider === 'fashn' && chosen?.image ? 'fixed' : 'create'
   const fixed = mode === 'fixed', noScenes = provider === 'google' || fixed
   const [baseSync, setBaseSync] = useState('')
-  // 드라이브 작업 폴더가 연결돼 있으면 탭을 열 때 드라이브의 기본 모델 사진을 불러옵니다(나중에 바꾼 쪽을 씀).
-  useEffect(() => {
-    if (!active || !linked || !hasToken() || !savedFolder()?.id) return
-    let off = false
-    loadBaseModels(savedFolder().id).then(remote => {
-      if (off || !remote) return
-      setBase(cur => { const next = newerBase(cur, remote); if (next !== cur) { saveBase(next); setBaseSync('드라이브에서 기본 모델 사진을 불러왔습니다.') } return next })
-    }).catch(() => setBaseSync('드라이브의 기본 모델 사진을 불러오지 못했습니다(브라우저 저장본을 씁니다).'))
-    return () => { off = true }
-  }, [active, linked?.id])
-  // 기본 모델 사진 바꾸기: 브라우저 저장 + (연결돼 있으면) 드라이브 저장
-  const putBase = (next) => {
-    const v = { ...next, at: Date.now() }
-    if (!saveBase(v)) alert('브라우저 저장 공간이 부족합니다.')
-    setBase(v)
-    if (hasToken() && savedFolder()?.id) saveBaseModels(savedFolder().id, v).then(() => setBaseSync('드라이브 작업 폴더에도 저장했습니다(다른 PC에서 같은 모델 사용).')).catch(() => setBaseSync('드라이브 저장 실패 · 이 브라우저에만 저장됨'))
-    else setBaseSync('이 브라우저에 저장했습니다. 구글 드라이브를 연결하면 다른 PC에서도 같은 모델을 씁니다.')
+  // 드라이브 작업 폴더가 연결돼 있으면 탭을 열 때와 보관함을 바꿀 때 드라이브와 맞춥니다(나중에 바꾼 쪽, 삭제 반영).
+  const libRef = useRef(lib); libRef.current = lib
+  const syncDrive = async (local) => {
+    if (!hasToken() || !savedFolder()?.id) return local
+    try {
+      const merged = await syncLibrary(local, driveDeps(savedFolder().id))
+      saveLib(merged); setLib(merged); setBaseSync('드라이브 작업 폴더(모델보관함)와 맞췄습니다 · 다른 PC에서도 같은 모델 목록')
+      return merged
+    } catch { setBaseSync('드라이브와 맞추지 못했습니다(이 브라우저 저장본을 씁니다).'); return local }
+  }
+  useEffect(() => { if (active && linked) syncDrive(libRef.current) }, [active, linked?.id])
+  // 보관함 바꾸기: 브라우저 저장 + (연결돼 있으면) 드라이브 동기화
+  const putLib = (next) => {
+    if (!saveLib(next)) alert('브라우저 저장 공간이 부족합니다. 안 쓰는 모델을 지워 주세요.')
+    setLib(next)
+    if (hasToken() && savedFolder()?.id) syncDrive(next)
+    else setBaseSync('이 브라우저에 저장했습니다. 구글 드라이브를 연결하면 다른 PC에서도 같은 모델 목록을 씁니다.')
+  }
+  const addToLib = (image, slot0) => {
+    const { lib: next, model } = addModel(lib, { slot: slot0, image, name: newName })
+    putLib(next); setNewName('')
+    const p = setPick(picks, linked?.id, slot0, model.id); setPicks(p); savePicks(p)
+    return model
   }
   const [compare, setCompare] = useState(null)
 
@@ -358,8 +378,8 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     if (!garment) { alert(linked ? '원본 보정 탭에서 옷걸이 정면(또는 후면) 보정을 먼저 끝내 주세요.' : '의류 사진을 선택해주세요!'); return }
     const google = provider === 'google'
     if (!google && !fixed && sceneIds.length === 0) { alert('장면을 1개 이상 선택해주세요!'); return }
-    const person = google ? base[baseSlotOf(composition)] : null
-    if (google && !person) { alert(`Google 가상 피팅은 사람 사진에 옷을 입힙니다. 먼저 '${BASE_SLOTS.find(b => b[0] === baseSlotOf(composition))?.[1]}' 기본 모델 사진을 넣어 주세요.`); return }
+    const person = google ? chosen?.image : null
+    if (google && !person) { alert(`Google 가상 피팅은 사람 사진에 옷을 입힙니다. 먼저 '${BASE_SLOTS.find(b => b[0] === baseSlotOf(composition))?.[1]}' 모델을 보관함에서 고르거나 기본 모델 사진을 넣어 주세요.`); return }
 
     let product, background
     try {
@@ -372,10 +392,10 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
     const batchId = Date.now()
     // Google 가상 피팅: 장면·문구 없이 '기본 모델 사진 + 옷'. 응답 크기 때문에 1장씩 따로 요청합니다.
     // 018 고정 모델(FASHN 가상 피팅): 기본 모델 사진 + 옷, 장면·문구·얼굴 고정 없음. 한 번에 장수만큼.
-    const fixedPerson = fixed ? base[baseSlotOf(composition)] : null
+    const fixedPerson = fixed ? chosen?.image : null
     const fixedJobs = fixedPerson ? [{
       id: `${batchId}-f`, batchId, scene: { id: 'fixed', emoji: '🧍', label: '고정 모델' }, garmentName: garment.name, garmentUrl: garment.url,
-      modelName: '고정 모델', status: 'queued', outputs: [], composition,
+      modelName: chosen?.name || '고정 모델', status: 'queued', outputs: [], composition,
       request: { provider: 'fashn', model_name: 'tryon-v1.6', inputs: tryonInputs({ person: fixedPerson, garment: product, composition, samples: perScene }) },
     }] : null
     const googleJobs = google ? Array.from({ length: perScene }, (_, i) => ({
@@ -452,7 +472,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
   // 결과·모델 후보를 기본 모델 사진으로 저장(구도별, 017 → 018 FASHN 고정 모델과 공용)
   const saveBaseFrom = async (url, comp0) => {
     const id = baseSlotOf(comp0 || composition)
-    try { const img = await compressImage(await urlToDataUrl(url), 1024, 0.9); putBase({ ...base, [id]: img }); alert(`'${BASE_SLOTS.find(b => b[0] === id)?.[1]}' 기본 모델 사진으로 저장했습니다. 이제 이 구도는 고정 모델로 만듭니다.`) }
+    try { const img = await compressImage(await urlToDataUrl(url), 1024, 0.9); const m = addToLib(img, id); alert(`'${BASE_SLOTS.find(b => b[0] === id)?.[1]}' 모델 보관함에 '${m.name}'(으)로 저장하고 골랐습니다. 이 구도는 이 모델로 고정 모델을 만듭니다.`) }
     catch (err) { alert('저장하지 못했습니다: ' + err.message) }
   }
 
@@ -493,7 +513,7 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
           </div>
           {linked && provider === 'fashn' && (
             <div aria-label="FASHN 방식" style={{ ...hint, marginTop: 10, marginBottom: 0, fontWeight: 700, color: fixed ? '#1e6b3a' : C.ink }}>
-              지금 방식: {FASHN_MODE_LABEL[mode]}{fixed ? ' (기본 모델 사진에 옷 입히기 · 얼굴 고정 없음)' : ' (이 구도의 기본 모델 사진이 없음 · 장면마다 새 모델)'}
+              지금 방식: {FASHN_MODE_LABEL[mode]}{fixed ? ` (보관함 모델 '${chosen.name}'에 옷 입히기 · 얼굴 고정 없음)` : ' (고른 모델 없음 · 장면마다 새 모델)'}
             </div>
           )}
           {linked && config && !fashnReady && provider === 'fashn' && (
@@ -536,20 +556,35 @@ export default function ModelCutStudio({ active = true, product: linked = null, 
         )}
         {linked && (
           <div style={card} aria-label="기본 모델 사진">
-            <div style={title}>② 기본 모델 사진 (고정 모델 · FASHN·Google 공용)</div>
-            <div style={hint}>처음 한 번만 모델을 만들어 고정으로 씁니다. 구도별로 1장씩 올리거나, 'AI로 새 모델 만들기' 후보·모델컷 결과의 '기본 모델로 저장'을 누르세요. 사진이 있는 구도는 그 사람에게 옷을 입히고(가상 피팅), 없으면 FASHN이 새 모델을 만듭니다. 구글 드라이브가 연결돼 있으면 작업 폴더에도 저장해 다른 PC에서 같은 모델을 씁니다.</div>
+            <div style={title}>② 모델 보관함 (고정 모델 · FASHN·Google 공용)</div>
+            <div style={hint}>모델을 한 번 만들어 여러 명 보관해 두고 골라 씁니다. 사진을 올리거나 'AI로 새 모델 만들기' 후보·모델컷 결과의 '기본 모델로 저장'을 누르면 지금 구도의 보관함에 들어갑니다. 고른 모델이 있으면 그 사람에게 옷을 입히고(가상 피팅), '선택 안 함'이면 FASHN이 새 모델을 만듭니다. 처음 고른 모델이 기본값이 되고, 상품마다 마지막 선택을 기억합니다. 구글 드라이브가 연결돼 있으면 작업 폴더 '모델보관함'에도 저장해 다른 PC에서 같은 목록을 씁니다.</div>
             {baseSync && <div role="status" aria-label="기본 모델 저장 상태" style={{ ...hint, color: C.ink }}>{baseSync}</div>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-              {BASE_SLOTS.map(([id, label]) => (
-                <label key={id} style={{ fontSize: 10, textAlign: 'center', border: `2px solid ${baseSlotOf(composition) === id ? C.ink : C.line}`, borderRadius: 8, padding: 4, cursor: 'pointer' }}>
-                  {base[id] ? <img src={base[id]} alt={`${label} 기본 모델`} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block', borderRadius: 4 }} /> : <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.sub }}>사진 없음</div>}
-                  {label}
-                  <input type="file" accept="image/jpeg,image/png" aria-label={`${label} 기본 모델 사진 선택`} style={{ display: 'none' }}
-                    onChange={async e => { const f = e.target.files[0]; if (!f) return; const url = await compressImage(await fileToDataUrl(f), 1024, 0.9); putBase({ ...base, [id]: url }) }} />
-                  {base[id] && <button type="button" style={{ ...btn(false, false), padding: '2px 6px', marginTop: 4 }} onClick={e => { e.preventDefault(); const next = { ...base }; delete next[id]; putBase(next) }}>지우기</button>}
-                </label>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#555', marginBottom: 4 }}>{BASE_SLOTS.find(b => b[0] === slot)?.[1]} 모델 {slotModels.length}명 · 지금 선택: {chosen ? chosen.name : '없음(새 모델 생성)'}</div>
+            <div aria-label="모델 보관함" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              <button type="button" aria-label="모델 선택 안 함 (새 모델 생성)" aria-pressed={!chosen} onClick={() => choose('none')}
+                style={{ ...chip(!chosen), borderRadius: 8, padding: 4, fontSize: 10 }}><div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🎲</div>선택 안 함<br />(새 모델 생성)</button>
+              {slotModels.map(m => (
+                <div key={m.id} style={{ border: `2px solid ${chosen?.id === m.id ? C.ink : C.line}`, borderRadius: 8, padding: 4, fontSize: 10, textAlign: 'center', background: '#fff' }}>
+                  <button type="button" aria-label={`모델 고르기 ${m.name}`} aria-pressed={chosen?.id === m.id} onClick={() => choose(m.id)} style={{ border: 'none', background: 'none', padding: 0, width: '100%', cursor: 'pointer' }}>
+                    {m.image ? <img src={m.image} alt={`${m.name} 기본 모델`} style={{ width: '100%', height: 80, objectFit: 'cover', display: 'block', borderRadius: 4 }} /> : <div style={{ height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.sub }}>사진 받는 중</div>}
+                  </button>
+                  <div style={{ fontWeight: 700, margin: '2px 0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.name}</div>
+                  <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                    <button type="button" aria-label={`모델 이름 바꾸기 ${m.name}`} style={{ ...btn(false, false), padding: '2px 5px', fontSize: 9 }} onClick={() => { const v = prompt('모델 이름', m.name); if (v) putLib(renameModel(lib, m.id, v)) }}>이름</button>
+                    <button type="button" aria-label={`모델 삭제 ${m.name}`} style={{ ...btn(false, false), padding: '2px 5px', fontSize: 9, color: '#b91c1c' }} onClick={() => { if (confirm(`'${m.name}' 모델을 보관함에서 지울까요? (드라이브에서도 지워집니다)`)) putLib(deleteModel(lib, m.id)) }}>삭제</button>
+                  </div>
+                </div>
               ))}
             </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+              <input aria-label="새 모델 이름" value={newName} maxLength={30} placeholder={`새 모델 이름 (비우면 모델 ${slotModels.length + 1})`} onChange={e => setNewName(e.target.value)}
+                style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #e0e0e0', fontSize: 11 }} />
+              <label style={{ ...btn(false, false), cursor: 'pointer' }}>사진 올려 모델 추가
+                <input type="file" accept="image/jpeg,image/png" aria-label={`${BASE_SLOTS.find(b => b[0] === slot)?.[1]} 기본 모델 사진 선택`} style={{ display: 'none' }}
+                  onChange={async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; addToLib(await compressImage(await fileToDataUrl(f), 1024, 0.9), slot) }} />
+              </label>
+            </div>
+            <div style={{ ...hint, marginTop: 4, marginBottom: 0 }}>다른 구도: {BASE_SLOTS.filter(b => b[0] !== slot).map(([id, label]) => `${label} ${modelsFor(lib, id).length}명`).join(' · ')} (구도를 바꾸면 그 구도의 모델이 보입니다)</div>
           </div>
         )}
 
